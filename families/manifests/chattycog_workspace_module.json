@@ -1,0 +1,31 @@
+{
+  "family_id": "chattycog_workspace_module",
+  "primary_substrate": "unknown",
+  "supports_standalone": false,
+  "supports_chattycog_wrapper": true,
+  "supported_stack_ids": ["chattycog", "module", "workspace"],
+  "provided_build_primitive_classes": ["summary_surface", "metadata_row"],
+  "primitive_adapters": [
+    {
+      "adapter_id": "chattycog_workspace_summary_surface",
+      "composition_layer": "family_build",
+      "primitive_name": "summary_surface",
+      "adapter_kind": "workspace_module_surface",
+      "support_level": "native",
+      "notes": ["Provided directly by the base ChattyCog workspace module shell."]
+    },
+    {
+      "adapter_id": "chattycog_workspace_metadata_row",
+      "composition_layer": "family_build",
+      "primitive_name": "metadata_row",
+      "adapter_kind": "workspace_module_metadata",
+      "support_level": "native",
+      "notes": ["Provided directly by the base ChattyCog workspace module shell."]
+    }
+  ],
+  "explicit_stack_keywords": ["chattycog", "chatty-cog", "module", "workspace", "ui.json"],
+  "route_keywords": ["workspace module", "headless module", "ui.json", "form module", "notes module"],
+  "supported_tool_kinds": ["module_starter", "workspace_module"],
+  "forbids_capabilities": ["backend_service", "websocket", "api_server", "daemon"],
+  "requires_helper_for": ["background_job", "local_filesystem", "email_delivery"]
+}

@@ -1,0 +1,25 @@
+# Rust build output
+/target/
+
+# Local model storage
+/models/*
+!/models/README.md
+
+# Runtime state and receipts
+/runtime/*
+!/runtime/README.md
+
+# Generated project outputs
+/output/*
+!/output/README.md
+
+# Scaffolded extension work bundles and registry state
+/extensions/
+/operator_registry/*
+!/operator_registry/README.md
+
+# Common editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

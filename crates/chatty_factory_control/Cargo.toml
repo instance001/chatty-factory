@@ -1,0 +1,9 @@
+[package]
+name = "chatty_factory_control"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[dependencies]
+petgraph = { workspace = true }
+chatty_factory_core = { path = "../chatty_factory_core" }

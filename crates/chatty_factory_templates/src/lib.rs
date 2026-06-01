@@ -1,0 +1,74 @@
+use anyhow::Result;
+use minijinja::Environment;
+use serde::Serialize;
+
+pub fn base_environment() -> Result<Environment<'static>> {
+    let mut env = Environment::new();
+    env.add_template(
+        "families/static_web_dashboard/index.html",
+        include_str!("../../../templates/families/static_web_dashboard/index.html.j2"),
+    )?;
+    env.add_template(
+        "families/static_web_dashboard/app.js",
+        include_str!("../../../templates/families/static_web_dashboard/app.js.j2"),
+    )?;
+    env.add_template(
+        "families/static_web_dashboard/styles.css",
+        include_str!("../../../templates/families/static_web_dashboard/styles.css.j2"),
+    )?;
+    env.add_template(
+        "families/chattycog_basic_dashboard/index.html",
+        include_str!("../../../templates/families/chattycog_basic_dashboard/index.html.j2"),
+    )?;
+    env.add_template(
+        "families/chattycog_basic_dashboard/app.js",
+        include_str!("../../../templates/families/chattycog_basic_dashboard/app.js.j2"),
+    )?;
+    env.add_template(
+        "families/chattycog_basic_dashboard/styles.css",
+        include_str!("../../../templates/families/chattycog_basic_dashboard/styles.css.j2"),
+    )?;
+    env.add_template(
+        "families/python_cli_tool/main.py",
+        include_str!("../../../templates/families/python_cli_tool/main.py.j2"),
+    )?;
+    env.add_template(
+        "families/python_cli_tool/README.md",
+        include_str!("../../../templates/families/python_cli_tool/README.md.j2"),
+    )?;
+    env.add_template(
+        "families/rust_cli_tool/Cargo.toml",
+        include_str!("../../../templates/families/rust_cli_tool/Cargo.toml.j2"),
+    )?;
+    env.add_template(
+        "families/rust_cli_tool/main.rs",
+        include_str!("../../../templates/families/rust_cli_tool/main.rs.j2"),
+    )?;
+    env.add_template(
+        "families/rust_cli_tool/README.md",
+        include_str!("../../../templates/families/rust_cli_tool/README.md.j2"),
+    )?;
+    env.add_template(
+        "wrappers/chattycog/manifest.json",
+        include_str!("../../../templates/wrappers/chattycog/manifest.json.j2"),
+    )?;
+    env.add_template(
+        "wrappers/chattycog/visual_load.json",
+        include_str!("../../../templates/wrappers/chattycog/visual_load.json.j2"),
+    )?;
+    env.add_template(
+        "wrappers/chattycog/HANDSHAKE.md",
+        include_str!("../../../templates/wrappers/chattycog/HANDSHAKE.md.j2"),
+    )?;
+    env.add_template(
+        "wrappers/chattycog/chattycog_bridge.js",
+        include_str!("../../../templates/wrappers/chattycog/chattycog_bridge.js.j2"),
+    )?;
+    Ok(env)
+}
+
+pub fn render_named<S: Serialize>(template_name: &str, context: S) -> Result<String> {
+    let env = base_environment()?;
+    let template = env.get_template(template_name)?;
+    Ok(template.render(context)?)
+}

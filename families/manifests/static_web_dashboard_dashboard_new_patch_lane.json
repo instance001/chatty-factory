@@ -1,0 +1,18 @@
+{
+  "explicit_stack_keywords": [],
+  "family_id": "static_web_dashboard_dashboard_new_patch_lane",
+  "forbids_capabilities": [],
+  "primary_substrate": "unknown",
+  "provided_build_primitive_classes": [
+    "metadata_row"
+  ],
+  "requires_helper_for": [],
+  "route_keywords": [
+    "dashboard"
+  ],
+  "supported_stack_ids": [],
+  "supported_tool_kinds": [
+    "dashboard"
+  ],
+  "supports_chattycog_wrapper": false
+}

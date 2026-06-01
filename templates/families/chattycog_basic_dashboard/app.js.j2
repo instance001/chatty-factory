@@ -1,0 +1,12 @@
+const resultsRoot = document.getElementById("results-root");
+const moduleState = document.getElementById("module-state");
+const bridgeStatus = document.getElementById("bridge-status");
+
+function writeStatus() {
+  const hasBridge = typeof window.ChattyCogBridge !== "undefined";
+  bridgeStatus.textContent = hasBridge ? "Bridge detected." : "Bridge adapter loaded.";
+  moduleState.textContent = "{{ module_state }}";
+  resultsRoot.textContent = "{{ interactive_message }}";
+}
+
+writeStatus();

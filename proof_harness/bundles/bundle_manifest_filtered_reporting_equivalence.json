@@ -1,0 +1,37 @@
+{
+  "bundle_id": "bundle_manifest_filtered_reporting_equivalence",
+  "bundle_kind": "cross_surface_equivalence",
+  "required_shared_capability_classes": [
+    "helper_summary",
+    "lane_filter_rules",
+    "report_output"
+  ],
+  "optional_shared_capability_classes": [
+    "status_surface",
+    "helper_bundle",
+    "helper_contract",
+    "helper_status",
+    "multi_lane_coverage",
+    "export_surface"
+  ],
+  "tolerated_left_only_capability_classes": [
+    "helper_monitoring_surface",
+    "helper_preview_surface"
+  ],
+  "tolerated_right_only_capability_classes": [
+    "helper_contract",
+    "export_surface"
+  ],
+  "minimum_shared_capability_count": 3,
+  "equivalence_mode": "required_shared_bundle",
+  "policy": {
+    "comparison_receipt_prefix": "cross-family-manifest-filtered-reporting",
+    "comparison_label": "manifest filtered reporting",
+    "shared_note_label": "shared manifest filtered reporting capabilities",
+    "left_only_note_label": "left-only capabilities",
+    "right_only_note_label": "right-only capabilities",
+    "required_bundle_note_label": "required shared bundle",
+    "success_note_template": "both projects satisfy the shared {comparison_label} capability bundle",
+    "failure_note_template": "shared {comparison_label} capability bundle is incomplete across the compared projects"
+  }
+}

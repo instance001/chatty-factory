@@ -1,0 +1,39 @@
+# {{ title }}
+
+{{ summary }}
+
+## Run
+
+Run:
+
+{% if tool_kind == "file_sorter" %}
+`python main.py --input fixtures/input --output fixtures/output`
+
+Expected result:
+
+`fixtures/output/txt/sample.txt` should exist after the run.
+{% elif tool_kind == "csv_report" %}
+`python main.py --input fixtures/input/sample.csv`
+
+Expected output shape:
+
+`rows=<n> columns=<n> header=<comma-separated-columns>`
+{% elif tool_kind == "log_summary" %}
+`python main.py --input fixtures/input/app.log`
+
+Expected output shape:
+
+`errors=<n> warnings=<n> infos=<n>`
+{% elif tool_kind == "text_stats" %}
+`python main.py --input fixtures/input/sample.txt`
+
+Expected output shape:
+
+`lines=<n> words=<n> chars=<n>`
+{% else %}
+`python main.py --input fixtures/input`
+
+Expected output shape:
+
+`files=<n> ext:<extension>=<count> ...`
+{% endif %}

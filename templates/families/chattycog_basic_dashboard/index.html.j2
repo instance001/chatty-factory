@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-family="chattycog_webview_module" data-wrapper="chattycog">
+  <main class="module-shell">
+    <header class="module-hero">
+      <p class="module-kicker">ChattyCog Module</p>
+      <h1>{{ title }}</h1>
+      <p>{{ summary }}</p>
+    </header>
+
+    <section class="module-grid">
+      <article class="module-panel">
+        <h2>Module State</h2>
+        <p id="module-state">{{ module_state }}</p>
+      </article>
+      <article class="module-panel">
+        <h2>Bridge Status</h2>
+        <p id="bridge-status">{{ bridge_status }}</p>
+      </article>
+    </section>
+
+    <section class="module-panel">
+      <h2>{{ results_heading }}</h2>
+      <div id="results-root">{{ results_empty }}</div>
+    </section>
+  </main>
+
+  <script src="chattycog_bridge.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+[package]
+name = "chatty_factory_cli"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[dependencies]
+anyhow = { workspace = true }
+chatty_factory_core = { path = "../chatty_factory_core" }
+chatty_factory_control = { path = "../chatty_factory_control" }
+chatty_factory_host = { path = "../chatty_factory_host" }
+chatty_factory_families = { path = "../chatty_factory_families" }
+chatty_factory_verify = { path = "../chatty_factory_verify" }
+serde = { workspace = true }
+serde_json = { workspace = true }

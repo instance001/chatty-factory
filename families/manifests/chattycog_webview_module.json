@@ -1,0 +1,139 @@
+{
+  "family_id": "chattycog_webview_module",
+  "primary_substrate": "web",
+  "supports_standalone": true,
+  "supports_chattycog_wrapper": true,
+  "supported_stack_ids": ["chattycog", "module", "web"],
+  "provided_build_primitive_classes": ["summary_surface", "status_chip"],
+  "primitive_adapters": [
+    {
+      "adapter_id": "chattycog_webview_summary_surface",
+      "composition_layer": "family_build",
+      "primitive_name": "summary_surface",
+      "adapter_kind": "module_webview_surface",
+      "support_level": "native",
+      "notes": ["Provided directly by the base ChattyCog webview module shell."]
+    },
+    {
+      "adapter_id": "chattycog_webview_status_chip",
+      "composition_layer": "family_build",
+      "primitive_name": "status_chip",
+      "adapter_kind": "module_webview_status_strip",
+      "support_level": "native",
+      "notes": ["Provided directly by the base ChattyCog webview module shell."]
+    },
+    {
+      "adapter_id": "chattycog_helper_summary_panel",
+      "composition_layer": "patch",
+      "primitive_name": "summary_surface",
+      "adapter_kind": "patch_lane_adapter",
+      "support_level": "optional",
+      "requires_primitives": ["summary_emitter"],
+      "companion_primitives": ["status_chip", "metadata_row", "notice_surface"],
+      "execution_hint": "patch_requires_helper_summary",
+      "notes": ["Composed through helper_summary_panel and related helper summary lanes."]
+    },
+    {
+      "adapter_id": "chattycog_processed_files_surface",
+      "composition_layer": "patch",
+      "primitive_name": "summary_surface",
+      "adapter_kind": "patch_lane_adapter",
+      "support_level": "optional",
+      "notes": ["Composed through processed_files_panel and processed_file_selection helper surface lanes."]
+    },
+    {
+      "adapter_id": "chattycog_processed_preview_surface",
+      "composition_layer": "patch",
+      "primitive_name": "summary_surface",
+      "adapter_kind": "patch_lane_adapter",
+      "support_level": "optional",
+      "notes": ["Composed through processed_file_preview_panel and related processed preview lanes."]
+    },
+    {
+      "adapter_id": "chattycog_helper_status_chip",
+      "composition_layer": "patch",
+      "primitive_name": "status_chip",
+      "adapter_kind": "patch_lane_adapter",
+      "support_level": "optional",
+      "requires_primitives": ["summary_surface", "status_reporter"],
+      "execution_hint": "status_chip_prefers_helper_summary_surface",
+      "notes": ["Composed through helper_status_chip or helper_summary_status_chip."]
+    },
+    {
+      "adapter_id": "chattycog_helper_metadata_row",
+      "composition_layer": "patch",
+      "primitive_name": "metadata_row",
+      "adapter_kind": "patch_lane_adapter",
+      "support_level": "optional",
+      "requires_primitives": ["summary_surface"],
+      "execution_hint": "metadata_row_extends_summary_surface",
+      "notes": ["Composed through helper metadata and lane-scoped metadata patch lanes."]
+    },
+    {
+      "adapter_id": "chattycog_helper_notice_surface",
+      "composition_layer": "patch",
+      "primitive_name": "notice_surface",
+      "adapter_kind": "patch_lane_adapter",
+      "support_level": "optional",
+      "requires_primitives": ["summary_surface"],
+      "execution_hint": "notice_surface_extends_summary_surface",
+      "notes": ["Composed through helper summary notice and lane-scoped notice lanes."]
+    },
+    {
+      "adapter_id": "chattycog_local_inbox_lane",
+      "composition_layer": "helper",
+      "primitive_name": "inbox_lane",
+      "adapter_kind": "local_inbox_helper_bundle",
+      "support_level": "optional",
+      "companion_primitives": ["processed_output", "summary_emitter", "status_reporter"],
+      "execution_hint": "helper_bundle_seed",
+      "notes": ["Activated when helper-backed inbox monitoring is requested."]
+    },
+    {
+      "adapter_id": "chattycog_local_file_filter",
+      "composition_layer": "helper",
+      "primitive_name": "file_filter",
+      "adapter_kind": "local_inbox_helper_bundle",
+      "support_level": "optional",
+      "requires_primitives": ["inbox_lane"],
+      "execution_hint": "helper_filter_requires_inbox_lane",
+      "notes": ["Activated through file_type_filter and lane-scoped helper filter lanes."]
+    },
+    {
+      "adapter_id": "chattycog_local_processed_output",
+      "composition_layer": "helper",
+      "primitive_name": "processed_output",
+      "adapter_kind": "local_inbox_helper_bundle",
+      "support_level": "optional",
+      "requires_primitives": ["inbox_lane"],
+      "execution_hint": "helper_output_depends_on_inbox_lane",
+      "notes": ["The helper bundle emits processed helper outputs for module panels."]
+    },
+    {
+      "adapter_id": "chattycog_local_summary_emitter",
+      "composition_layer": "helper",
+      "primitive_name": "summary_emitter",
+      "adapter_kind": "local_inbox_helper_bundle",
+      "support_level": "optional",
+      "requires_primitives": ["inbox_lane"],
+      "companion_primitives": ["processed_output", "status_reporter"],
+      "execution_hint": "helper_summary_depends_on_inbox_lane",
+      "notes": ["The helper bundle emits summary artifacts consumed by helper summary surfaces."]
+    },
+    {
+      "adapter_id": "chattycog_local_status_reporter",
+      "composition_layer": "helper",
+      "primitive_name": "status_reporter",
+      "adapter_kind": "local_inbox_helper_bundle",
+      "support_level": "optional",
+      "requires_primitives": ["inbox_lane"],
+      "execution_hint": "helper_status_depends_on_inbox_lane",
+      "notes": ["The helper bundle emits helper status snapshots for module and host supervision."]
+    }
+  ],
+  "explicit_stack_keywords": ["chattycog", "chatty-cog", "module", "webview"],
+  "route_keywords": ["module", "starter", "dashboard", "chattycog", "webview"],
+  "supported_tool_kinds": ["dashboard", "module_starter"],
+  "forbids_capabilities": ["backend_service", "websocket", "api_server", "daemon"],
+  "requires_helper_for": ["background_job", "local_filesystem", "email_delivery"]
+}

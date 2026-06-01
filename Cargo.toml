@@ -1,0 +1,30 @@
+[workspace]
+members = [
+    "crates/chatty_factory_core",
+    "crates/chatty_factory_control",
+    "crates/chatty_factory_host",
+    "crates/chatty_factory_families",
+    "crates/chatty_factory_templates",
+    "crates/chatty_factory_verify",
+    "crates/chatty_factory_cli",
+    "crates/chatty_factory_ui",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "AGPL-3.0-only"
+authors = ["ChattyFactory"]
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+petgraph = "0.6"
+minijinja = "2"
+regex-automata = "0.4"
+jsonschema = "0.18"
+walkdir = "2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+eframe = "0.27"

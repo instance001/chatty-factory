@@ -1,0 +1,38 @@
+{
+  "response_id": "planner-response-example-make-it-better",
+  "source_handoff_id": "planner-handoff-1778791549984",
+  "source_plan_id": "plan-1778791549983",
+  "approved": true,
+  "recommended_family_id": "python_cli_tool",
+  "recommended_tool_kind": "directory_audit",
+  "recommended_patch_kind": null,
+  "recommended_operator_ids": [],
+  "recommended_acceptance_recipe_ids": [
+    "directory_audit_contract"
+  ],
+  "rationale": [
+    "Treat the vague improvement request as a request for a practical local utility.",
+    "Use the existing directory audit lane because it is deterministic and already accepted by the host."
+  ],
+  "execution_steps": [
+    "Route to python_cli_tool",
+    "Set tool kind to directory_audit",
+    "Render the deterministic scaffold and fixtures",
+    "Run host acceptance"
+  ],
+  "acceptance_notes": [
+    "Expect file and extension counts in stdout.",
+    "Keep the output host-readable and deterministic."
+  ],
+  "acceptance_checks_to_add": [],
+  "required_markers_to_add": [],
+  "acceptance_commands_to_add": [],
+  "expected_outputs_to_add": [],
+  "suggested_patch_kinds": [
+    "json_export"
+  ],
+  "suggested_features": [
+    "planner_guided_acceptance"
+  ],
+  "created_at": "created-example-make-it-better"
+}

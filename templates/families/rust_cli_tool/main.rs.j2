@@ -1,0 +1,164 @@
+use std::env;
+use std::fs;
+use std::path::PathBuf;
+
+fn main() {
+{% if tool_kind == "file_sorter" %}
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    let mut input: Option<PathBuf> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--input" if i + 1 < args.len() => {
+                input = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--output" if i + 1 < args.len() => {
+                output = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    let input_dir = input.expect("--input is required");
+    let output_dir = output.expect("--output is required");
+    fs::create_dir_all(&output_dir).expect("create output dir");
+
+    for entry in fs::read_dir(&input_dir).expect("read input dir") {
+        let entry = entry.expect("read entry");
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let ext = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+            .unwrap_or_else(|| "noext".to_string());
+        let target_dir = output_dir.join(ext);
+        fs::create_dir_all(&target_dir).expect("create target dir");
+        let name = path.file_name().expect("file name");
+        fs::copy(&path, target_dir.join(name)).expect("copy file");
+    }
+    println!("sorted files into {}", output_dir.display());
+{% elif tool_kind == "csv_report" %}
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    let mut input: Option<PathBuf> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--input" if i + 1 < args.len() => {
+                input = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    let input_file = input.expect("--input is required");
+    let text = fs::read_to_string(&input_file).expect("read input file");
+    let rows = text.lines().collect::<Vec<_>>();
+    if rows.is_empty() {
+        println!("rows=0 columns=0 header=");
+        return;
+    }
+    let header = rows[0]
+        .split(',')
+        .map(|part| part.trim().to_string())
+        .collect::<Vec<_>>();
+    let data_rows = rows.len().saturating_sub(1);
+    println!(
+        "rows={} columns={} header={}",
+        data_rows,
+        header.len(),
+        header.join(",")
+    );
+{% elif tool_kind == "log_summary" %}
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    let mut input: Option<PathBuf> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--input" if i + 1 < args.len() => {
+                input = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    let input_file = input.expect("--input is required");
+    let text = fs::read_to_string(&input_file).expect("read input file");
+    let lower = text.to_ascii_lowercase();
+    let errors = lower.matches("error").count();
+    let warnings = lower.matches("warn").count();
+    let infos = lower.matches("info").count();
+    println!("errors={} warnings={} infos={}", errors, warnings, infos);
+{% elif tool_kind == "text_stats" %}
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    let mut input: Option<PathBuf> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--input" if i + 1 < args.len() => {
+                input = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    let input_file = input.expect("--input is required");
+    let text = fs::read_to_string(&input_file).expect("read input file");
+    let lines = text.lines().count();
+    let words = text.split_whitespace().count();
+    let chars = text.chars().count();
+    println!("lines={} words={} chars={}", lines, words, chars);
+{% else %}
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    let mut input: Option<PathBuf> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--input" if i + 1 < args.len() => {
+                input = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    let input_dir = input.expect("--input is required");
+    let mut counts = std::collections::BTreeMap::new();
+    let mut total_files = 0usize;
+
+    for entry in fs::read_dir(&input_dir).expect("read input dir") {
+        let entry = entry.expect("read entry");
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        total_files += 1;
+        let ext = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+            .unwrap_or_else(|| "noext".to_string());
+        *counts.entry(ext).or_insert(0usize) += 1;
+    }
+
+    print!("files={}", total_files);
+    for (ext, count) in counts {
+        print!(" ext:{}={}", ext, count);
+    }
+    println!();
+{% endif %}
+}

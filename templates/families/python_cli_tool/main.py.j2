@@ -1,0 +1,90 @@
+import argparse
+from pathlib import Path
+import shutil
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="{{ summary }}")
+{% if tool_kind == "file_sorter" %}
+    parser.add_argument("--input", required=True, help="input folder")
+    parser.add_argument("--output", required=True, help="output folder")
+{% elif tool_kind == "csv_report" %}
+    parser.add_argument("--input", required=True, help="csv file to inspect")
+{% elif tool_kind == "log_summary" %}
+    parser.add_argument("--input", required=True, help="log file to inspect")
+{% elif tool_kind == "text_stats" %}
+    parser.add_argument("--input", required=True, help="text file to inspect")
+{% else %}
+    parser.add_argument("--input", required=True, help="folder to audit")
+{% endif %}
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+{% if tool_kind == "file_sorter" %}
+    input_dir = Path(args.input)
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for entry in input_dir.iterdir():
+        if not entry.is_file():
+            continue
+        ext = entry.suffix.lower().lstrip(".") or "noext"
+        target_dir = output_dir / ext
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(entry, target_dir / entry.name)
+    print(f"sorted files from {input_dir} into {output_dir}")
+    return 0
+{% elif tool_kind == "csv_report" %}
+    input_file = Path(args.input)
+    rows = input_file.read_text(encoding="utf-8").splitlines()
+    if not rows:
+        print("rows=0 columns=0 header=")
+        return 0
+    header = rows[0].split(",")
+    data_rows = rows[1:]
+    print(
+        f"rows={len(data_rows)} columns={len(header)} header={','.join(part.strip() for part in header)}"
+    )
+    return 0
+{% elif tool_kind == "log_summary" %}
+    input_file = Path(args.input)
+    text = input_file.read_text(encoding="utf-8")
+    lower = text.lower()
+    errors = lower.count("error")
+    warnings = lower.count("warn")
+    infos = lower.count("info")
+    print(f"errors={errors} warnings={warnings} infos={infos}")
+    return 0
+{% elif tool_kind == "text_stats" %}
+    input_file = Path(args.input)
+    text = input_file.read_text(encoding="utf-8")
+    lines = len(text.splitlines())
+    words = len(text.split())
+    chars = len(text)
+    print(f"lines={lines} words={words} chars={chars}")
+    return 0
+{% else %}
+    input_dir = Path(args.input)
+    counts = {}
+    total_files = 0
+
+    for entry in sorted(input_dir.iterdir()):
+        if not entry.is_file():
+            continue
+        total_files += 1
+        ext = entry.suffix.lower().lstrip(".") or "noext"
+        counts[ext] = counts.get(ext, 0) + 1
+
+    summary = [f"files={total_files}"]
+    for ext, count in counts.items():
+        summary.append(f"ext:{ext}={count}")
+    print(" ".join(summary))
+    return 0
+{% endif %}
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

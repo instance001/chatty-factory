@@ -1,0 +1,85 @@
+{
+  "template_id": "proof_manifest_scaffolded_filtered_reporting",
+  "template_kind": "cross_surface_filtered_reporting_scaffold",
+  "display_label": "proof manifest scaffolded filtered reporting",
+  "description": "Starter proof template scaffolded from fallback request `request-proof-harness-scaffold`.",
+  "shared_request_seed": "build me a helper-backed filtered reporting surface that filters inputs and emits report output",
+  "target_family_ids": [
+    "static_web_dashboard",
+    "rust_cli_tool"
+  ],
+  "required_composition_layers": [
+    "family_build",
+    "patch",
+    "helper"
+  ],
+  "required_family_build_primitive_classes": [
+    "summary_surface",
+    "status_chip"
+  ],
+  "required_patch_primitive_classes": [
+    "summary_surface",
+    "export_output",
+    "filter_rule"
+  ],
+  "required_helper_primitive_kinds": [
+    "inbox_lane",
+    "file_filter",
+    "summary_emitter",
+    "status_reporter"
+  ],
+  "required_capability_classes": [
+    "helper_summary",
+    "lane_filter_rules",
+    "report_output"
+  ],
+  "optional_capability_classes": [
+    "status_surface",
+    "helper_contract",
+    "export_surface"
+  ],
+  "optional_enrichment_steps": [
+    "json_output",
+    "progress_banner"
+  ],
+  "execution_recipe": {
+    "comparison_bundle_id": "proof_manifest_scaffolded_filtered_reporting_equivalence",
+    "request_generation_kind": "summary_reporting",
+    "enrichment_kind": "summary_reporting",
+    "family_request_bindings": [
+      {
+        "family_id": "static_web_dashboard",
+        "family_label": "static web dashboard",
+        "request_template": "build me a {family_label} with a local inbox helper that {request_tail}",
+        "empty_request_fallback": "build me a static web dashboard with a local inbox helper that filters inputs and emits report output"
+      },
+      {
+        "family_id": "rust_cli_tool",
+        "family_label": "rust cli log summary tool",
+        "request_template": "build me a {family_label} with a local inbox helper that {request_tail}",
+        "empty_request_fallback": "build me a rust cli log summary tool with a local inbox helper that filters inputs and emits report output"
+      }
+    ],
+    "enrichment_bindings": [
+      {
+        "family_id": "rust_cli_tool",
+        "missing_capability_classes": [
+          "export_surface"
+        ],
+        "patch_requests": [
+          "add json output"
+        ]
+      },
+      {
+        "family_id": "static_web_dashboard",
+        "missing_capability_classes": [
+          "status_surface"
+        ],
+        "patch_requests": [
+          "add progress banner"
+        ]
+      }
+    ]
+  },
+  "created_at": null
+}

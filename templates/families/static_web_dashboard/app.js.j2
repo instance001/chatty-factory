@@ -1,0 +1,89 @@
+const state = {
+  family: "static_web_dashboard",
+  route: "{{ route_label }}",
+  message: "{{ interactive_message }}",
+};
+
+const resultsRoot = document.getElementById("results-root");
+const statusText = document.getElementById("status-text");
+const primaryAction = document.getElementById("primary-action");
+const secondaryAction = document.getElementById("secondary-action");
+{% if helper_monitoring %}
+const helperSummaryStatus = document.getElementById("helper-summary-status");
+const helperSummaryCount = document.getElementById("helper-summary-count");
+const helperSummaryLanes = document.getElementById("helper-summary-lanes");
+const helperPreviewStatus = document.getElementById("helper-preview-status");
+const helperPreviewBody = document.getElementById("helper-preview-body");
+{% endif %}
+
+function render(message) {
+  resultsRoot.textContent = message;
+  statusText.textContent = `Ready: ${message}`;
+}
+
+{% if helper_monitoring %}
+async function loadStaticDashboardHelperMonitoring() {
+  if (
+    !helperSummaryStatus ||
+    !helperSummaryCount ||
+    !helperSummaryLanes ||
+    !helperPreviewStatus ||
+    !helperPreviewBody
+  ) {
+    return;
+  }
+
+  try {
+    const response = await fetch("bridge/helpers/local_inbox/summary.json");
+    if (!response.ok) {
+      throw new Error(`helper summary fetch failed: ${response.status}`);
+    }
+    const summary = await response.json();
+    const observedCount = Number(summary.observed_file_count || 0);
+    const observedLanes = Array.isArray(summary.observed_lanes) ? summary.observed_lanes : [];
+    const observedFiles = Array.isArray(summary.observed_files) ? summary.observed_files : [];
+
+    helperSummaryStatus.textContent = `Helper status: ${summary.status || "unknown"}`;
+    helperSummaryCount.textContent = observedCount
+      ? `Processed ${observedCount} helper file(s).`
+      : "No processed helper files yet.";
+    helperSummaryLanes.textContent = observedLanes.length
+      ? `Observed inbox lanes: ${observedLanes.join(", ")}`
+      : "Observed inbox lanes: pending";
+
+    if (!observedFiles.length) {
+      helperPreviewStatus.textContent = "No processed helper preview available yet.";
+      helperPreviewBody.textContent = "Waiting for helper output.";
+      return;
+    }
+
+    const previewFile = observedFiles[0];
+    const previewResponse = await fetch(`bridge/helpers/local_inbox/processed/${previewFile}`);
+    if (!previewResponse.ok) {
+      throw new Error(`helper preview fetch failed: ${previewResponse.status}`);
+    }
+    const previewText = await previewResponse.text();
+    helperPreviewStatus.textContent = `Previewing ${previewFile}`;
+    helperPreviewBody.textContent = previewText;
+  } catch (_error) {
+    helperSummaryStatus.textContent = "Helper summary is not available yet.";
+    helperSummaryCount.textContent = "Processed helper files are not available yet.";
+    helperSummaryLanes.textContent = "Observed inbox lanes: unavailable";
+    helperPreviewStatus.textContent = "Processed helper preview is not available yet.";
+    helperPreviewBody.textContent = "Waiting for helper output.";
+  }
+}
+{% endif %}
+
+primaryAction?.addEventListener("click", () => {
+  render(state.message);
+});
+
+secondaryAction?.addEventListener("click", () => {
+  render(`Route check: ${state.route}`);
+});
+
+render("Dashboard build loaded.");
+{% if helper_monitoring %}
+loadStaticDashboardHelperMonitoring();
+{% endif %}

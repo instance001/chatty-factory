@@ -1,0 +1,14823 @@
+use std::collections::BTreeMap;
+use std::fs;
+use std::hash::{DefaultHasher, Hasher};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use anyhow::Result;
+use chatty_factory_control::ControlPlane;
+use chatty_factory_core::{
+    active_project_summary_line, apply_planner_response, build_runtime_model_catalog,
+    build_primitive_classes_for_family, primitive_adapters_for_family,
+    build_context_bundle, build_execution_policy, build_project_snapshot,
+    chattycog_valid_hosting_modes, default_runtime_config, derive_planner_handoff,
+    derive_request_plan, derive_scaffold_inputs, discover_projects, discover_runtime,
+    gate_patch_project_snapshot, infer_chattycog_hosting_mode_from_text,
+    infer_chattycog_hosting_modes_from_text, infer_chattycog_bridge_capabilities_from_text,
+    load_project_session, normalize_patch_request, normalize_request, persist_json_pretty,
+    persist_project_browser_state, persist_project_session, request_mentions_chattycog,
+    resolve_model_choice, run_execution_policy, run_local_planner, run_runtime_smoke,
+    supported_chattycog_bridge_capabilities,
+    should_route_followup_via_planner_text, candidate_operator_bundle_ids_for,
+    built_in_capability_comparison_bundles, built_in_proof_templates,
+    AcceptanceCheck, AcceptanceRecipeStatus, ChattyCogBridgeCapabilities, ClarificationRequest,
+    capability_comparison_bundle_by_id, capability_comparison_bundle_by_id_from_root,
+    proof_template_by_id, proof_template_by_id_from_root, ComposableRoutePlan,
+    CompositionRouteClass, FailureReport, FailureReportEvidence, FamilyId,
+    FamilyPrimitiveAdapter, FallbackBuildSpec, FallbackPlanReceipt,
+    HelperRuntimeReceipt, HelperServiceSpec,
+    OperatorBundleStatus, PatchLaneStatus, PatchReceipt, PlannerDispatchReceipt, PlannerHandoff,
+    PlannerResponse, PrimitiveExecutionPlan, PrimitiveExecutionStep, PrimitiveProofHarnessReceipt,
+    PrimitiveProofEnrichmentBinding, PrimitiveProofFamilyRequestBinding, PrimitiveProofTemplate, CapabilityComparisonBundle, ProjectBrowserState, ProjectPatchDiagnosis, PatchIntentFreeze, ProjectSession, ProjectSpec, RuntimeConfig,
+    RuntimeModelCatalogReceipt, RuntimeSmokeReceipt, patch_primitive_classes_for_kinds,
+};
+use chatty_factory_families::{
+    apply_request_plan_enrichments, build_chattycog_native_window_module,
+    build_chattycog_webview_module, build_chattycog_workspace_module, build_python_cli_tool,
+    patch_conflicting_anchor_markers, patch_expected_artifact_groups,
+    patch_ownership_boundaries, patch_required_anchor_markers,
+    patch_lane_statuses as registry_patch_lane_statuses,
+    patch_primitive_classes as registry_patch_primitive_classes,
+    refresh_project_contract_views_for_project,
+    build_receipt, build_rust_cli_tool, build_static_web_dashboard,
+    candidate_acceptance_recipe_ids as registry_candidate_acceptance_recipe_ids,
+    candidate_patch_recipe_ids as registry_candidate_patch_recipe_ids, dispatch_patch_request,
+    BuildArtifacts, PatchArtifacts,
+};
+use chatty_factory_verify::{classify_failure, verify_acceptance_plan};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct CrossFamilyMonitoringComparisonReceipt {
+    pub receipt_id: String,
+    pub left_project_name: String,
+    pub left_family_id: Option<String>,
+    pub right_project_name: String,
+    pub right_family_id: Option<String>,
+    pub left_capability_classes: Vec<String>,
+    pub right_capability_classes: Vec<String>,
+    pub shared_capability_classes: Vec<String>,
+    pub left_only_capability_classes: Vec<String>,
+    pub right_only_capability_classes: Vec<String>,
+    pub equivalent_capability_fulfillment: bool,
+    pub notes: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ProofLineageReceipt {
+    pub receipt_id: String,
+    pub proof_template_id: String,
+    pub comparison_bundle_id: String,
+    pub proof_seed_template_id: Option<String>,
+    pub proof_seed_bundle_id: Option<String>,
+    pub source_stub_path: Option<String>,
+    pub template_manifest_path: Option<String>,
+    pub bundle_manifest_path: Option<String>,
+    pub template_content_hash: String,
+    pub bundle_content_hash: String,
+    pub drift_status: String,
+    pub drift_notes: Vec<String>,
+    pub latest_paired_proof_receipt_id: Option<String>,
+    pub latest_equivalent_capability_fulfillment: Option<bool>,
+    pub last_passing_paired_proof_receipt_id: Option<String>,
+    pub last_passing_template_content_hash: Option<String>,
+    pub last_passing_bundle_content_hash: Option<String>,
+    pub change_since_last_pass_status: String,
+    pub change_since_last_pass_notes: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ProofGovernanceRefreshStatus {
+    pub status_id: String,
+    pub refreshed_entries: usize,
+    pub skipped_entries: usize,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct CompositionGovernanceReceipt {
+    pub receipt_id: String,
+    pub entry_id: String,
+    pub family_id: Option<String>,
+    pub tool_kind: Option<String>,
+    pub patch_kind: Option<String>,
+    pub unresolved_layers: Vec<String>,
+    pub requested_capabilities: Vec<String>,
+    pub source_stub_path: Option<String>,
+    pub scaffold_root: Option<String>,
+    pub acceptance_recipe_paths: Vec<String>,
+    pub acceptance_contract_note: Option<String>,
+    pub artifact_hashes: BTreeMap<String, String>,
+    pub drift_status: String,
+    pub drift_notes: Vec<String>,
+    pub change_since_last_live_status: String,
+    pub change_since_last_live_notes: Vec<String>,
+    pub baseline_artifact_hashes: BTreeMap<String, String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct CompositionGovernanceRefreshStatus {
+    pub status_id: String,
+    pub refreshed_entries: usize,
+    pub skipped_entries: usize,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct PatchGovernanceReceipt {
+    pub receipt_id: String,
+    pub entry_id: String,
+    pub family_id: Option<String>,
+    pub tool_kind: Option<String>,
+    pub patch_kind: Option<String>,
+    pub requested_capabilities: Vec<String>,
+    pub source_stub_path: Option<String>,
+    pub scaffold_root: Option<String>,
+    pub patch_recipe_path: Option<String>,
+    pub acceptance_recipe_path: Option<String>,
+    pub acceptance_contract_note: Option<String>,
+    pub artifact_hashes: BTreeMap<String, String>,
+    pub drift_status: String,
+    pub drift_notes: Vec<String>,
+    pub change_since_last_live_status: String,
+    pub change_since_last_live_notes: Vec<String>,
+    pub baseline_artifact_hashes: BTreeMap<String, String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct PatchGovernanceRefreshStatus {
+    pub status_id: String,
+    pub refreshed_entries: usize,
+    pub skipped_entries: usize,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ProjectPatchReadinessReceipt {
+    pub receipt_id: String,
+    pub project_name: String,
+    pub family_id: Option<String>,
+    pub tool_kind: Option<String>,
+    pub request_summary: Option<String>,
+    pub project_spec_path: String,
+    pub project_spec_hash: String,
+    pub readiness_signature_hash: String,
+    pub total_patch_lanes: usize,
+    pub readiness_counts: BTreeMap<String, usize>,
+    pub patch_surgical_maturity_counts: BTreeMap<String, usize>,
+    pub blocked_lane_reasons: BTreeMap<String, String>,
+    pub superseded_blocked_lane_replacements: BTreeMap<String, Vec<String>>,
+    pub risky_blocked_lane_count: usize,
+    pub historical_blocked_lane_count: usize,
+    pub change_since_patchability_baseline_status: String,
+    pub change_since_patchability_baseline_notes: Vec<String>,
+    pub baseline_readiness_signature_hash: String,
+    pub baseline_readiness_counts: BTreeMap<String, usize>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ProjectPatchReadinessRefreshStatus {
+    pub status_id: String,
+    pub refreshed_entries: usize,
+    pub skipped_entries: usize,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct PatchDiagnosisPostcheckReceipt {
+    pub receipt_id: String,
+    pub diagnosis_id: String,
+    pub request_id: String,
+    pub project_name: String,
+    pub patch_kind: String,
+    pub declared_surface_groups: Vec<String>,
+    pub patch_surgical_maturity: Option<String>,
+    pub contract_confidence_summary: Option<String>,
+    pub modified_artifact_groups: BTreeMap<String, Vec<String>>,
+    pub out_of_contract_modified_files: Vec<String>,
+    pub verified_invariants: Vec<String>,
+    pub warnings: Vec<String>,
+    pub modified_files: Vec<String>,
+    pub passed: bool,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct HelperGovernanceReceipt {
+    pub receipt_id: String,
+    pub entry_id: String,
+    pub family_id: Option<String>,
+    pub tool_kind: Option<String>,
+    pub helper_lane_path: Option<String>,
+    pub requested_capabilities: Vec<String>,
+    pub missing_helper_primitive_kinds: Vec<String>,
+    pub source_stub_path: Option<String>,
+    pub scaffold_root: Option<String>,
+    pub artifact_hashes: BTreeMap<String, String>,
+    pub drift_status: String,
+    pub drift_notes: Vec<String>,
+    pub change_since_last_live_status: String,
+    pub change_since_last_live_notes: Vec<String>,
+    pub baseline_artifact_hashes: BTreeMap<String, String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct HelperGovernanceRefreshStatus {
+    pub status_id: String,
+    pub refreshed_entries: usize,
+    pub skipped_entries: usize,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct BridgeGovernanceReceipt {
+    pub receipt_id: String,
+    pub entry_id: String,
+    pub family_id: Option<String>,
+    pub tool_kind: Option<String>,
+    pub bridge_lane_path: Option<String>,
+    pub bridge_capabilities: Vec<String>,
+    pub requested_capabilities: Vec<String>,
+    pub source_stub_path: Option<String>,
+    pub scaffold_root: Option<String>,
+    pub artifact_hashes: BTreeMap<String, String>,
+    pub drift_status: String,
+    pub drift_notes: Vec<String>,
+    pub change_since_last_live_status: String,
+    pub change_since_last_live_notes: Vec<String>,
+    pub baseline_artifact_hashes: BTreeMap<String, String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct BridgeGovernanceRefreshStatus {
+    pub status_id: String,
+    pub refreshed_entries: usize,
+    pub skipped_entries: usize,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct FamilyGovernanceReceipt {
+    pub receipt_id: String,
+    pub family_id: String,
+    pub manifest_path: Option<String>,
+    pub primary_substrate: String,
+    pub supported_tool_kinds: Vec<String>,
+    pub provided_build_primitive_classes: Vec<String>,
+    pub primitive_adapter_ids: Vec<String>,
+    pub artifact_hashes: BTreeMap<String, String>,
+    pub drift_status: String,
+    pub drift_notes: Vec<String>,
+    pub change_since_last_live_status: String,
+    pub change_since_last_live_notes: Vec<String>,
+    pub baseline_artifact_hashes: BTreeMap<String, String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct FamilyGovernanceRefreshStatus {
+    pub status_id: String,
+    pub refreshed_entries: usize,
+    pub skipped_entries: usize,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct TemplateGovernanceReceipt {
+    pub receipt_id: String,
+    pub template_bundle_id: String,
+    pub template_category: String,
+    pub template_root: Option<String>,
+    pub artifact_paths: Vec<String>,
+    pub artifact_hashes: BTreeMap<String, String>,
+    pub drift_status: String,
+    pub drift_notes: Vec<String>,
+    pub change_since_last_live_status: String,
+    pub change_since_last_live_notes: Vec<String>,
+    pub baseline_artifact_hashes: BTreeMap<String, String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct TemplateGovernanceRefreshStatus {
+    pub status_id: String,
+    pub refreshed_entries: usize,
+    pub skipped_entries: usize,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+struct TemplateGovernanceBundle {
+    pub template_bundle_id: String,
+    pub template_category: String,
+    pub template_root: PathBuf,
+    pub artifact_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HostPlannerOptions {
+    pub auto_planner: bool,
+    pub requested_model: Option<String>,
+    pub requested_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HostRuntimeRefreshResult {
+    pub config: Option<RuntimeConfig>,
+    pub catalog: Option<RuntimeModelCatalogReceipt>,
+    pub smoke: Option<RuntimeSmokeReceipt>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HostExecutionResult {
+    pub kind: String,
+    pub request_id: String,
+    pub project_name: String,
+    pub family_id: Option<String>,
+    pub tool_kind: Option<String>,
+    pub patch_kind: Option<String>,
+    pub composition_route_class: Option<String>,
+    pub composable_route_plan_path: Option<String>,
+    pub composition_review_receipt_path: Option<String>,
+    pub followup_request_mode: Option<String>,
+    pub followup_rationale: Vec<String>,
+    pub plan_confidence_score: u8,
+    pub plan_confidence_band: String,
+    pub needs_llm_review: bool,
+    pub acceptance_status: Option<String>,
+    pub route_notes: Vec<String>,
+    pub file_paths: Vec<String>,
+    pub patch_lanes: Vec<PatchLaneStatus>,
+    pub acceptance_recipes: Vec<AcceptanceRecipeStatus>,
+    pub operator_bundles: Vec<OperatorBundleStatus>,
+    pub chattycog_hosting_mode: Option<String>,
+    pub chattycog_ui_owner: Option<String>,
+    pub chattycog_bridge_capabilities: Option<ChattyCogBridgeCapabilities>,
+    pub helper_services: Vec<HelperServiceSpec>,
+    pub helper_runtime_receipts: Vec<HelperRuntimeReceipt>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HostFallbackResult {
+    pub request_id: String,
+    pub mode: Option<String>,
+    pub composition_route_class: Option<String>,
+    pub composable_route_plan_path: Option<String>,
+    pub composition_review_receipt_path: Option<String>,
+    pub question: String,
+    pub interpreted_goal: String,
+    pub reasons: Vec<String>,
+    pub candidate_family_ids: Vec<String>,
+    pub requested_capabilities: Vec<String>,
+    pub constraints: Vec<String>,
+    pub suggested_extension_kind: String,
+    pub suggested_family_id: Option<String>,
+    pub suggested_tool_kind: Option<String>,
+    pub suggested_patch_kind: Option<String>,
+    pub suggested_bridge_capabilities: Vec<String>,
+    pub suggested_hosting_mode: Option<String>,
+    pub suggested_artifacts: Vec<String>,
+    pub missing_family_build_primitive_classes: Vec<String>,
+    pub missing_patch_primitive_classes: Vec<String>,
+    pub missing_helper_primitive_kinds: Vec<String>,
+    pub acceptance_targets: Vec<String>,
+    pub implementation_notes: Vec<String>,
+    pub suggested_proof_seed_template_id: Option<String>,
+    pub suggested_proof_seed_bundle_id: Option<String>,
+    pub recommended_next_step: String,
+    pub pending_extension_ids: Vec<String>,
+    pub pending_extension_scaffold_roots: Vec<String>,
+    pub chattycog_requested_hosting_mode: Option<String>,
+    pub chattycog_valid_hosting_modes: Vec<String>,
+    pub chattycog_requested_bridge_capabilities: Vec<String>,
+    pub chattycog_supported_bridge_capabilities: Vec<String>,
+    pub clarification_path: Option<String>,
+    pub build_spec_path: Option<String>,
+    pub planner_handoff_path: Option<String>,
+    pub stub_bundle_path: Option<String>,
+    pub receipt_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HostActionResult {
+    pub summary: String,
+    pub details: Vec<String>,
+    pub browser_state: Option<ProjectBrowserState>,
+    pub runtime_refresh: Option<HostRuntimeRefreshResult>,
+    pub execution_result: Option<HostExecutionResult>,
+    pub fallback_result: Option<HostFallbackResult>,
+    pub followup_route: Option<FollowupRouteResult>,
+    pub extension_registry: Option<HostExtensionRegistryView>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FollowupRouteResult {
+    pub selected_active_project: Option<String>,
+    pub selected_request_mode: String,
+    pub rationale: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CompositionReviewDecision {
+    approved: bool,
+    selected_patch_kinds: Vec<String>,
+    selected_composition_layers: Vec<String>,
+    rationale: Vec<String>,
+    review_receipt_path: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct AdapterScoredFamilyChoice {
+    family_id: FamilyId,
+    score: usize,
+    reasons: Vec<String>,
+}
+
+fn candidate_family_build_primitive_classes_for_composition(
+    selected_family_id: Option<&FamilyId>,
+) -> Vec<String> {
+    selected_family_id
+        .map(build_primitive_classes_for_family)
+        .unwrap_or_default()
+}
+
+fn primitive_names_supported_by_adapters(
+    adapters: &[FamilyPrimitiveAdapter],
+    composition_layer: &str,
+    primitive_names: &[String],
+) -> usize {
+    primitive_names
+        .iter()
+        .filter(|primitive_name| {
+            adapters.iter().any(|adapter| {
+                adapter.composition_layer == composition_layer
+                    && adapter.primitive_name == primitive_name.as_str()
+            })
+        })
+        .count()
+}
+
+fn score_family_for_primitive_native_build(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    family_id: &FamilyId,
+    original_rank: usize,
+) -> AdapterScoredFamilyChoice {
+    let adapters = primitive_adapters_for_family(family_id);
+    let family_build_classes = build_primitive_classes_for_family(family_id);
+    let patch_kinds = derive_bounded_build_composition_patch_kinds(request, plan, Some(family_id));
+    let patch_classes = candidate_patch_primitive_classes_for_composition(
+        Some(family_id),
+        plan.inferred_tool_kind.as_deref(),
+        &patch_kinds,
+    );
+    let helper_kinds =
+        candidate_helper_primitive_kinds_for_composition(None, Some(family_id), &patch_kinds);
+    let composition_layers = derive_composition_layers(
+        &family_build_classes,
+        &patch_classes,
+        &helper_kinds,
+        &Vec::new(),
+    );
+
+    let matched_family_build =
+        primitive_names_supported_by_adapters(&adapters, "family_build", &family_build_classes);
+    let matched_patch =
+        primitive_names_supported_by_adapters(&adapters, "patch", &patch_classes);
+    let matched_helper =
+        primitive_names_supported_by_adapters(&adapters, "helper", &helper_kinds);
+
+    let helperish = request_looks_helper_or_service_shaped(request, plan);
+    let lower = request.raw_request.to_ascii_lowercase();
+    let progressish = lower.contains("progress") || lower.contains("banner");
+    let monitorish = lower.contains("monitor") || lower.contains("status");
+    let filterish = lower.contains("filter") || lower.contains("filtered");
+    let explicit_static_family = lower.contains("static web dashboard")
+        || lower.contains("static dashboard");
+    let explicit_chattycog_family = lower.contains("chattycog")
+        || lower.contains("webview module")
+        || lower.contains("chattycog webview");
+
+    let mut score = 0usize;
+    score += matched_family_build * 4;
+    score += matched_patch * 5;
+    score += matched_helper * 5;
+    score += composition_layers.len() * 2;
+    if !patch_kinds.is_empty() {
+        score += 4;
+    }
+    if helperish && !helper_kinds.is_empty() {
+        score += 6;
+    }
+    if progressish && patch_kinds.iter().any(|kind| kind == "progress_banner") {
+        score += 6;
+    }
+    if monitorish && patch_classes.iter().any(|class| class == "status_chip") {
+        score += 3;
+    }
+    if filterish && helper_kinds.iter().any(|kind| kind == "file_filter") {
+        score += 4;
+    }
+    if explicit_static_family && matches!(family_id, FamilyId::StaticWebDashboard) {
+        score += 100;
+    }
+    if explicit_chattycog_family && matches!(family_id, FamilyId::ChattycogWebviewModule) {
+        score += 100;
+    }
+    score += plan
+        .inferred_family_candidates
+        .len()
+        .saturating_sub(original_rank);
+
+    let mut reasons = Vec::new();
+    if matched_family_build > 0 {
+        reasons.push(format!(
+            "family_build adapters matched {} declared primitive classes",
+            matched_family_build
+        ));
+    }
+    if matched_patch > 0 {
+        reasons.push(format!(
+            "patch adapters matched {} requested primitive classes",
+            matched_patch
+        ));
+    }
+    if matched_helper > 0 {
+        reasons.push(format!(
+            "helper adapters matched {} requested primitive kinds",
+            matched_helper
+        ));
+    }
+    if !patch_kinds.is_empty() {
+        reasons.push(format!(
+            "family can satisfy bounded composition patch bundle: {}",
+            patch_kinds.join(", ")
+        ));
+    }
+    if explicit_static_family && matches!(family_id, FamilyId::StaticWebDashboard) {
+        reasons.push("request explicitly named static dashboard family".into());
+    }
+    if explicit_chattycog_family && matches!(family_id, FamilyId::ChattycogWebviewModule) {
+        reasons.push("request explicitly named ChattyCog webview family".into());
+    }
+    if reasons.is_empty() {
+        reasons.push("family retained only by legacy route ranking".into());
+    }
+
+    AdapterScoredFamilyChoice {
+        family_id: family_id.clone(),
+        score,
+        reasons,
+    }
+}
+
+fn apply_adapter_aware_family_preference_for_build(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &mut chatty_factory_core::RequestPlan,
+) {
+    if !matches!(request.mode, Some(chatty_factory_core::RequestMode::NewBuild)) {
+        return;
+    }
+    if plan.inferred_family_candidates.len() < 2 {
+        return;
+    }
+
+    let lower = request.raw_request.to_ascii_lowercase();
+    let helperish = request_looks_helper_or_service_shaped(request, plan)
+        || lower.contains("monitor")
+        || lower.contains("progress")
+        || lower.contains("banner")
+        || lower.contains("status")
+        || lower.contains("inbox")
+        || lower.contains("watch");
+    if !helperish {
+        return;
+    }
+
+    let scored = plan
+        .inferred_family_candidates
+        .iter()
+        .enumerate()
+        .map(|(index, family_id)| {
+            score_family_for_primitive_native_build(request, plan, family_id, index)
+        })
+        .collect::<Vec<_>>();
+    let mut reordered = scored.clone();
+    reordered.sort_by(|left, right| right.score.cmp(&left.score));
+
+    if reordered
+        .first()
+        .map(|choice| &choice.family_id)
+        != plan.inferred_family_candidates.first()
+    {
+        let summary = reordered
+            .iter()
+            .map(|choice| format!("{}={}", choice.family_id.as_str(), choice.score))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if let Some(best) = reordered.first() {
+            plan.rationale.push(format!(
+                "adapter-aware primitive routing preferred family `{}` over legacy order [{}]",
+                best.family_id.as_str(),
+                summary
+            ));
+            plan.rationale.extend(
+                best.reasons
+                    .iter()
+                    .map(|reason| format!("adapter-aware-family-reason: {reason}")),
+            );
+        }
+    }
+
+    plan.inferred_family_candidates = reordered
+        .into_iter()
+        .map(|choice| choice.family_id)
+        .collect();
+}
+
+fn derive_composition_layers(
+    family_build_primitive_classes: &[String],
+    patch_primitive_classes: &[String],
+    helper_primitive_kinds: &[String],
+    bridge_capabilities: &[String],
+) -> Vec<String> {
+    let mut layers = Vec::new();
+    if !family_build_primitive_classes.is_empty() {
+        layers.push("family_build".to_string());
+    }
+    if !patch_primitive_classes.is_empty() {
+        layers.push("patch".to_string());
+    }
+    if !helper_primitive_kinds.is_empty() {
+        layers.push("helper".to_string());
+    }
+    if !bridge_capabilities.is_empty() {
+        layers.push("bridge".to_string());
+    }
+    layers
+}
+
+fn composition_work_order_kind(layers: &[String]) -> String {
+    if layers.len() > 1 {
+        "composition_bundle".into()
+    } else if layers.iter().any(|layer| layer == "patch") {
+        "patch_recipe".into()
+    } else if layers.iter().any(|layer| layer == "helper") {
+        "helper_lane".into()
+    } else if layers.iter().any(|layer| layer == "bridge") {
+        "chattycog_bridge_lane".into()
+    } else if layers.iter().any(|layer| layer == "family_build") {
+        "family".into()
+    } else {
+        "direct_lane".into()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct CompositionPrimitiveDependency {
+    patch_kind: String,
+    requires_features: Vec<String>,
+    provides_features: Vec<String>,
+    composition_role: String,
+    exclusive_group: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CompositionExecutionOutcome {
+    applied_patch_kinds: Vec<String>,
+    modified_files: Vec<String>,
+    final_artifacts: Option<PatchArtifacts>,
+    final_receipt: Option<PatchReceipt>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HostExtensionRegistryView {
+    pub pending_count: usize,
+    pub implemented_count: usize,
+    pub validated_count: usize,
+    pub promotion_prepared_count: usize,
+    pub apply_patch_ready_count: usize,
+    pub host_wired_count: usize,
+    pub fully_live_count: usize,
+    pub archived_count: usize,
+    pub active_entries: Vec<PendingExtensionEntry>,
+    pub fully_live_entries: Vec<PendingExtensionEntry>,
+    pub archived_entries: Vec<PendingExtensionEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PendingExtensionEntry {
+    pub entry_id: String,
+    pub status: String,
+    pub extension_kind: String,
+    #[serde(default)]
+    pub unresolved_layers: Vec<String>,
+    pub family_id: Option<String>,
+    pub tool_kind: Option<String>,
+    pub patch_kind: Option<String>,
+    pub bridge_capabilities: Vec<String>,
+    pub requested_capabilities: Vec<String>,
+    #[serde(default)]
+    pub missing_family_build_primitive_classes: Vec<String>,
+    #[serde(default)]
+    pub missing_patch_primitive_classes: Vec<String>,
+    #[serde(default)]
+    pub missing_helper_primitive_kinds: Vec<String>,
+    pub source_stub_path: String,
+    pub scaffold_root: String,
+    pub integrated_paths: Vec<String>,
+    #[serde(default)]
+    pub promotion_artifacts: Vec<String>,
+    #[serde(default)]
+    pub apply_patch_artifacts: Vec<String>,
+    #[serde(default)]
+    pub proof_seed_template_id: Option<String>,
+    #[serde(default)]
+    pub proof_seed_bundle_id: Option<String>,
+    #[serde(default)]
+    pub proof_quality_status: Option<String>,
+    #[serde(default)]
+    pub proof_quality_notes: Vec<String>,
+    #[serde(default)]
+    pub proof_lineage_receipt_path: Option<String>,
+    #[serde(default)]
+    pub proof_drift_status: Option<String>,
+    #[serde(default)]
+    pub proof_drift_notes: Vec<String>,
+    #[serde(default)]
+    pub proof_change_since_last_pass_status: Option<String>,
+    #[serde(default)]
+    pub proof_change_since_last_pass_notes: Vec<String>,
+    #[serde(default)]
+    pub composition_lineage_receipt_path: Option<String>,
+    #[serde(default)]
+    pub composition_drift_status: Option<String>,
+    #[serde(default)]
+    pub composition_drift_notes: Vec<String>,
+    #[serde(default)]
+    pub composition_change_since_last_live_status: Option<String>,
+    #[serde(default)]
+    pub composition_change_since_last_live_notes: Vec<String>,
+    #[serde(default)]
+    pub patch_lineage_receipt_path: Option<String>,
+    #[serde(default)]
+    pub patch_drift_status: Option<String>,
+    #[serde(default)]
+    pub patch_drift_notes: Vec<String>,
+    #[serde(default)]
+    pub patch_change_since_last_live_status: Option<String>,
+    #[serde(default)]
+    pub patch_change_since_last_live_notes: Vec<String>,
+    #[serde(default)]
+    pub helper_lineage_receipt_path: Option<String>,
+    #[serde(default)]
+    pub helper_drift_status: Option<String>,
+    #[serde(default)]
+    pub helper_drift_notes: Vec<String>,
+    #[serde(default)]
+    pub helper_change_since_last_live_status: Option<String>,
+    #[serde(default)]
+    pub helper_change_since_last_live_notes: Vec<String>,
+    #[serde(default)]
+    pub bridge_lineage_receipt_path: Option<String>,
+    #[serde(default)]
+    pub bridge_drift_status: Option<String>,
+    #[serde(default)]
+    pub bridge_drift_notes: Vec<String>,
+    #[serde(default)]
+    pub bridge_change_since_last_live_status: Option<String>,
+    #[serde(default)]
+    pub bridge_change_since_last_live_notes: Vec<String>,
+    #[serde(default)]
+    pub archived_reason: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PendingExtensionRegistry {
+    pub updated_at: String,
+    pub entries: Vec<PendingExtensionEntry>,
+}
+
+pub struct HostBridge {
+    workspace_root: PathBuf,
+    output_root: PathBuf,
+    runtime_root: PathBuf,
+}
+
+impl HostBridge {
+    pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
+        let workspace_root = workspace_root.into();
+        Self {
+            output_root: workspace_root.join("output"),
+            runtime_root: workspace_root.join("runtime"),
+            workspace_root,
+        }
+    }
+
+    fn persist_cross_family_monitoring_receipt(
+        &self,
+        left_project_name: &str,
+        right_project_name: &str,
+    ) -> Result<(CrossFamilyMonitoringComparisonReceipt, PathBuf)> {
+        let comparison_bundle = capability_comparison_bundle_by_id(
+            "bundle_helper_monitoring_equivalence",
+        )
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "missing built-in capability comparison bundle bundle_helper_monitoring_equivalence"
+            )
+        })?;
+        self.persist_cross_family_capability_comparison_receipt(
+            left_project_name,
+            right_project_name,
+            &comparison_bundle,
+        )
+    }
+
+    fn persist_cross_family_capability_comparison_receipt(
+        &self,
+        left_project_name: &str,
+        right_project_name: &str,
+        comparison_bundle: &chatty_factory_core::CapabilityComparisonBundle,
+    ) -> Result<(CrossFamilyMonitoringComparisonReceipt, PathBuf)> {
+        let left_project_dir = self.output_root.join(left_project_name);
+        let right_project_dir = self.output_root.join(right_project_name);
+        let left_spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(
+            left_project_dir.join("ProjectSpec.json"),
+        )?)?;
+        let right_spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(
+            right_project_dir.join("ProjectSpec.json"),
+        )?)?;
+        let left_acceptance: chatty_factory_core::AcceptancePlan = serde_json::from_str(
+            &fs::read_to_string(left_project_dir.join("AcceptancePlan.json"))?,
+        )?;
+        let right_acceptance: chatty_factory_core::AcceptancePlan = serde_json::from_str(
+            &fs::read_to_string(right_project_dir.join("AcceptancePlan.json"))?,
+        )?;
+        let receipt = build_cross_family_capability_comparison_receipt(
+            left_project_name,
+            &left_spec,
+            &left_acceptance,
+            right_project_name,
+            &right_spec,
+            &right_acceptance,
+            comparison_bundle,
+        );
+        let path = persist_cross_family_capability_comparison_receipt(
+            &self.runtime_root,
+            &receipt,
+        )?;
+        Ok((receipt, path))
+    }
+
+    pub fn run_cross_family_helper_monitoring_proof(
+        &self,
+        shared_request: &str,
+        planner: &HostPlannerOptions,
+    ) -> Result<HostActionResult> {
+        self.run_proof_template(
+            "proof_helper_monitoring",
+            if shared_request.trim().is_empty() {
+                None
+            } else {
+                Some(shared_request)
+            },
+            planner,
+        )
+    }
+
+    pub fn run_proof_template(
+        &self,
+        template_id: &str,
+        shared_request_override: Option<&str>,
+        planner: &HostPlannerOptions,
+    ) -> Result<HostActionResult> {
+        let proof_template =
+            proof_template_by_id_from_root(&self.workspace_root, template_id, shared_request_override)
+                .ok_or_else(|| anyhow::anyhow!("missing proof template {template_id}"))?;
+        let comparison_bundle = capability_comparison_bundle_by_id_from_root(
+            &self.workspace_root,
+            &proof_template.execution_recipe.comparison_bundle_id,
+        )
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "missing capability comparison bundle {}",
+                    proof_template.execution_recipe.comparison_bundle_id
+                )
+            })?;
+        self.run_declarative_proof_template(proof_template, comparison_bundle, planner)
+    }
+
+    fn run_declarative_proof_template(
+        &self,
+        proof_template: chatty_factory_core::PrimitiveProofTemplate,
+        comparison_bundle: chatty_factory_core::CapabilityComparisonBundle,
+        planner: &HostPlannerOptions,
+    ) -> Result<HostActionResult> {
+        let shared_request = proof_template.shared_request_seed.clone();
+        let template_kind = proof_template.template_kind.clone();
+        let left_family = proof_template
+            .target_family_ids
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("proof template missing left target family"))?;
+        let right_family = proof_template
+            .target_family_ids
+            .get(1)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("proof template missing right target family"))?;
+        let left_request = proof_request_for_family(
+            &shared_request,
+            &left_family,
+            &proof_template.execution_recipe,
+        );
+        let right_request = proof_request_for_family(
+            &shared_request,
+            &right_family,
+            &proof_template.execution_recipe,
+        );
+
+        let left_result = self.build_request(&left_request, planner)?;
+        let right_result = self.build_request(&right_request, planner)?;
+        let mut left_execution = left_result
+            .execution_result
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing left execution result from paired proof build"))?
+            .clone();
+        let mut right_execution = right_result
+            .execution_result
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing right execution result from paired proof build"))?
+            .clone();
+
+        if let Some(updated_execution) = self.enrich_project_for_proof_baseline(
+            &left_execution.project_name,
+            left_execution.family_id.as_deref(),
+            &proof_template.execution_recipe,
+            planner,
+        )? {
+            left_execution = merge_execution_artifacts(left_execution, updated_execution);
+        }
+        if let Some(updated_execution) = self.enrich_project_for_proof_baseline(
+            &right_execution.project_name,
+            right_execution.family_id.as_deref(),
+            &proof_template.execution_recipe,
+            planner,
+        )? {
+            right_execution = merge_execution_artifacts(right_execution, updated_execution);
+        }
+
+        let left_project_name = left_execution.project_name.clone();
+        let right_project_name = right_execution.project_name.clone();
+        let (comparison_receipt, comparison_receipt_path) =
+            self.persist_cross_family_capability_comparison_receipt(
+                &left_project_name,
+                &right_project_name,
+                &comparison_bundle,
+            )?;
+
+        let paired_receipt = PrimitiveProofHarnessReceipt {
+            receipt_id: chatty_factory_core::timestamp_id("cross-family-paired-proof"),
+            proof_template_id: proof_template.template_id,
+            proof_template_kind: proof_template.template_kind,
+            proof_template_display_label: proof_template.display_label,
+            capability_comparison_bundle_id: comparison_bundle.bundle_id,
+            shared_request: shared_request.clone(),
+            left_request,
+            right_request,
+            target_family_ids: proof_template.target_family_ids.clone(),
+            left_project_name: left_project_name.clone(),
+            left_family_id: left_execution
+                .family_id
+                .as_deref()
+                .and_then(parse_family_id_label),
+            left_request_id: left_execution.request_id.clone(),
+            left_composable_route_plan_path: left_execution.composable_route_plan_path.clone(),
+            left_primitive_execution_plan_path: first_matching_runtime_artifact_path(
+                &left_execution.file_paths,
+                "primitive_execution_plans",
+            ),
+            right_project_name: right_project_name.clone(),
+            right_family_id: right_execution
+                .family_id
+                .as_deref()
+                .and_then(parse_family_id_label),
+            right_request_id: right_execution.request_id.clone(),
+            right_composable_route_plan_path: right_execution.composable_route_plan_path.clone(),
+            right_primitive_execution_plan_path: first_matching_runtime_artifact_path(
+                &right_execution.file_paths,
+                "primitive_execution_plans",
+            ),
+            comparison_receipt_path: comparison_receipt_path.display().to_string(),
+            equivalent_capability_fulfillment: comparison_receipt
+                .equivalent_capability_fulfillment,
+            notes: vec![
+                format!("left build project={left_project_name}"),
+                format!("right build project={right_project_name}"),
+                format!(
+                    "shared capability classes: {}",
+                    comparison_receipt.shared_capability_classes.join(", ")
+                ),
+                format!(
+                    "comparison receipt persisted: {}",
+                    comparison_receipt_path.display()
+                ),
+            ],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let paired_receipt_path =
+            persist_cross_family_paired_proof_receipt(&self.runtime_root, &paired_receipt)?;
+
+        Ok(HostActionResult {
+            summary: format!(
+                "Proof template `{}` complete",
+                paired_receipt.proof_template_id
+            ),
+            details: vec![
+                format!("left_project={left_project_name}"),
+                format!("right_project={right_project_name}"),
+                format!(
+                    "equivalent_capability_fulfillment={}",
+                    paired_receipt.equivalent_capability_fulfillment
+                ),
+                format!("paired_proof_receipt={}", paired_receipt_path.display()),
+                format!("comparison_receipt={}", comparison_receipt_path.display()),
+            ]
+            .into_iter()
+            .chain(paired_receipt.notes.clone())
+            .collect(),
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: Some(HostExecutionResult {
+                kind: "proof_template_run".into(),
+                request_id: paired_receipt.receipt_id.clone(),
+                project_name: format!("{left_project_name},{right_project_name}"),
+                family_id: None,
+                tool_kind: Some(template_kind),
+                patch_kind: None,
+                composition_route_class: Some("composition_bundle".into()),
+                composable_route_plan_path: Some(paired_receipt_path.display().to_string()),
+                composition_review_receipt_path: Some(comparison_receipt_path.display().to_string()),
+                followup_request_mode: None,
+                followup_rationale: Vec::new(),
+                plan_confidence_score: 100,
+                plan_confidence_band: "high".into(),
+                needs_llm_review: false,
+                acceptance_status: Some(if paired_receipt.equivalent_capability_fulfillment {
+                    "passed".into()
+                } else {
+                    "failed".into()
+                }),
+                route_notes: vec![
+                    format!(
+                        "proof template orchestrated from one shared intent: {}",
+                        paired_receipt.proof_template_id
+                    ),
+                    format!(
+                        "left primitive execution plan: {}",
+                        paired_receipt
+                            .left_primitive_execution_plan_path
+                            .as_deref()
+                            .unwrap_or("missing")
+                    ),
+                    format!(
+                        "right primitive execution plan: {}",
+                        paired_receipt
+                            .right_primitive_execution_plan_path
+                            .as_deref()
+                            .unwrap_or("missing")
+                    ),
+                    format!(
+                        "cross-family comparison receipt: {}",
+                        comparison_receipt_path.display()
+                    ),
+                ],
+                file_paths: vec![
+                    paired_receipt_path.display().to_string(),
+                    comparison_receipt_path.display().to_string(),
+                ]
+                .into_iter()
+                .chain(
+                    paired_receipt
+                        .left_primitive_execution_plan_path
+                        .iter()
+                        .cloned(),
+                )
+                .chain(
+                    paired_receipt
+                        .right_primitive_execution_plan_path
+                        .iter()
+                        .cloned(),
+                )
+                .collect(),
+                patch_lanes: Vec::new(),
+                acceptance_recipes: Vec::new(),
+                operator_bundles: Vec::new(),
+                chattycog_hosting_mode: None,
+                chattycog_ui_owner: None,
+                chattycog_bridge_capabilities: None,
+                helper_services: Vec::new(),
+                helper_runtime_receipts: Vec::new(),
+            }),
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    fn enrich_project_for_proof_baseline(
+        &self,
+        project_name: &str,
+        family_id: Option<&str>,
+        execution_recipe: &chatty_factory_core::PrimitiveProofExecutionRecipe,
+        planner: &HostPlannerOptions,
+    ) -> Result<Option<HostExecutionResult>> {
+        let Some(family_id) = family_id.and_then(parse_family_id_label) else {
+            return Ok(None);
+        };
+        let capabilities = self.proof_capabilities_for_project(project_name)?;
+        let Some(binding) = execution_recipe
+            .enrichment_bindings
+            .iter()
+            .find(|binding| binding.family_id == family_id)
+        else {
+            return match execution_recipe.enrichment_kind.as_str() {
+                "helper_monitoring" => {
+                    self.enrich_project_for_helper_monitoring_baseline(
+                        project_name,
+                        Some(family_id.as_str()),
+                        planner,
+                    )
+                }
+                "summary_reporting" => {
+                    self.enrich_project_for_summary_reporting_baseline(
+                        project_name,
+                        Some(family_id.as_str()),
+                        planner,
+                    )
+                }
+                _ => Ok(None),
+            };
+        };
+
+        let missing = binding
+            .missing_capability_classes
+            .iter()
+            .any(|capability| !capabilities.iter().any(|current| current == capability));
+        if !missing {
+            return Ok(None);
+        }
+
+        let mut latest_execution = None;
+        for patch_request in &binding.patch_requests {
+            let result = self.patch_request(project_name, patch_request, planner)?;
+            latest_execution = result.execution_result;
+        }
+        Ok(latest_execution)
+    }
+
+    fn proof_capabilities_for_project(
+        &self,
+        project_name: &str,
+    ) -> Result<Vec<String>> {
+        let project_dir = self.output_root.join(project_name);
+        let spec = load_project_spec_with_contract_refresh(&project_dir)?;
+        let acceptance: chatty_factory_core::AcceptancePlan = serde_json::from_str(
+            &fs::read_to_string(project_dir.join("AcceptancePlan.json"))?,
+        )?;
+        Ok(proof_capability_classes(&spec, &acceptance))
+    }
+
+    fn enrich_project_for_helper_monitoring_baseline(
+        &self,
+        project_name: &str,
+        family_id: Option<&str>,
+        planner: &HostPlannerOptions,
+    ) -> Result<Option<HostExecutionResult>> {
+        let capabilities = self.proof_capabilities_for_project(project_name)?;
+        if helper_monitoring_baseline_satisfied(&capabilities) {
+            return Ok(None);
+        }
+        let mut latest_execution = None;
+        if family_id == Some("chattycog_webview_module")
+            && !capabilities.iter().any(|capability| capability == "helper_preview_surface")
+        {
+            self.patch_request(project_name, "add processed files panel", planner)?;
+            let processed_preview_result =
+                self.patch_request(project_name, "add processed file preview panel", planner)?;
+            latest_execution = processed_preview_result.execution_result;
+        }
+        Ok(latest_execution)
+    }
+
+    fn enrich_project_for_summary_reporting_baseline(
+        &self,
+        project_name: &str,
+        family_id: Option<&str>,
+        planner: &HostPlannerOptions,
+    ) -> Result<Option<HostExecutionResult>> {
+        let capabilities = self.proof_capabilities_for_project(project_name)?;
+        let mut latest_execution = None;
+        if family_id == Some("rust_cli_tool")
+            && !capabilities.iter().any(|capability| capability == "export_surface")
+        {
+            let json_output_result = self.patch_request(project_name, "add json output", planner)?;
+            latest_execution = json_output_result.execution_result;
+        } else if family_id == Some("static_web_dashboard")
+            && !capabilities.iter().any(|capability| capability == "status_surface")
+        {
+            let progress_banner_result =
+                self.patch_request(project_name, "add progress banner", planner)?;
+            latest_execution = progress_banner_result.execution_result;
+        }
+        Ok(latest_execution)
+    }
+
+    pub fn refresh_project_browser(&self) -> Result<HostActionResult> {
+        fs::create_dir_all(&self.output_root)?;
+        fs::create_dir_all(&self.runtime_root)?;
+        let _ = self.refresh_project_patch_readiness_registry()?;
+        let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
+        Ok(HostActionResult {
+            summary: "Project browser refreshed".into(),
+            details: vec![format!("projects={}", browser_state.projects.len())],
+            browser_state: Some(browser_state),
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn select_project(&self, project_name: &str) -> Result<HostActionResult> {
+        let project_dir = self.output_root.join(project_name);
+        let spec_path = project_dir.join("ProjectSpec.json");
+        if !spec_path.exists() {
+            anyhow::bail!(
+                "project `{}` does not exist or does not contain ProjectSpec.json",
+                project_name
+            );
+        }
+        let spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(spec_path)?)?;
+        let updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_project_session(
+            &self.runtime_root,
+            "active_project_session.json",
+            "active_project_sessions",
+            &ProjectSession {
+                project_name: project_name.to_string(),
+                family_id: spec.family_id.clone(),
+                tool_kind: spec.tool_kind.clone(),
+                request_summary: spec.request_summary.clone(),
+                last_action: "select".into(),
+                source_kind: "user_selected".into(),
+                source_request_id: "manual-select".into(),
+                updated_at: updated_at.clone(),
+            },
+        )?;
+        persist_project_session(
+            &self.runtime_root,
+            "selected_project_session.json",
+            "selected_project_sessions",
+            &ProjectSession {
+                project_name: project_name.to_string(),
+                family_id: spec.family_id,
+                tool_kind: spec.tool_kind,
+                request_summary: spec.request_summary,
+                last_action: "select".into(),
+                source_kind: "user_selected".into(),
+                source_request_id: "manual-select".into(),
+                updated_at,
+            },
+        )?;
+        let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
+        Ok(HostActionResult {
+            summary: "Project selected".into(),
+            details: vec![format!("selected={project_name}")],
+            browser_state: Some(browser_state),
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn clear_selected_project(&self) -> Result<HostActionResult> {
+        let session_path = self.runtime_root.join("selected_project_session.json");
+        if session_path.exists() {
+            fs::remove_file(session_path)?;
+        }
+        let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
+        Ok(HostActionResult {
+            summary: "Selected project cleared".into(),
+            details: Vec::new(),
+            browser_state: Some(browser_state),
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn run_project_helpers(
+        &self,
+        project_name: &str,
+        helper_id: Option<&str>,
+    ) -> Result<HostActionResult> {
+        let project_dir = self.output_root.join(project_name);
+        let spec = load_project_spec_with_contract_refresh(&project_dir)?;
+        let request_id = chatty_factory_core::timestamp_id("helper-run");
+        let mut helper_runtime_receipts = execute_and_persist_helper_runtime_state(
+            &self.runtime_root,
+            &request_id,
+            &project_dir,
+            &spec,
+        )?;
+        if let Some(helper_id) = helper_id {
+            helper_runtime_receipts.retain(|receipt| receipt.helper_id == helper_id);
+        }
+        Ok(HostActionResult {
+            summary: "Project helpers executed".into(),
+            details: helper_runtime_receipts
+                .iter()
+                .map(|receipt| {
+                    format!(
+                        "helper={} status={} outputs={}",
+                        receipt.helper_id,
+                        receipt.launch_status,
+                        receipt.observed_output_files.join(",")
+                    )
+                })
+                .collect(),
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: Some(HostExecutionResult {
+                kind: "helper_run".into(),
+                request_id,
+                project_name: project_name.to_string(),
+                family_id: spec.family_id.clone().map(|id| id.as_str().to_string()),
+                tool_kind: spec.tool_kind.clone(),
+                patch_kind: None,
+                composition_route_class: None,
+                composable_route_plan_path: None,
+                composition_review_receipt_path: None,
+                followup_request_mode: None,
+                followup_rationale: Vec::new(),
+                plan_confidence_score: 100,
+                plan_confidence_band: "high".into(),
+                needs_llm_review: false,
+                acceptance_status: None,
+                route_notes: vec!["bounded_helper_runner".into()],
+                file_paths: helper_runtime_receipts
+                    .iter()
+                    .flat_map(|receipt| receipt.observed_output_files.clone())
+                    .collect(),
+                patch_lanes: spec.patch_lanes.clone(),
+                acceptance_recipes: spec.acceptance_recipes.clone(),
+                operator_bundles: spec.operator_bundles.clone(),
+                chattycog_hosting_mode: spec.chattycog_hosting_mode.clone(),
+                chattycog_ui_owner: spec.chattycog_ui_owner.clone(),
+                chattycog_bridge_capabilities: spec.chattycog_bridge_capabilities.clone(),
+                helper_services: spec.helper_services.clone(),
+                helper_runtime_receipts,
+            }),
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn helper_status(
+        &self,
+        project_name: &str,
+        helper_id: Option<&str>,
+    ) -> Result<HostActionResult> {
+        let project_dir = self.output_root.join(project_name);
+        let spec = load_project_spec_with_contract_refresh(&project_dir)?;
+        let mut details = Vec::new();
+        let mut receipts = Vec::new();
+        for helper in &spec.helper_services {
+            if helper_id.is_some() && helper_id != Some(helper.helper_id.as_str()) {
+                continue;
+            }
+            let status_path = helper
+                .status_paths
+                .first()
+                .map(|path| project_dir.join(path))
+                .unwrap_or_else(|| {
+                    project_dir
+                        .join("bridge")
+                        .join("helpers")
+                        .join(&helper.helper_id)
+                        .join("status.json")
+                });
+            let status_summary = if status_path.exists() {
+                let snapshot: chatty_factory_core::HelperStatusSnapshot =
+                    serde_json::from_str(&fs::read_to_string(&status_path)?)?;
+                details.push(format!(
+                    "helper={} status={} summary={}",
+                    helper.helper_id, snapshot.status, snapshot.summary
+                ));
+                snapshot.status
+            } else {
+                details.push(format!("helper={} status=missing_status_file", helper.helper_id));
+                "missing_status_file".into()
+            };
+            receipts.push(HelperRuntimeReceipt {
+                receipt_id: format!("helper-status-{}", helper.helper_id),
+                request_id: "status-query".into(),
+                helper_id: helper.helper_id.clone(),
+                helper_kind: helper.helper_kind.clone(),
+                attached_project_name: Some(project_name.to_string()),
+                launch_status: status_summary,
+                process_id: None,
+                observed_status_files: helper.status_paths.clone(),
+                observed_output_files: helper.output_paths.clone(),
+                observed_primitive_ids: helper
+                    .primitives
+                    .iter()
+                    .map(|primitive| primitive.primitive_id.clone())
+                    .collect(),
+                notes: vec!["Status loaded from project helper artifacts.".into()],
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            });
+        }
+        Ok(HostActionResult {
+            summary: "Project helper status".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: Some(HostExecutionResult {
+                kind: "helper_status".into(),
+                request_id: "helper-status".into(),
+                project_name: project_name.to_string(),
+                family_id: spec.family_id.clone().map(|id| id.as_str().to_string()),
+                tool_kind: spec.tool_kind.clone(),
+                patch_kind: None,
+                composition_route_class: None,
+                composable_route_plan_path: None,
+                composition_review_receipt_path: None,
+                followup_request_mode: None,
+                followup_rationale: Vec::new(),
+                plan_confidence_score: 100,
+                plan_confidence_band: "high".into(),
+                needs_llm_review: false,
+                acceptance_status: None,
+                route_notes: vec!["helper_status_query".into()],
+                file_paths: Vec::new(),
+                patch_lanes: spec.patch_lanes.clone(),
+                acceptance_recipes: spec.acceptance_recipes.clone(),
+                operator_bundles: spec.operator_bundles.clone(),
+                chattycog_hosting_mode: spec.chattycog_hosting_mode.clone(),
+                chattycog_ui_owner: spec.chattycog_ui_owner.clone(),
+                chattycog_bridge_capabilities: spec.chattycog_bridge_capabilities.clone(),
+                helper_services: spec.helper_services.clone(),
+                helper_runtime_receipts: receipts,
+            }),
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn stop_project_helpers(
+        &self,
+        project_name: &str,
+        helper_id: Option<&str>,
+    ) -> Result<HostActionResult> {
+        let detail = match helper_id {
+            Some(helper_id) => format!(
+                "helper={helper_id} uses bounded host-run execution and does not remain running"
+            ),
+            None => "project helpers use bounded host-run execution and do not remain running"
+                .into(),
+        };
+        Ok(HostActionResult {
+            summary: format!("No running helper process to stop for {project_name}"),
+            details: vec![detail],
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn compare_helper_monitoring_projects(
+        &self,
+        left_project_name: &str,
+        right_project_name: &str,
+    ) -> Result<HostActionResult> {
+        let (receipt, receipt_path) = self.persist_cross_family_monitoring_receipt(
+            left_project_name,
+            right_project_name,
+        )?;
+        let notes = receipt.notes.clone();
+        let equivalent_capability_fulfillment = receipt.equivalent_capability_fulfillment;
+
+        Ok(HostActionResult {
+            summary: "Cross-family helper monitoring comparison complete".into(),
+            details: vec![
+                format!("left_project={left_project_name}"),
+                format!("right_project={right_project_name}"),
+                format!(
+                    "equivalent_capability_fulfillment={}",
+                    receipt.equivalent_capability_fulfillment
+                ),
+                format!("receipt={}", receipt_path.display()),
+            ]
+            .into_iter()
+            .chain(notes)
+            .collect(),
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: Some(HostExecutionResult {
+                kind: "cross_family_helper_monitoring_compare".into(),
+                request_id: receipt.receipt_id.clone(),
+                project_name: format!("{left_project_name},{right_project_name}"),
+                family_id: None,
+                tool_kind: Some("dashboard".into()),
+                patch_kind: None,
+                composition_route_class: None,
+                composable_route_plan_path: None,
+                composition_review_receipt_path: Some(receipt_path.display().to_string()),
+                followup_request_mode: None,
+                followup_rationale: Vec::new(),
+                plan_confidence_score: 100,
+                plan_confidence_band: "high".into(),
+                needs_llm_review: false,
+                acceptance_status: Some(if equivalent_capability_fulfillment {
+                    "passed".into()
+                } else {
+                    "partial".into()
+                }),
+                route_notes: vec!["cross_family_helper_monitoring_compare".into()],
+                file_paths: vec![receipt_path.display().to_string()],
+                patch_lanes: Vec::new(),
+                acceptance_recipes: Vec::new(),
+                operator_bundles: Vec::new(),
+                chattycog_hosting_mode: None,
+                chattycog_ui_owner: None,
+                chattycog_bridge_capabilities: None,
+                helper_services: Vec::new(),
+                helper_runtime_receipts: Vec::new(),
+            }),
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn scaffold_extension_from_stub(
+        &self,
+        stub_input: &Path,
+        integrate: bool,
+        promote: bool,
+    ) -> Result<HostActionResult> {
+        let spec_path = if stub_input.is_dir() {
+            stub_input.join("EXTENSION_SPEC.json")
+        } else {
+            stub_input.to_path_buf()
+        };
+        let mut build_spec: FallbackBuildSpec =
+            serde_json::from_str(&fs::read_to_string(&spec_path)?)?;
+        if build_spec.suggested_extension_kind == "proof_harness_bundle"
+            && (build_spec.suggested_proof_seed_template_id.is_none()
+                || build_spec.suggested_proof_seed_bundle_id.is_none())
+        {
+            if let Some((template_id, bundle_id)) =
+                suggested_proof_seed_for_build_spec(&build_spec)
+            {
+                if build_spec.suggested_proof_seed_template_id.is_none() {
+                    build_spec.suggested_proof_seed_template_id = Some(template_id);
+                }
+                if build_spec.suggested_proof_seed_bundle_id.is_none() {
+                    build_spec.suggested_proof_seed_bundle_id = Some(bundle_id);
+                }
+            }
+        }
+        let bundle_name = spec_path
+            .parent()
+            .and_then(|path| path.file_name())
+            .and_then(|value| value.to_str())
+            .unwrap_or(build_spec.request_id.as_str());
+        let scaffold_root = self.workspace_root.join("extensions").join(bundle_name);
+        fs::create_dir_all(&scaffold_root)?;
+
+        let primary_file = scaffold_primary_file(&build_spec);
+        let unresolved_layers = unresolved_scaffold_layers(&build_spec);
+
+        let primary_payload = serde_json::json!({
+            "request_id": build_spec.request_id,
+            "extension_kind": build_spec.suggested_extension_kind,
+            "unresolved_layers": unresolved_layers,
+            "suggested_family_id": build_spec.suggested_family_id.as_ref().map(|id| id.as_str()),
+            "suggested_tool_kind": build_spec.suggested_tool_kind,
+            "suggested_patch_kind": build_spec.suggested_patch_kind,
+            "suggested_bridge_capabilities": build_spec.suggested_bridge_capabilities,
+            "suggested_hosting_mode": build_spec.suggested_hosting_mode,
+            "candidate_family_ids": build_spec.candidate_family_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+            "requested_capabilities": build_spec.requested_capabilities,
+            "constraints": build_spec.constraints,
+            "suggested_proof_seed_template_id": build_spec.suggested_proof_seed_template_id,
+            "suggested_proof_seed_bundle_id": build_spec.suggested_proof_seed_bundle_id,
+            "missing_family_build_primitive_classes": build_spec.missing_family_build_primitive_classes,
+            "missing_patch_primitive_classes": build_spec.missing_patch_primitive_classes,
+            "missing_helper_primitive_kinds": build_spec.missing_helper_primitive_kinds,
+        });
+        persist_json_pretty(&scaffold_root.join(primary_file), &primary_payload)?;
+
+        if unresolved_layers.contains(&"proof_harness") {
+            let (proof_template, comparison_bundle) =
+                build_proof_harness_starter_manifests(&build_spec, bundle_name);
+            if primary_file != "proof_template_manifest.json" {
+                persist_json_pretty(
+                    &scaffold_root.join("proof_template_manifest.json"),
+                    &proof_template,
+                )?;
+            } else {
+                persist_json_pretty(&scaffold_root.join(primary_file), &proof_template)?;
+            }
+            persist_json_pretty(
+                &scaffold_root.join("comparison_bundle_manifest.json"),
+                &comparison_bundle,
+            )?;
+        }
+
+        if unresolved_layers.contains(&"family_build") && primary_file != "family_manifest.json" {
+            persist_json_pretty(
+                &scaffold_root.join("family_manifest.json"),
+                &serde_json::json!({
+                    "family_id": build_spec.suggested_family_id.as_ref().map(|id| id.as_str()),
+                    "tool_kind": build_spec.suggested_tool_kind,
+                    "missing_family_build_primitive_classes": build_spec.missing_family_build_primitive_classes,
+                    "requested_capabilities": build_spec.requested_capabilities,
+                }),
+            )?;
+        }
+        if unresolved_layers.contains(&"patch") && primary_file != "patch_recipe.json" {
+            persist_json_pretty(
+                &scaffold_root.join("patch_recipe.json"),
+                &serde_json::json!({
+                    "family_id": build_spec.suggested_family_id.as_ref().map(|id| id.as_str()),
+                    "tool_kind": build_spec.suggested_tool_kind,
+                    "patch_kind": build_spec.suggested_patch_kind,
+                    "missing_patch_primitive_classes": build_spec.missing_patch_primitive_classes,
+                    "requested_capabilities": build_spec.requested_capabilities,
+                }),
+            )?;
+        }
+        if unresolved_layers.contains(&"helper") && primary_file != "helper_lane.json" {
+            persist_json_pretty(
+                &scaffold_root.join("helper_lane.json"),
+                &serde_json::json!({
+                    "family_id": build_spec.suggested_family_id.as_ref().map(|id| id.as_str()),
+                    "tool_kind": build_spec.suggested_tool_kind,
+                    "missing_helper_primitive_kinds": build_spec.missing_helper_primitive_kinds,
+                    "requested_capabilities": build_spec.requested_capabilities,
+                }),
+            )?;
+        }
+        if unresolved_layers.contains(&"bridge") && primary_file != "bridge_lane.json" {
+            persist_json_pretty(
+                &scaffold_root.join("bridge_lane.json"),
+                &serde_json::json!({
+                    "hosting_mode": build_spec.suggested_hosting_mode,
+                    "suggested_bridge_capabilities": build_spec.suggested_bridge_capabilities,
+                    "requested_capabilities": build_spec.requested_capabilities,
+                }),
+            )?;
+        }
+
+        let acceptance_payload = serde_json::json!({
+            "request_id": build_spec.request_id,
+            "acceptance_targets": build_spec.acceptance_targets,
+            "notes": "Expand these into host-owned acceptance checks before wiring the new deterministic lane."
+        });
+        persist_json_pretty(
+            &scaffold_root.join("acceptance_targets.json"),
+            &acceptance_payload,
+        )?;
+
+        let notes = format!(
+            "# Extension Implementation Bundle\n\nRequest id: `{}`\n\nExtension kind: `{}`\n\nUnresolved layers:\n{}\n\nRecommended next step: {}\n\nSuggested family: `{}`\nSuggested tool kind: `{}`\nSuggested patch kind: `{}`\nSuggested hosting mode: `{}`\nSuggested proof seed template: `{}`\nSuggested proof seed bundle: `{}`\n\nRequested capabilities:\n{}\n\nConstraints:\n{}\n\nImplementation notes:\n{}\n",
+            build_spec.request_id,
+            build_spec.suggested_extension_kind,
+            unresolved_layers
+                .iter()
+                .map(|item| format!("- {item}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            build_spec.recommended_next_step,
+            build_spec.suggested_family_id.as_ref().map(|id| id.as_str()).unwrap_or("none"),
+            build_spec.suggested_tool_kind.as_deref().unwrap_or("none"),
+            build_spec.suggested_patch_kind.as_deref().unwrap_or("none"),
+            build_spec.suggested_hosting_mode.as_deref().unwrap_or("none"),
+            build_spec
+                .suggested_proof_seed_template_id
+                .as_deref()
+                .unwrap_or("none"),
+            build_spec
+                .suggested_proof_seed_bundle_id
+                .as_deref()
+                .unwrap_or("none"),
+            build_spec.requested_capabilities.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n"),
+            build_spec.constraints.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n"),
+            build_spec.implementation_notes.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n"),
+        );
+        fs::write(scaffold_root.join("IMPLEMENTATION_NOTES.md"), notes)?;
+
+        fs::create_dir_all(scaffold_root.join("templates"))?;
+        fs::write(
+            scaffold_root.join("templates").join("README.md"),
+            "Put family or patch-lane template assets here when you implement this deterministic lane.\n",
+        )?;
+
+        fs::create_dir_all(scaffold_root.join("src"))?;
+        fs::write(
+            scaffold_root.join("src").join("README.md"),
+            "Put any Rust-side registry, handler, or contract notes for this lane here.\n",
+        )?;
+
+        let mut details = vec![
+            format!("source_stub={}", spec_path.display()),
+            format!("scaffold_root={}", scaffold_root.display()),
+            format!("primary_file={}", scaffold_root.join(primary_file).display()),
+        ];
+        if integrate {
+            let integrated_paths =
+                self.integrate_extension_scaffold(&build_spec, bundle_name)?;
+            for path in &integrated_paths {
+                details.push(format!("integrated={}", path.display()));
+            }
+            if promote {
+                let registry_path = self.promote_pending_extension(
+                    &build_spec,
+                    &spec_path,
+                    &scaffold_root,
+                    &integrated_paths,
+                )?;
+                details.push(format!("pending_registry={}", registry_path.display()));
+            }
+        }
+
+        Ok(HostActionResult {
+            summary: "Extension scaffold generated".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    fn integrate_extension_scaffold(
+        &self,
+        build_spec: &FallbackBuildSpec,
+        bundle_name: &str,
+    ) -> Result<Vec<PathBuf>> {
+        let slug = extension_slug(build_spec, bundle_name);
+        let mut created = Vec::new();
+        let unresolved_layers = unresolved_scaffold_layers(build_spec);
+
+        if unresolved_layers.contains(&"proof_harness") {
+            let template_dir = self.workspace_root.join("proof_harness").join("templates");
+            let bundle_dir = self.workspace_root.join("proof_harness").join("bundles");
+            fs::create_dir_all(&template_dir)?;
+            fs::create_dir_all(&bundle_dir)?;
+            let (proof_template, comparison_bundle) =
+                build_proof_harness_starter_manifests(build_spec, bundle_name);
+            let template_path = template_dir.join(format!("{slug}.json"));
+            let bundle_path = bundle_dir.join(format!(
+                "{}.json",
+                comparison_bundle.bundle_id
+            ));
+            persist_json_pretty(&template_path, &proof_template)?;
+            persist_json_pretty(&bundle_path, &comparison_bundle)?;
+            created.extend([template_path, bundle_path]);
+            return Ok(created);
+        }
+
+        if unresolved_layers.contains(&"patch") {
+                let patch_dir = self.workspace_root.join("operator_registry").join("patch_recipes");
+                let acceptance_dir = self
+                    .workspace_root
+                    .join("operator_registry")
+                    .join("acceptance_recipes");
+                let template_dir = self.workspace_root.join("templates").join("patches").join(&slug);
+                fs::create_dir_all(&patch_dir)?;
+                fs::create_dir_all(&acceptance_dir)?;
+                fs::create_dir_all(&template_dir)?;
+
+                let patch_path = patch_dir.join(format!("{slug}.json"));
+                let acceptance_path = acceptance_dir.join(format!("{slug}.json"));
+                let template_path = template_dir.join("README.md");
+                persist_json_pretty(
+                    &patch_path,
+                    &serde_json::json!({
+                        "recipe_id": slug,
+                        "family_id": build_spec.suggested_family_id.as_ref().map(|id| id.as_str()),
+                        "tool_kind": build_spec.suggested_tool_kind,
+                        "patch_kind": build_spec.suggested_patch_kind,
+                        "missing_patch_primitive_classes": build_spec.missing_patch_primitive_classes,
+                        "requested_capabilities": build_spec.requested_capabilities,
+                        "implementation_notes": build_spec.implementation_notes,
+                    }),
+                )?;
+                persist_json_pretty(
+                    &acceptance_path,
+                    &serde_json::json!({
+                        "recipe_id": format!("{slug}_acceptance"),
+                        "targets": build_spec.acceptance_targets,
+                        "notes": build_spec.implementation_notes,
+                    }),
+                )?;
+                fs::write(
+                    &template_path,
+                    "Put patch-lane template fragments or fixture notes here.\n",
+                )?;
+                created.extend([patch_path, acceptance_path, template_path]);
+        }
+        if unresolved_layers.contains(&"bridge") {
+                let bridge_dir = self.workspace_root.join("operator_registry").join("bridge_lanes");
+                let template_dir = self
+                    .workspace_root
+                    .join("templates")
+                    .join("wrappers")
+                    .join("chattycog")
+                    .join(&slug);
+                fs::create_dir_all(&bridge_dir)?;
+                fs::create_dir_all(&template_dir)?;
+                let bridge_path = bridge_dir.join(format!("{slug}.json"));
+                let template_path = template_dir.join("README.md");
+                persist_json_pretty(
+                    &bridge_path,
+                    &serde_json::json!({
+                        "bridge_lane_id": slug,
+                        "hosting_mode": build_spec.suggested_hosting_mode,
+                        "bridge_capabilities": build_spec.suggested_bridge_capabilities,
+                        "unresolved_layers": unresolved_layers,
+                        "acceptance_targets": build_spec.acceptance_targets,
+                    }),
+                )?;
+                fs::write(
+                    &template_path,
+                    "Put ChattyCog bridge lane emitted-file notes here.\n",
+                )?;
+                created.extend([bridge_path, template_path]);
+        }
+        if unresolved_layers.contains(&"helper") {
+                let helper_dir = self.workspace_root.join("operator_registry").join("helper_lanes");
+                let template_dir = self.workspace_root.join("templates").join("helpers").join(&slug);
+                fs::create_dir_all(&helper_dir)?;
+                fs::create_dir_all(&template_dir)?;
+                let helper_path = helper_dir.join(format!("{slug}.json"));
+                let template_path = template_dir.join("README.md");
+                persist_json_pretty(
+                    &helper_path,
+                    &serde_json::json!({
+                        "helper_lane_id": slug,
+                        "missing_helper_primitive_kinds": build_spec.missing_helper_primitive_kinds,
+                        "requested_capabilities": build_spec.requested_capabilities,
+                        "constraints": build_spec.constraints,
+                        "acceptance_targets": build_spec.acceptance_targets,
+                    }),
+                )?;
+                fs::write(
+                    &template_path,
+                    "Put helper-lane template assets or protocol notes here.\n",
+                )?;
+                created.extend([helper_path, template_path]);
+        }
+        if unresolved_layers.contains(&"family_build") {
+                let manifest_path = self
+                    .workspace_root
+                    .join("families")
+                    .join("manifests")
+                    .join(format!("{slug}.json"));
+                let family_doc_path = self
+                    .workspace_root
+                    .join("families")
+                    .join(format!("{slug}.md"));
+                let template_dir = self.workspace_root.join("templates").join("families").join(&slug);
+                fs::create_dir_all(template_dir.as_path())?;
+                persist_json_pretty(
+                    &manifest_path,
+                    &serde_json::json!({
+                        "family_id": slug,
+                        "primary_substrate": "unknown",
+                        "supports_chattycog_wrapper": false,
+                        "supported_stack_ids": [],
+                        "provided_build_primitive_classes": build_spec.missing_family_build_primitive_classes,
+                        "explicit_stack_keywords": [],
+                        "route_keywords": build_spec.requested_capabilities,
+                        "supported_tool_kinds": build_spec.suggested_tool_kind.iter().cloned().collect::<Vec<_>>(),
+                        "forbids_capabilities": [],
+                        "requires_helper_for": [],
+                    }),
+                )?;
+                fs::write(
+                    &family_doc_path,
+                    format!(
+                        "# {}\n\nGoal: {}\n\nAcceptance targets:\n{}\n",
+                        slug,
+                        build_spec.interpreted_goal,
+                        build_spec
+                            .acceptance_targets
+                            .iter()
+                            .map(|item| format!("- {item}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ),
+                )?;
+                let template_path = template_dir.join("README.md");
+                fs::write(
+                    &template_path,
+                    "Put starter family templates here as this deterministic lane is implemented.\n",
+                )?;
+                created.extend([manifest_path, family_doc_path, template_path]);
+        }
+        Ok(created)
+    }
+
+    pub fn pending_extensions(&self) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let registry = load_pending_extension_registry(&registry_path)?;
+        let pending_count = registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "pending_implementation")
+            .count();
+        let implemented_count = registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "implemented")
+            .count();
+        let validated_count = registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "validated_ready")
+            .count();
+        let promotion_count = registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "promotion_prepared")
+            .count();
+        let apply_patch_count = registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "apply_patch_ready")
+            .count();
+        let host_wired_count = registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "host_wired")
+            .count();
+        let fully_live_count = registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "fully_live")
+            .count();
+        let archived_count = registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "archived")
+            .count();
+        let mut details = vec![
+            format!("registry={}", registry_path.display()),
+            format!("pending_entries={pending_count}"),
+            format!("implemented_entries={implemented_count}"),
+            format!("validated_entries={validated_count}"),
+            format!("promotion_prepared_entries={promotion_count}"),
+            format!("apply_patch_ready_entries={apply_patch_count}"),
+            format!("host_wired_entries={host_wired_count}"),
+            format!("fully_live_entries={fully_live_count}"),
+            format!("archived_entries={archived_count}"),
+        ];
+        for entry in registry.entries.iter().take(10) {
+            let mut line = format!(
+                "entry={} status={} kind={} family={} tool={} patch={}",
+                entry.entry_id,
+                entry.status,
+                entry.extension_kind,
+                entry.family_id.as_deref().unwrap_or("none"),
+                entry.tool_kind.as_deref().unwrap_or("none"),
+                entry.patch_kind.as_deref().unwrap_or("none")
+            );
+            if let Some(reason) = entry.archived_reason.as_deref() {
+                line.push_str(&format!(" archived_reason={reason}"));
+            }
+            details.push(line);
+        }
+        Ok(HostActionResult {
+            summary: "Pending extension registry".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn refresh_proof_harness_registry(&self) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let mut refreshed = 0usize;
+        let mut skipped = 0usize;
+        let mut details = vec![format!("registry={}", registry_path.display())];
+
+        for entry in &mut registry.entries {
+            if entry.extension_kind != "proof_harness_bundle" {
+                continue;
+            }
+            match load_proof_harness_bundle_manifests(entry) {
+                Ok((template, bundle)) => {
+                    let (quality_status, quality_notes) = evaluate_proof_harness_quality(
+                        &self.workspace_root,
+                        &template,
+                        &bundle,
+                        entry.proof_seed_template_id.as_deref(),
+                        entry.proof_seed_bundle_id.as_deref(),
+                    );
+                    entry.proof_quality_status = Some(quality_status);
+                    entry.proof_quality_notes = quality_notes;
+                    refresh_proof_harness_lineage(
+                        &self.workspace_root,
+                        &self.runtime_root,
+                        entry,
+                        &template,
+                        &bundle,
+                    )?;
+                    refreshed += 1;
+                }
+                Err(error) => {
+                    skipped += 1;
+                    details.push(format!("skipped={} reason={}", entry.entry_id, error));
+                }
+            }
+        }
+
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        let refresh_status = ProofGovernanceRefreshStatus {
+            status_id: chatty_factory_core::timestamp_id("proof-governance-refresh"),
+            refreshed_entries: refreshed,
+            skipped_entries: skipped,
+            updated_at: registry.updated_at.clone(),
+        };
+        let refresh_status_path =
+            persist_proof_governance_refresh_status(&self.runtime_root, &refresh_status)?;
+        details.push(format!("refreshed_entries={refreshed}"));
+        details.push(format!("skipped_entries={skipped}"));
+        details.push(format!(
+            "refresh_status={}",
+            refresh_status_path.display()
+        ));
+        Ok(HostActionResult {
+            summary: "Proof harness registry refreshed".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn refresh_composition_governance_registry(&self) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let mut refreshed = 0usize;
+        let mut skipped = 0usize;
+        let mut details = vec![format!("registry={}", registry_path.display())];
+
+        for entry in &mut registry.entries {
+            if entry.extension_kind != "composition_bundle" {
+                continue;
+            }
+            match validate_composition_bundle_artifacts(entry) {
+                Ok(blockers) if blockers.is_empty() => {
+                    refresh_composition_bundle_governance(&self.runtime_root, entry)?;
+                    refreshed += 1;
+                }
+                Ok(blockers) => {
+                    skipped += 1;
+                    details.push(format!(
+                        "skipped={} reason={}",
+                        entry.entry_id,
+                        blockers.join("; ")
+                    ));
+                }
+                Err(error) => {
+                    skipped += 1;
+                    details.push(format!("skipped={} reason={}", entry.entry_id, error));
+                }
+            }
+        }
+
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        let refresh_status = CompositionGovernanceRefreshStatus {
+            status_id: chatty_factory_core::timestamp_id("composition-governance-refresh"),
+            refreshed_entries: refreshed,
+            skipped_entries: skipped,
+            updated_at: registry.updated_at.clone(),
+        };
+        let refresh_status_path =
+            persist_composition_governance_refresh_status(&self.runtime_root, &refresh_status)?;
+        details.push(format!("refreshed_entries={refreshed}"));
+        details.push(format!("skipped_entries={skipped}"));
+        details.push(format!(
+            "refresh_status={}",
+            refresh_status_path.display()
+        ));
+        Ok(HostActionResult {
+            summary: "Composition governance registry refreshed".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn refresh_patch_governance_registry(&self) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let mut refreshed = 0usize;
+        let mut skipped = 0usize;
+        let mut details = vec![format!("registry={}", registry_path.display())];
+
+        for entry in &mut registry.entries {
+            if entry.extension_kind != "patch_recipe" {
+                continue;
+            }
+            match validate_patch_recipe_governance_artifacts(entry) {
+                Ok(blockers) if blockers.is_empty() => {
+                    refresh_patch_recipe_governance(&self.runtime_root, entry)?;
+                    refreshed += 1;
+                }
+                Ok(blockers) => {
+                    skipped += 1;
+                    details.push(format!(
+                        "skipped={} reason={}",
+                        entry.entry_id,
+                        blockers.join("; ")
+                    ));
+                }
+                Err(error) => {
+                    skipped += 1;
+                    details.push(format!("skipped={} reason={error}", entry.entry_id));
+                }
+            }
+        }
+
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        let refresh_status = PatchGovernanceRefreshStatus {
+            status_id: chatty_factory_core::timestamp_id("patch-governance-refresh"),
+            refreshed_entries: refreshed,
+            skipped_entries: skipped,
+            updated_at: registry.updated_at.clone(),
+        };
+        let refresh_status_path =
+            persist_patch_governance_refresh_status(&self.runtime_root, &refresh_status)?;
+        details.push(format!("refreshed_entries={refreshed}"));
+        details.push(format!("skipped_entries={skipped}"));
+        details.push(format!("refresh_status={}", refresh_status_path.display()));
+        Ok(HostActionResult {
+            summary: "Patch governance registry refreshed".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn refresh_project_patch_readiness_registry(&self) -> Result<HostActionResult> {
+        fs::create_dir_all(&self.output_root)?;
+        fs::create_dir_all(&self.runtime_root)?;
+        let mut refreshed = 0usize;
+        let mut skipped = 0usize;
+        let mut details = vec![format!("output_root={}", self.output_root.display())];
+
+        for entry in fs::read_dir(&self.output_root)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let project_dir = entry.path();
+            if !project_dir.join("ProjectSpec.json").exists() {
+                skipped += 1;
+                details.push(format!(
+                    "skipped={} reason=missing ProjectSpec.json",
+                    project_dir.display()
+                ));
+                continue;
+            }
+            let project_name = entry.file_name().to_string_lossy().to_string();
+            refresh_project_patch_readiness_receipt_for_project(
+                &self.runtime_root,
+                &project_dir,
+                &project_name,
+            )?;
+            refreshed += 1;
+        }
+
+        let refresh_status = ProjectPatchReadinessRefreshStatus {
+            status_id: chatty_factory_core::timestamp_id("project-patch-readiness-refresh"),
+            refreshed_entries: refreshed,
+            skipped_entries: skipped,
+            updated_at: chatty_factory_core::timestamp_id("updated"),
+        };
+        let refresh_status_path =
+            persist_project_patch_readiness_refresh_status(&self.runtime_root, &refresh_status)?;
+        let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
+        let blocker_project_counts =
+            count_projects_with_risky_or_historical_blockers(&self.runtime_root);
+        details.push(format!("refreshed_entries={refreshed}"));
+        details.push(format!("skipped_entries={skipped}"));
+        details.push(format!("risky_blocker_projects={}", blocker_project_counts.0));
+        details.push(format!(
+            "historical_blocker_projects={}",
+            blocker_project_counts.1
+        ));
+        details.push(format!("refresh_status={}", refresh_status_path.display()));
+        Ok(HostActionResult {
+            summary: "Project patch readiness refreshed".into(),
+            details,
+            browser_state: Some(browser_state),
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn refresh_helper_governance_registry(&self) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let mut refreshed = 0usize;
+        let mut skipped = 0usize;
+        let mut details = vec![format!("registry={}", registry_path.display())];
+
+        for entry in &mut registry.entries {
+            if entry.extension_kind != "helper_lane" {
+                continue;
+            }
+            match validate_helper_lane_governance_artifacts(entry) {
+                Ok(blockers) if blockers.is_empty() => {
+                    refresh_helper_lane_governance(&self.runtime_root, entry)?;
+                    refreshed += 1;
+                }
+                Ok(blockers) => {
+                    skipped += 1;
+                    details.push(format!(
+                        "skipped={} reason={}",
+                        entry.entry_id,
+                        blockers.join("; ")
+                    ));
+                }
+                Err(error) => {
+                    skipped += 1;
+                    details.push(format!("skipped={} reason={error}", entry.entry_id));
+                }
+            }
+        }
+
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        let refresh_status = HelperGovernanceRefreshStatus {
+            status_id: chatty_factory_core::timestamp_id("helper-governance-refresh"),
+            refreshed_entries: refreshed,
+            skipped_entries: skipped,
+            updated_at: registry.updated_at.clone(),
+        };
+        let refresh_status_path =
+            persist_helper_governance_refresh_status(&self.runtime_root, &refresh_status)?;
+        details.push(format!("refreshed_entries={refreshed}"));
+        details.push(format!("skipped_entries={skipped}"));
+        details.push(format!("refresh_status={}", refresh_status_path.display()));
+        Ok(HostActionResult {
+            summary: "Helper governance registry refreshed".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn refresh_bridge_governance_registry(&self) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let mut refreshed = 0usize;
+        let mut skipped = 0usize;
+        let mut details = vec![format!("registry={}", registry_path.display())];
+
+        for entry in &mut registry.entries {
+            if entry.extension_kind != "chattycog_bridge_lane" {
+                continue;
+            }
+            match validate_bridge_lane_governance_artifacts(entry) {
+                Ok(blockers) if blockers.is_empty() => {
+                    refresh_bridge_lane_governance(&self.runtime_root, entry)?;
+                    refreshed += 1;
+                }
+                Ok(blockers) => {
+                    skipped += 1;
+                    details.push(format!(
+                        "skipped={} reason={}",
+                        entry.entry_id,
+                        blockers.join("; ")
+                    ));
+                }
+                Err(error) => {
+                    skipped += 1;
+                    details.push(format!("skipped={} reason={error}", entry.entry_id));
+                }
+            }
+        }
+
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        let refresh_status = BridgeGovernanceRefreshStatus {
+            status_id: chatty_factory_core::timestamp_id("bridge-governance-refresh"),
+            refreshed_entries: refreshed,
+            skipped_entries: skipped,
+            updated_at: registry.updated_at.clone(),
+        };
+        let refresh_status_path =
+            persist_bridge_governance_refresh_status(&self.runtime_root, &refresh_status)?;
+        details.push(format!("refreshed_entries={refreshed}"));
+        details.push(format!("skipped_entries={skipped}"));
+        details.push(format!("refresh_status={}", refresh_status_path.display()));
+        Ok(HostActionResult {
+            summary: "Bridge governance registry refreshed".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn refresh_family_governance_registry(&self) -> Result<HostActionResult> {
+        let mut refreshed = 0usize;
+        let mut skipped = 0usize;
+        let mut details = vec![format!(
+            "manifests_root={}",
+            self.workspace_root.join("families").join("manifests").display()
+        )];
+
+        for manifest in chatty_factory_core::built_in_family_manifests() {
+            match validate_family_governance_artifacts(&self.workspace_root, &manifest) {
+                Ok(blockers) if blockers.is_empty() => {
+                    refresh_family_manifest_governance(
+                        &self.workspace_root,
+                        &self.runtime_root,
+                        &manifest,
+                    )?;
+                    refreshed += 1;
+                }
+                Ok(blockers) => {
+                    skipped += 1;
+                    details.push(format!(
+                        "skipped={} reason={}",
+                        manifest.family_id.as_str(),
+                        blockers.join("; ")
+                    ));
+                }
+                Err(error) => {
+                    skipped += 1;
+                    details.push(format!(
+                        "skipped={} reason={error}",
+                        manifest.family_id.as_str()
+                    ));
+                }
+            }
+        }
+
+        let refresh_status = FamilyGovernanceRefreshStatus {
+            status_id: chatty_factory_core::timestamp_id("family-governance-refresh"),
+            refreshed_entries: refreshed,
+            skipped_entries: skipped,
+            updated_at: chatty_factory_core::timestamp_id("updated"),
+        };
+        let refresh_status_path =
+            persist_family_governance_refresh_status(&self.runtime_root, &refresh_status)?;
+        details.push(format!("refreshed_entries={refreshed}"));
+        details.push(format!("skipped_entries={skipped}"));
+        details.push(format!("refresh_status={}", refresh_status_path.display()));
+        Ok(HostActionResult {
+            summary: "Family governance registry refreshed".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn refresh_template_governance_registry(&self) -> Result<HostActionResult> {
+        let bundles = discover_template_governance_bundles(&self.workspace_root)?;
+        let mut refreshed = 0usize;
+        let mut skipped = 0usize;
+        let mut details = vec![format!(
+            "templates_root={}",
+            self.workspace_root.join("templates").display()
+        )];
+
+        for bundle in bundles {
+            match validate_template_governance_bundle(&bundle) {
+                Ok(blockers) if blockers.is_empty() => {
+                    refresh_template_bundle_governance(
+                        &self.workspace_root,
+                        &self.runtime_root,
+                        &bundle,
+                    )?;
+                    refreshed += 1;
+                }
+                Ok(blockers) => {
+                    skipped += 1;
+                    details.push(format!(
+                        "skipped={} reason={}",
+                        bundle.template_bundle_id,
+                        blockers.join("; ")
+                    ));
+                }
+                Err(error) => {
+                    skipped += 1;
+                    details.push(format!(
+                        "skipped={} reason={error}",
+                        bundle.template_bundle_id
+                    ));
+                }
+            }
+        }
+
+        let refresh_status = TemplateGovernanceRefreshStatus {
+            status_id: chatty_factory_core::timestamp_id("template-governance-refresh"),
+            refreshed_entries: refreshed,
+            skipped_entries: skipped,
+            updated_at: chatty_factory_core::timestamp_id("updated"),
+        };
+        let refresh_status_path =
+            persist_template_governance_refresh_status(&self.runtime_root, &refresh_status)?;
+        details.push(format!("refreshed_entries={refreshed}"));
+        details.push(format!("skipped_entries={skipped}"));
+        details.push(format!("refresh_status={}", refresh_status_path.display()));
+        Ok(HostActionResult {
+            summary: "Template governance registry refreshed".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn register_proof_harness_bundle(
+        &self,
+        template_manifest_path: &Path,
+        bundle_manifest_path: &Path,
+    ) -> Result<HostActionResult> {
+        let template_path = if template_manifest_path.is_absolute() {
+            template_manifest_path.to_path_buf()
+        } else {
+            self.workspace_root.join(template_manifest_path)
+        };
+        let bundle_path = if bundle_manifest_path.is_absolute() {
+            bundle_manifest_path.to_path_buf()
+        } else {
+            self.workspace_root.join(bundle_manifest_path)
+        };
+        if !template_path.exists() {
+            anyhow::bail!(
+                "proof template manifest does not exist: {}",
+                template_path.display()
+            );
+        }
+        if !bundle_path.exists() {
+            anyhow::bail!(
+                "capability comparison bundle manifest does not exist: {}",
+                bundle_path.display()
+            );
+        }
+
+        let template: PrimitiveProofTemplate =
+            serde_json::from_str(&fs::read_to_string(&template_path)?)?;
+        let bundle: CapabilityComparisonBundle =
+            serde_json::from_str(&fs::read_to_string(&bundle_path)?)?;
+        if template.execution_recipe.comparison_bundle_id != bundle.bundle_id {
+            anyhow::bail!(
+                "proof template `{}` expects comparison bundle `{}` but manifest `{}` was provided",
+                template.template_id,
+                template.execution_recipe.comparison_bundle_id,
+                bundle.bundle_id
+            );
+        }
+
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let requested_capabilities = template.required_capability_classes.clone();
+        let integrated_paths = vec![
+            template_path.display().to_string(),
+            bundle_path.display().to_string(),
+        ];
+        let scaffold_root = self
+            .workspace_root
+            .join("proof_harness")
+            .display()
+            .to_string();
+        let source_stub_path = template_path.display().to_string();
+
+        if let Some(entry) = registry.entries.iter_mut().find(|entry| {
+            entry.extension_kind == "proof_harness_bundle"
+                && entry.patch_kind.as_deref() == Some(template.template_id.as_str())
+        }) {
+            entry.status = "pending_implementation".into();
+            entry.tool_kind = Some(template.template_kind.clone());
+            entry.patch_kind = Some(template.template_id.clone());
+            entry.requested_capabilities = requested_capabilities.clone();
+            entry.integrated_paths = integrated_paths.clone();
+            entry.source_stub_path = source_stub_path.clone();
+            entry.scaffold_root = scaffold_root.clone();
+            entry.proof_seed_template_id = None;
+            entry.proof_seed_bundle_id = None;
+            let (quality_status, quality_notes) = evaluate_proof_harness_quality(
+                &self.workspace_root,
+                &template,
+                &bundle,
+                None,
+                None,
+            );
+            entry.proof_quality_status = Some(quality_status);
+            entry.proof_quality_notes = quality_notes;
+            refresh_proof_harness_lineage(
+                &self.workspace_root,
+                &self.runtime_root,
+                entry,
+                &template,
+                &bundle,
+            )?;
+            entry.archived_reason = None;
+        } else {
+            let (quality_status, quality_notes) = evaluate_proof_harness_quality(
+                &self.workspace_root,
+                &template,
+                &bundle,
+                None,
+                None,
+            );
+            registry.entries.push(PendingExtensionEntry {
+                entry_id: chatty_factory_core::timestamp_id("pending-lane"),
+                status: "pending_implementation".into(),
+                extension_kind: "proof_harness_bundle".into(),
+                unresolved_layers: vec!["proof_harness".into()],
+                family_id: None,
+                tool_kind: Some(template.template_kind.clone()),
+                patch_kind: Some(template.template_id.clone()),
+                bridge_capabilities: Vec::new(),
+                requested_capabilities,
+                missing_family_build_primitive_classes: Vec::new(),
+                missing_patch_primitive_classes: Vec::new(),
+                missing_helper_primitive_kinds: Vec::new(),
+                source_stub_path,
+                scaffold_root,
+                integrated_paths,
+                promotion_artifacts: Vec::new(),
+                apply_patch_artifacts: Vec::new(),
+                proof_seed_template_id: None,
+                proof_seed_bundle_id: None,
+                proof_quality_status: Some(quality_status),
+                proof_quality_notes: quality_notes,
+                proof_lineage_receipt_path: None,
+                proof_drift_status: None,
+                proof_drift_notes: Vec::new(),
+                proof_change_since_last_pass_status: None,
+                proof_change_since_last_pass_notes: Vec::new(),
+                composition_lineage_receipt_path: None,
+                composition_drift_status: None,
+                composition_drift_notes: Vec::new(),
+                composition_change_since_last_live_status: None,
+                composition_change_since_last_live_notes: Vec::new(),
+                patch_lineage_receipt_path: None,
+                patch_drift_status: None,
+                patch_drift_notes: Vec::new(),
+                patch_change_since_last_live_status: None,
+                patch_change_since_last_live_notes: Vec::new(),
+                helper_lineage_receipt_path: None,
+                helper_drift_status: None,
+                helper_drift_notes: Vec::new(),
+                helper_change_since_last_live_status: None,
+                helper_change_since_last_live_notes: Vec::new(),
+                bridge_lineage_receipt_path: None,
+                bridge_drift_status: None,
+                bridge_drift_notes: Vec::new(),
+                bridge_change_since_last_live_status: None,
+                bridge_change_since_last_live_notes: Vec::new(),
+                archived_reason: None,
+                created_at: chatty_factory_core::timestamp_id("created"),
+            });
+            if let Some(entry) = registry.entries.last_mut() {
+                refresh_proof_harness_lineage(
+                    &self.workspace_root,
+                    &self.runtime_root,
+                    entry,
+                    &template,
+                    &bundle,
+                )?;
+            }
+        }
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        Ok(HostActionResult {
+            summary: "Proof harness bundle registered".into(),
+            details: vec![
+                format!("registry={}", registry_path.display()),
+                format!("template_id={}", template.template_id),
+                format!("bundle_id={}", bundle.bundle_id),
+                format!("template_manifest={}", template_path.display()),
+                format!("bundle_manifest={}", bundle_path.display()),
+                "status=pending_implementation".into(),
+            ],
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn mark_pending_extension_implemented(&self, entry_id: &str) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let mut updated = false;
+        for entry in &mut registry.entries {
+            if entry.entry_id == entry_id {
+                entry.status = "implemented".into();
+                updated = true;
+            }
+        }
+        if !updated {
+            anyhow::bail!("pending extension entry `{}` was not found", entry_id);
+        }
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        Ok(HostActionResult {
+            summary: "Pending extension marked implemented".into(),
+            details: vec![
+                format!("registry={}", registry_path.display()),
+                format!("entry_id={entry_id}"),
+                "status=implemented".into(),
+            ],
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn archive_extension(
+        &self,
+        entry_id: &str,
+        reason: Option<&str>,
+    ) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let mut updated = false;
+        for entry in &mut registry.entries {
+            if entry.entry_id == entry_id {
+                entry.status = "archived".into();
+                entry.archived_reason = reason.map(str::to_string);
+                updated = true;
+            }
+        }
+        if !updated {
+            anyhow::bail!("pending extension entry `{}` was not found", entry_id);
+        }
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        let mut details = vec![
+            format!("registry={}", registry_path.display()),
+            format!("entry_id={entry_id}"),
+            "status=archived".into(),
+        ];
+        if let Some(reason) = reason {
+            details.push(format!("archived_reason={reason}"));
+        }
+        Ok(HostActionResult {
+            summary: "Extension archived".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn validate_extension(&self, entry_id: &str) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let mut missing_paths = Vec::new();
+        let mut found = false;
+        for entry in &mut registry.entries {
+            if entry.entry_id == entry_id {
+                found = true;
+                if entry.status != "implemented" && entry.status != "validated_ready" {
+                    anyhow::bail!(
+                        "pending extension entry `{}` must be implemented before validation",
+                        entry_id
+                    );
+                }
+                let scaffold_root = PathBuf::from(&entry.scaffold_root);
+                if !scaffold_root.exists() {
+                    missing_paths.push(scaffold_root.display().to_string());
+                }
+                let source_stub = PathBuf::from(&entry.source_stub_path);
+                if !source_stub.exists() {
+                    missing_paths.push(source_stub.display().to_string());
+                }
+                for path in &entry.integrated_paths {
+                    let integrated = PathBuf::from(path);
+                    if !integrated.exists() {
+                        missing_paths.push(integrated.display().to_string());
+                    }
+                }
+                if missing_paths.is_empty() {
+                    if entry.extension_kind == "proof_harness_bundle" {
+                        let blockers = validate_proof_harness_bundle_artifacts(entry)?;
+                        if !blockers.is_empty() {
+                            anyhow::bail!(
+                                "proof harness bundle `{}` is missing required manifest shape: {}",
+                                entry_id,
+                                blockers.join("; ")
+                            );
+                        }
+                        let (template, bundle) = load_proof_harness_bundle_manifests(entry)?;
+                        let (quality_status, quality_notes) = evaluate_proof_harness_quality(
+                            &self.workspace_root,
+                            &template,
+                            &bundle,
+                            entry.proof_seed_template_id.as_deref(),
+                            entry.proof_seed_bundle_id.as_deref(),
+                        );
+                        entry.proof_quality_status = Some(quality_status);
+                        entry.proof_quality_notes = quality_notes;
+                        refresh_proof_harness_lineage(
+                            &self.workspace_root,
+                            &self.runtime_root,
+                            entry,
+                            &template,
+                            &bundle,
+                        )?;
+                    }
+                    entry.status = "validated_ready".into();
+                }
+            }
+        }
+        if !found {
+            anyhow::bail!("pending extension entry `{}` was not found", entry_id);
+        }
+        if !missing_paths.is_empty() {
+            anyhow::bail!(
+                "pending extension entry `{}` is missing expected files: {}",
+                entry_id,
+                missing_paths.join(", ")
+            );
+        }
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        Ok(HostActionResult {
+            summary: "Extension validated ready".into(),
+            details: vec![
+                format!("registry={}", registry_path.display()),
+                format!("entry_id={entry_id}"),
+                "status=validated_ready".into(),
+            ],
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn prepare_extension_promotion(&self, entry_id: &str) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let mut promotion_paths = Vec::new();
+        let mut found = false;
+        for entry in &mut registry.entries {
+            if entry.entry_id == entry_id {
+                found = true;
+                if entry.status != "validated_ready" && entry.status != "promotion_prepared" {
+                    anyhow::bail!(
+                        "pending extension entry `{}` must be validated_ready before promotion prep",
+                        entry_id
+                    );
+                }
+                let slug = pending_entry_slug(entry);
+                let scaffold_root = PathBuf::from(&entry.scaffold_root);
+                let promotion_root = scaffold_root.join("rust_registry_promotion");
+                fs::create_dir_all(&promotion_root)?;
+
+                if entry.extension_kind == "proof_harness_bundle" {
+                    let plan_path = promotion_root.join("PROOF_HARNESS_PROMOTION_PLAN.md");
+                    fs::write(
+                        &plan_path,
+                        format!(
+                            "# Proof Harness Promotion Plan\n\nEntry id: `{}`\n\nTemplate id: `{}`\n\nTemplate kind: `{}`\n\nIntegrated manifests:\n{}\n\nNext move:\n- validate the manifests through the workspace proof catalog\n- confirm the proof appears in the UI picker\n- run `run-proof-template {}` as the final live proof check\n",
+                            entry.entry_id,
+                            entry.patch_kind.as_deref().unwrap_or("unknown_template"),
+                            entry.tool_kind.as_deref().unwrap_or("unknown_kind"),
+                            entry
+                                .integrated_paths
+                                .iter()
+                                .map(|item| format!("- {item}"))
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                            entry.patch_kind.as_deref().unwrap_or("unknown_template"),
+                        ),
+                    )?;
+                    promotion_paths = vec![plan_path.display().to_string()];
+                    entry.promotion_artifacts = promotion_paths.clone();
+                    entry.status = "promotion_prepared".into();
+                    continue;
+                }
+
+                let families_src_root = self
+                    .workspace_root
+                    .join("crates")
+                    .join("chatty_factory_families")
+                    .join("src")
+                    .join("pending_promotions");
+                fs::create_dir_all(&families_src_root)?;
+
+                let registry_stub_path = promotion_root.join("registry_entry.stub.rs");
+                let handler_stub_path = promotion_root.join("handler.stub.rs");
+                let plan_path = promotion_root.join("PROMOTION_PLAN.md");
+                let live_stub_path = families_src_root.join(format!("{slug}.stub.rs"));
+                let live_notes_path = families_src_root.join(format!("{slug}.md"));
+
+                fs::write(&registry_stub_path, build_registry_stub(entry, &slug))?;
+                fs::write(&handler_stub_path, build_handler_stub(entry, &slug))?;
+                fs::write(&plan_path, build_promotion_plan(entry, &slug))?;
+                fs::write(&live_stub_path, build_registry_stub(entry, &slug))?;
+                fs::write(&live_notes_path, build_promotion_plan(entry, &slug))?;
+
+                promotion_paths = vec![
+                    registry_stub_path.display().to_string(),
+                    handler_stub_path.display().to_string(),
+                    plan_path.display().to_string(),
+                    live_stub_path.display().to_string(),
+                    live_notes_path.display().to_string(),
+                ];
+                entry.promotion_artifacts = promotion_paths.clone();
+                entry.status = "promotion_prepared".into();
+            }
+        }
+        if !found {
+            anyhow::bail!("pending extension entry `{}` was not found", entry_id);
+        }
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        let mut details = vec![
+            format!("registry={}", registry_path.display()),
+            format!("entry_id={entry_id}"),
+            "status=promotion_prepared".into(),
+        ];
+        for path in &promotion_paths {
+            details.push(format!("promotion_artifact={path}"));
+        }
+        Ok(HostActionResult {
+            summary: "Extension promotion skeleton prepared".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn prepare_extension_apply_patch(&self, entry_id: &str) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let mut patch_paths = Vec::new();
+        let mut found = false;
+        for entry in &mut registry.entries {
+            if entry.entry_id == entry_id {
+                found = true;
+                if entry.status != "promotion_prepared" && entry.status != "apply_patch_ready" {
+                    anyhow::bail!(
+                        "pending extension entry `{}` must be promotion_prepared before apply-patch templates are generated",
+                        entry_id
+                    );
+                }
+                if entry.extension_kind == "proof_harness_bundle" {
+                    let promotion_root =
+                        PathBuf::from(&entry.scaffold_root).join("rust_registry_promotion");
+                    fs::create_dir_all(&promotion_root)?;
+                    let note_path = promotion_root.join("proof_harness.apply_patch.txt");
+                    fs::write(
+                        &note_path,
+                        "Proof harness bundles are repo-native manifest artifacts. No Rust apply_patch wiring is required; validate catalog loading and run the proof template as the live check.\n",
+                    )?;
+                    patch_paths = vec![note_path.display().to_string()];
+                    entry.apply_patch_artifacts = patch_paths.clone();
+                    entry.status = "apply_patch_ready".into();
+                    continue;
+                }
+                let promotion_root = PathBuf::from(&entry.scaffold_root).join("rust_registry_promotion");
+                fs::create_dir_all(&promotion_root)?;
+                let slug = pending_entry_slug(entry);
+                let registry_patch_path = promotion_root.join("registry.apply_patch.txt");
+                let handler_patch_path = promotion_root.join("handler.apply_patch.txt");
+                fs::write(&registry_patch_path, build_registry_apply_patch_template(entry, &slug))?;
+                fs::write(&handler_patch_path, build_handler_apply_patch_template(entry, &slug))?;
+                patch_paths = vec![
+                    registry_patch_path.display().to_string(),
+                    handler_patch_path.display().to_string(),
+                ];
+                entry.apply_patch_artifacts = patch_paths.clone();
+                entry.status = "apply_patch_ready".into();
+            }
+        }
+        if !found {
+            anyhow::bail!("pending extension entry `{}` was not found", entry_id);
+        }
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        let mut details = vec![
+            format!("registry={}", registry_path.display()),
+            format!("entry_id={entry_id}"),
+            "status=apply_patch_ready".into(),
+        ];
+        for path in &patch_paths {
+            details.push(format!("apply_patch_artifact={path}"));
+        }
+        Ok(HostActionResult {
+            summary: "Extension apply_patch templates prepared".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn consume_extension_apply_patch(&self, entry_id: &str) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let entry = registry
+            .entries
+            .iter_mut()
+            .find(|entry| entry.entry_id == entry_id)
+            .ok_or_else(|| anyhow::anyhow!("pending extension entry `{}` was not found", entry_id))?;
+        if entry.status != "apply_patch_ready" && entry.status != "host_wired" {
+            anyhow::bail!(
+                "pending extension entry `{}` must be apply_patch_ready before host wiring",
+                entry_id
+            );
+        }
+
+        if entry.extension_kind == "proof_harness_bundle" {
+            let blockers = validate_proof_harness_bundle_artifacts(entry)?;
+            if !blockers.is_empty() {
+                anyhow::bail!(
+                    "proof harness bundle `{}` is not ready for host wiring: {}",
+                    entry_id,
+                    blockers.join("; ")
+                );
+            }
+
+            let (template, bundle) = load_proof_harness_bundle_manifests(entry)?;
+            let resolved_template = proof_template_by_id_from_root(
+                &self.workspace_root,
+                &template.template_id,
+                None,
+            )
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "workspace proof catalog could not resolve template `{}`",
+                    template.template_id
+                )
+            })?;
+            let resolved_bundle = capability_comparison_bundle_by_id_from_root(
+                &self.workspace_root,
+                &bundle.bundle_id,
+            )
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "workspace proof catalog could not resolve comparison bundle `{}`",
+                    bundle.bundle_id
+                )
+            })?;
+
+            if resolved_template.execution_recipe.comparison_bundle_id != resolved_bundle.bundle_id {
+                anyhow::bail!(
+                    "workspace proof catalog resolved mismatched bundle `{}` for template `{}`",
+                    resolved_bundle.bundle_id,
+                    resolved_template.template_id
+                );
+            }
+
+            let (quality_status, quality_notes) = evaluate_proof_harness_quality(
+                &self.workspace_root,
+                &resolved_template,
+                &resolved_bundle,
+                entry.proof_seed_template_id.as_deref(),
+                entry.proof_seed_bundle_id.as_deref(),
+            );
+            entry.proof_quality_status = Some(quality_status);
+            entry.proof_quality_notes = quality_notes;
+            refresh_proof_harness_lineage(
+                &self.workspace_root,
+                &self.runtime_root,
+                entry,
+                &resolved_template,
+                &resolved_bundle,
+            )?;
+            entry.status = "host_wired".into();
+            registry.updated_at = chatty_factory_core::timestamp_id("updated");
+            persist_json_pretty(&registry_path, &registry)?;
+            return Ok(HostActionResult {
+                summary: "Proof harness bundle catalog wiring verified".into(),
+                details: vec![
+                    format!("registry={}", registry_path.display()),
+                    format!("entry_id={entry_id}"),
+                    format!("proof_template_id={}", resolved_template.template_id),
+                    format!("comparison_bundle_id={}", resolved_bundle.bundle_id),
+                    "host_wiring=proof_harness_catalog_verified".into(),
+                    "registry_insert=not_applicable".into(),
+                    "handler_insert=not_applicable".into(),
+                    "status=host_wired".into(),
+                ],
+                browser_state: None,
+                runtime_refresh: None,
+                execution_result: None,
+                fallback_result: None,
+                followup_route: None,
+                extension_registry: Some(build_extension_registry_view(&registry)),
+            });
+        }
+
+        if entry.extension_kind == "composition_bundle" {
+            let blockers = validate_composition_bundle_artifacts(entry)?;
+            if !blockers.is_empty() {
+                anyhow::bail!(
+                    "composition bundle `{}` is not ready for host wiring: {}",
+                    entry_id,
+                    blockers.join("; ")
+                );
+            }
+            let compile_check = run_extension_wiring_compile_check(&self.workspace_root)?;
+            if !compile_check.status.success() {
+                let stderr = String::from_utf8_lossy(&compile_check.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&compile_check.stdout).trim().to_string();
+                let message = if !stderr.is_empty() { stderr } else { stdout };
+                anyhow::bail!(
+                    "host wiring compile check failed for composition bundle `{}`: {}",
+                    entry_id,
+                    message
+                );
+            }
+
+            entry.status = "host_wired".into();
+            registry.updated_at = chatty_factory_core::timestamp_id("updated");
+            persist_json_pretty(&registry_path, &registry)?;
+            return Ok(HostActionResult {
+                summary: "Composition bundle host wiring verified".into(),
+                details: vec![
+                    format!("registry={}", registry_path.display()),
+                    format!("entry_id={entry_id}"),
+                    "host_wiring=composition_bundle_verified".into(),
+                    "registry_insert=not_applicable".into(),
+                    "handler_insert=not_applicable".into(),
+                    "status=host_wired".into(),
+                    format!(
+                        "cargo_check={} -p chatty_factory_families -p chatty_factory_host -p chatty_factory_cli",
+                        self.workspace_root.join("Cargo.toml").display()
+                    ),
+                ],
+                browser_state: None,
+                runtime_refresh: None,
+                execution_result: None,
+                fallback_result: None,
+                followup_route: None,
+                extension_registry: Some(build_extension_registry_view(&registry)),
+            });
+        }
+
+        if entry.extension_kind == "helper_lane" {
+            let blockers = validate_helper_lane_governance_artifacts(entry)?;
+            if !blockers.is_empty() {
+                anyhow::bail!(
+                    "helper lane `{}` is not ready for host wiring: {}",
+                    entry_id,
+                    blockers.join("; ")
+                );
+            }
+            let compile_check = run_extension_wiring_compile_check(&self.workspace_root)?;
+            if !compile_check.status.success() {
+                let stderr = String::from_utf8_lossy(&compile_check.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&compile_check.stdout).trim().to_string();
+                let message = if !stderr.is_empty() { stderr } else { stdout };
+                anyhow::bail!(
+                    "host wiring compile check failed for helper lane `{}`: {}",
+                    entry_id,
+                    message
+                );
+            }
+
+            entry.status = "host_wired".into();
+            refresh_helper_lane_governance(&self.runtime_root, entry)?;
+            registry.updated_at = chatty_factory_core::timestamp_id("updated");
+            persist_json_pretty(&registry_path, &registry)?;
+            return Ok(HostActionResult {
+                summary: "Helper lane host wiring verified".into(),
+                details: vec![
+                    format!("registry={}", registry_path.display()),
+                    format!("entry_id={entry_id}"),
+                    "host_wiring=helper_lane_verified".into(),
+                    "registry_insert=not_applicable".into(),
+                    "handler_insert=not_applicable".into(),
+                    "status=host_wired".into(),
+                    format!(
+                        "cargo_check={} -p chatty_factory_families -p chatty_factory_host -p chatty_factory_cli",
+                        self.workspace_root.join("Cargo.toml").display()
+                    ),
+                ],
+                browser_state: None,
+                runtime_refresh: None,
+                execution_result: None,
+                fallback_result: None,
+                followup_route: None,
+                extension_registry: Some(build_extension_registry_view(&registry)),
+            });
+        }
+
+        if entry.extension_kind == "chattycog_bridge_lane" {
+            let blockers = validate_bridge_lane_governance_artifacts(entry)?;
+            if !blockers.is_empty() {
+                anyhow::bail!(
+                    "bridge lane `{}` is not ready for host wiring: {}",
+                    entry_id,
+                    blockers.join("; ")
+                );
+            }
+            let compile_check = run_extension_wiring_compile_check(&self.workspace_root)?;
+            if !compile_check.status.success() {
+                let stderr = String::from_utf8_lossy(&compile_check.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&compile_check.stdout).trim().to_string();
+                let message = if !stderr.is_empty() { stderr } else { stdout };
+                anyhow::bail!(
+                    "host wiring compile check failed for bridge lane `{}`: {}",
+                    entry_id,
+                    message
+                );
+            }
+
+            entry.status = "host_wired".into();
+            refresh_bridge_lane_governance(&self.runtime_root, entry)?;
+            registry.updated_at = chatty_factory_core::timestamp_id("updated");
+            persist_json_pretty(&registry_path, &registry)?;
+            return Ok(HostActionResult {
+                summary: "Bridge lane host wiring verified".into(),
+                details: vec![
+                    format!("registry={}", registry_path.display()),
+                    format!("entry_id={entry_id}"),
+                    "host_wiring=bridge_lane_verified".into(),
+                    "registry_insert=not_applicable".into(),
+                    "handler_insert=not_applicable".into(),
+                    "status=host_wired".into(),
+                    format!(
+                        "cargo_check={} -p chatty_factory_families -p chatty_factory_host -p chatty_factory_cli",
+                        self.workspace_root.join("Cargo.toml").display()
+                    ),
+                ],
+                browser_state: None,
+                runtime_refresh: None,
+                execution_result: None,
+                fallback_result: None,
+                followup_route: None,
+                extension_registry: Some(build_extension_registry_view(&registry)),
+            });
+        }
+
+        let registry_patch_path = entry
+            .apply_patch_artifacts
+            .iter()
+            .find(|path| path.ends_with("registry.apply_patch.txt"))
+            .map(PathBuf::from)
+            .ok_or_else(|| anyhow::anyhow!("missing registry.apply_patch.txt for `{}`", entry_id))?;
+        let handler_patch_path = entry
+            .apply_patch_artifacts
+            .iter()
+            .find(|path| path.ends_with("handler.apply_patch.txt"))
+            .map(PathBuf::from)
+            .ok_or_else(|| anyhow::anyhow!("missing handler.apply_patch.txt for `{}`", entry_id))?;
+
+        let live_registry_path = self
+            .workspace_root
+            .join("crates")
+            .join("chatty_factory_families")
+            .join("src")
+            .join("registry.rs");
+        let live_handler_path = self
+            .workspace_root
+            .join("crates")
+            .join("chatty_factory_families")
+            .join("src")
+            .join("lib.rs");
+
+        let original_registry = fs::read_to_string(&live_registry_path)?;
+        let original_handler = fs::read_to_string(&live_handler_path)?;
+        let recipe_id = pending_entry_slug(entry);
+        let handler_name = format!("patch_{}", recipe_id);
+
+        let registry_template = fs::read_to_string(&registry_patch_path)?;
+        let handler_template = fs::read_to_string(&handler_patch_path)?;
+        let registry_block = extract_added_patch_block(&registry_template)?;
+        let handler_block = extract_added_patch_block(&handler_template)?;
+
+        let mut next_registry = original_registry.clone();
+        let mut next_handler = original_handler.clone();
+        let mut details = vec![
+            format!("registry={}", registry_path.display()),
+            format!("entry_id={entry_id}"),
+            format!("recipe_id={recipe_id}"),
+            format!("handler={handler_name}"),
+            format!("registry_patch={}", registry_patch_path.display()),
+            format!("handler_patch={}", handler_patch_path.display()),
+        ];
+
+        if next_registry.contains(&format!("recipe_id: \"{recipe_id}\"")) {
+            details.push("registry_insert=skipped_existing".into());
+        } else {
+            next_registry = insert_patch_recipe_block(&next_registry, &registry_block)?;
+            details.push("registry_insert=applied".into());
+        }
+
+        if next_handler.contains(&format!("fn {}(", handler_name)) {
+            details.push("handler_insert=skipped_existing".into());
+        } else {
+            next_handler = append_handler_block(&next_handler, &handler_block);
+            details.push("handler_insert=applied".into());
+        }
+
+        let mut modified = false;
+        if next_registry != original_registry {
+            fs::write(&live_registry_path, &next_registry)?;
+            modified = true;
+        }
+        if next_handler != original_handler {
+            fs::write(&live_handler_path, &next_handler)?;
+            modified = true;
+        }
+
+        let compile_check = run_extension_wiring_compile_check(&self.workspace_root)?;
+        if !compile_check.status.success() {
+            if modified {
+                fs::write(&live_registry_path, &original_registry)?;
+                fs::write(&live_handler_path, &original_handler)?;
+            }
+            let stderr = String::from_utf8_lossy(&compile_check.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&compile_check.stdout).trim().to_string();
+            let message = if !stderr.is_empty() { stderr } else { stdout };
+            anyhow::bail!(
+                "host wiring compile check failed for `{}` and changes were rolled back: {}",
+                entry_id,
+                message
+            );
+        }
+
+        entry.status = "host_wired".into();
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        details.push("status=host_wired".into());
+        details.push(format!(
+            "cargo_check={} -p chatty_factory_families -p chatty_factory_host -p chatty_factory_cli",
+            self.workspace_root.join("Cargo.toml").display()
+        ));
+
+        Ok(HostActionResult {
+            summary: "Extension apply_patch templates consumed".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    pub fn validate_live_extension(&self, entry_id: &str) -> Result<HostActionResult> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let entry = registry
+            .entries
+            .iter_mut()
+            .find(|entry| entry.entry_id == entry_id)
+            .ok_or_else(|| anyhow::anyhow!("pending extension entry `{}` was not found", entry_id))?;
+        if entry.status != "host_wired" && entry.status != "fully_live" {
+            anyhow::bail!(
+                "pending extension entry `{}` must be host_wired before live validation",
+                entry_id
+            );
+        }
+
+        if entry.extension_kind == "proof_harness_bundle" {
+            let mut blockers = validate_proof_harness_bundle_artifacts(entry)?;
+            match load_proof_harness_bundle_manifests(entry) {
+                Ok((template, bundle)) => {
+                    if proof_template_by_id_from_root(
+                        &self.workspace_root,
+                        &template.template_id,
+                        None,
+                    )
+                    .is_none()
+                    {
+                        blockers.push(format!(
+                            "workspace proof catalog could not resolve template `{}`",
+                            template.template_id
+                        ));
+                    }
+                    if capability_comparison_bundle_by_id_from_root(
+                        &self.workspace_root,
+                        &bundle.bundle_id,
+                    )
+                    .is_none()
+                    {
+                        blockers.push(format!(
+                            "workspace proof catalog could not resolve comparison bundle `{}`",
+                            bundle.bundle_id
+                        ));
+                    }
+                }
+                Err(error) => blockers.push(error.to_string()),
+            }
+
+            let compile_check = run_extension_wiring_compile_check(&self.workspace_root)?;
+            if !compile_check.status.success() {
+                let stderr = String::from_utf8_lossy(&compile_check.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&compile_check.stdout).trim().to_string();
+                let message = if !stderr.is_empty() { stderr } else { stdout };
+                blockers.push(format!("cargo check failed: {message}"));
+            }
+
+            if !blockers.is_empty() {
+                anyhow::bail!(
+                    "proof harness bundle `{}` is not fully live yet: {}",
+                    entry_id,
+                    blockers.join("; ")
+                );
+            }
+
+            let (template, bundle) = load_proof_harness_bundle_manifests(entry)?;
+            let (quality_status, quality_notes) = evaluate_proof_harness_quality(
+                &self.workspace_root,
+                &template,
+                &bundle,
+                entry.proof_seed_template_id.as_deref(),
+                entry.proof_seed_bundle_id.as_deref(),
+            );
+            entry.proof_quality_status = Some(quality_status);
+            entry.proof_quality_notes = quality_notes;
+            refresh_proof_harness_lineage(
+                &self.workspace_root,
+                &self.runtime_root,
+                entry,
+                &template,
+                &bundle,
+            )?;
+            entry.status = "fully_live".into();
+            registry.updated_at = chatty_factory_core::timestamp_id("updated");
+            persist_json_pretty(&registry_path, &registry)?;
+            return Ok(HostActionResult {
+                summary: "Proof harness bundle marked fully live".into(),
+                details: vec![
+                    format!("registry={}", registry_path.display()),
+                    format!("entry_id={entry_id}"),
+                    format!("proof_template_id={}", template.template_id),
+                    format!("comparison_bundle_id={}", bundle.bundle_id),
+                    "live_validation=proof_harness_bundle".into(),
+                    "status=fully_live".into(),
+                ],
+                browser_state: None,
+                runtime_refresh: None,
+                execution_result: None,
+                fallback_result: None,
+                followup_route: None,
+                extension_registry: Some(build_extension_registry_view(&registry)),
+            });
+        }
+
+        if entry.extension_kind == "composition_bundle" {
+            let mut blockers = validate_composition_bundle_artifacts(entry)?;
+            let compile_check = run_extension_wiring_compile_check(&self.workspace_root)?;
+            if !compile_check.status.success() {
+                let stderr = String::from_utf8_lossy(&compile_check.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&compile_check.stdout).trim().to_string();
+                let message = if !stderr.is_empty() { stderr } else { stdout };
+                blockers.push(format!("cargo check failed: {message}"));
+            }
+            if !blockers.is_empty() {
+                anyhow::bail!(
+                    "composition bundle `{}` is not fully live yet: {}",
+                    entry_id,
+                    blockers.join("; ")
+                );
+            }
+
+            entry.status = "fully_live".into();
+            registry.updated_at = chatty_factory_core::timestamp_id("updated");
+            persist_json_pretty(&registry_path, &registry)?;
+            return Ok(HostActionResult {
+                summary: "Composition bundle marked fully live".into(),
+                details: vec![
+                    format!("registry={}", registry_path.display()),
+                    format!("entry_id={entry_id}"),
+                    "live_validation=composition_bundle".into(),
+                    "status=fully_live".into(),
+                ],
+                browser_state: None,
+                runtime_refresh: None,
+                execution_result: None,
+                fallback_result: None,
+                followup_route: None,
+                extension_registry: Some(build_extension_registry_view(&registry)),
+            });
+        }
+
+        if entry.extension_kind == "helper_lane" {
+            let mut blockers = validate_helper_lane_governance_artifacts(entry)?;
+            let compile_check = run_extension_wiring_compile_check(&self.workspace_root)?;
+            if !compile_check.status.success() {
+                let stderr = String::from_utf8_lossy(&compile_check.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&compile_check.stdout).trim().to_string();
+                let message = if !stderr.is_empty() { stderr } else { stdout };
+                blockers.push(format!("cargo check failed: {message}"));
+            }
+            if !blockers.is_empty() {
+                anyhow::bail!(
+                    "helper lane `{}` is not fully live yet: {}",
+                    entry_id,
+                    blockers.join("; ")
+                );
+            }
+
+            entry.status = "fully_live".into();
+            refresh_helper_lane_governance(&self.runtime_root, entry)?;
+            registry.updated_at = chatty_factory_core::timestamp_id("updated");
+            persist_json_pretty(&registry_path, &registry)?;
+            return Ok(HostActionResult {
+                summary: "Helper lane marked fully live".into(),
+                details: vec![
+                    format!("registry={}", registry_path.display()),
+                    format!("entry_id={entry_id}"),
+                    "live_validation=helper_lane".into(),
+                    "status=fully_live".into(),
+                ],
+                browser_state: None,
+                runtime_refresh: None,
+                execution_result: None,
+                fallback_result: None,
+                followup_route: None,
+                extension_registry: Some(build_extension_registry_view(&registry)),
+            });
+        }
+
+        if entry.extension_kind == "chattycog_bridge_lane" {
+            let mut blockers = validate_bridge_lane_governance_artifacts(entry)?;
+            let compile_check = run_extension_wiring_compile_check(&self.workspace_root)?;
+            if !compile_check.status.success() {
+                let stderr = String::from_utf8_lossy(&compile_check.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&compile_check.stdout).trim().to_string();
+                let message = if !stderr.is_empty() { stderr } else { stdout };
+                blockers.push(format!("cargo check failed: {message}"));
+            }
+            if !blockers.is_empty() {
+                anyhow::bail!(
+                    "bridge lane `{}` is not fully live yet: {}",
+                    entry_id,
+                    blockers.join("; ")
+                );
+            }
+
+            entry.status = "fully_live".into();
+            refresh_bridge_lane_governance(&self.runtime_root, entry)?;
+            registry.updated_at = chatty_factory_core::timestamp_id("updated");
+            persist_json_pretty(&registry_path, &registry)?;
+            return Ok(HostActionResult {
+                summary: "Bridge lane marked fully live".into(),
+                details: vec![
+                    format!("registry={}", registry_path.display()),
+                    format!("entry_id={entry_id}"),
+                    "live_validation=chattycog_bridge_lane".into(),
+                    "status=fully_live".into(),
+                ],
+                browser_state: None,
+                runtime_refresh: None,
+                execution_result: None,
+                fallback_result: None,
+                followup_route: None,
+                extension_registry: Some(build_extension_registry_view(&registry)),
+            });
+        }
+
+        let recipe_id = pending_entry_slug(entry);
+        let handler_name = format!("patch_{}", recipe_id);
+        let live_registry_path = self
+            .workspace_root
+            .join("crates")
+            .join("chatty_factory_families")
+            .join("src")
+            .join("registry.rs");
+        let live_handler_path = self
+            .workspace_root
+            .join("crates")
+            .join("chatty_factory_families")
+            .join("src")
+            .join("lib.rs");
+        let registry_source = fs::read_to_string(&live_registry_path)?;
+        let handler_source = fs::read_to_string(&live_handler_path)?;
+        let recipe_block = extract_recipe_block(&registry_source, &recipe_id)?;
+        let handler_block = extract_handler_block(&handler_source, &handler_name)?;
+
+        let mut blockers = Vec::new();
+        if recipe_block.contains("todo phrase") {
+            blockers.push("registry recipe still contains placeholder request phrases".to_string());
+        }
+        if recipe_block.contains("todo_feature") {
+            blockers.push("registry recipe still contains placeholder provided features".to_string());
+        }
+        if handler_block.contains("not wired yet") || handler_block.contains("implement handler logic here") {
+            blockers.push("handler body still contains stub not-wired marker".to_string());
+        }
+        if handler_block.contains("todo ") || handler_block.contains("TODO") {
+            blockers.push("handler body still contains todo markers".to_string());
+        }
+
+        let compile_check = run_extension_wiring_compile_check(&self.workspace_root)?;
+        if !compile_check.status.success() {
+            let stderr = String::from_utf8_lossy(&compile_check.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&compile_check.stdout).trim().to_string();
+            let message = if !stderr.is_empty() { stderr } else { stdout };
+            blockers.push(format!("cargo check failed: {message}"));
+        }
+
+        if !blockers.is_empty() {
+            anyhow::bail!(
+                "pending extension entry `{}` is not fully live yet: {}",
+                entry_id,
+                blockers.join("; ")
+            );
+        }
+
+        entry.status = "fully_live".into();
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+
+        Ok(HostActionResult {
+            summary: "Extension validated fully live".into(),
+            details: vec![
+                format!("registry={}", registry_path.display()),
+                format!("entry_id={entry_id}"),
+                format!("recipe_id={recipe_id}"),
+                format!("handler={handler_name}"),
+                "status=fully_live".into(),
+            ],
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: Some(build_extension_registry_view(&registry)),
+        })
+    }
+
+    fn promote_pending_extension(
+        &self,
+        build_spec: &FallbackBuildSpec,
+        spec_path: &Path,
+        scaffold_root: &Path,
+        integrated_paths: &[PathBuf],
+    ) -> Result<PathBuf> {
+        let registry_path = self
+            .workspace_root
+            .join("operator_registry")
+            .join("pending_lanes.json");
+        let mut registry = load_pending_extension_registry(&registry_path)?;
+        let unresolved_layers = unresolved_scaffold_layers(build_spec)
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let family_id = build_spec
+            .suggested_family_id
+            .as_ref()
+            .map(|id| id.as_str().to_string());
+        let tool_kind = build_spec.suggested_tool_kind.clone();
+        let patch_kind = build_spec.suggested_patch_kind.clone();
+        let source_stub_path = spec_path.display().to_string();
+        let scaffold_root = scaffold_root.display().to_string();
+        let integrated_paths = integrated_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>();
+
+        if let Some(entry) = registry.entries.iter_mut().find(|entry| {
+            entry.status == "pending_implementation"
+                && entry.family_id == family_id
+                && entry.tool_kind == tool_kind
+                && entry.patch_kind == patch_kind
+                && entry.unresolved_layers == unresolved_layers
+                && entry.missing_family_build_primitive_classes
+                    == build_spec.missing_family_build_primitive_classes
+                && entry.missing_patch_primitive_classes
+                    == build_spec.missing_patch_primitive_classes
+                && entry.missing_helper_primitive_kinds == build_spec.missing_helper_primitive_kinds
+        }) {
+            entry.extension_kind = build_spec.suggested_extension_kind.clone();
+            entry.bridge_capabilities = build_spec.suggested_bridge_capabilities.clone();
+            entry.requested_capabilities = build_spec.requested_capabilities.clone();
+            entry.proof_seed_template_id = build_spec.suggested_proof_seed_template_id.clone();
+            entry.proof_seed_bundle_id = build_spec.suggested_proof_seed_bundle_id.clone();
+            entry.source_stub_path = source_stub_path;
+            entry.scaffold_root = scaffold_root;
+            entry.integrated_paths = integrated_paths;
+            entry.archived_reason = None;
+            if entry.extension_kind == "proof_harness_bundle" {
+                if let Ok((template, bundle)) = load_proof_harness_bundle_manifests(entry) {
+                    let (quality_status, quality_notes) = evaluate_proof_harness_quality(
+                        &self.workspace_root,
+                        &template,
+                        &bundle,
+                        entry.proof_seed_template_id.as_deref(),
+                        entry.proof_seed_bundle_id.as_deref(),
+                    );
+                    entry.proof_quality_status = Some(quality_status);
+                    entry.proof_quality_notes = quality_notes;
+                    refresh_proof_harness_lineage(
+                        &self.workspace_root,
+                        &self.runtime_root,
+                        entry,
+                        &template,
+                        &bundle,
+                    )?;
+                }
+            }
+            normalize_pending_extension_entry(entry);
+        } else {
+            let (proof_quality_status, proof_quality_notes) =
+                if build_spec.suggested_extension_kind == "proof_harness_bundle" {
+                    let template_path = integrated_paths
+                        .iter()
+                        .find(|path| path.contains("proof_harness") && path.contains("templates"))
+                        .map(PathBuf::from);
+                    let bundle_path = integrated_paths
+                        .iter()
+                        .find(|path| path.contains("proof_harness") && path.contains("bundles"))
+                        .map(PathBuf::from);
+                    if let (Some(template_path), Some(bundle_path)) = (template_path, bundle_path) {
+                        let template: PrimitiveProofTemplate =
+                            serde_json::from_str(&fs::read_to_string(&template_path)?)?;
+                        let bundle: CapabilityComparisonBundle =
+                            serde_json::from_str(&fs::read_to_string(&bundle_path)?)?;
+                        let (status, notes) = evaluate_proof_harness_quality(
+                            &self.workspace_root,
+                            &template,
+                            &bundle,
+                            build_spec.suggested_proof_seed_template_id.as_deref(),
+                            build_spec.suggested_proof_seed_bundle_id.as_deref(),
+                        );
+                        (Some(status), notes)
+                    } else {
+                        (None, Vec::new())
+                    }
+                } else {
+                    (None, Vec::new())
+                };
+            registry.entries.push(PendingExtensionEntry {
+                entry_id: chatty_factory_core::timestamp_id("pending-lane"),
+                status: "pending_implementation".into(),
+                extension_kind: build_spec.suggested_extension_kind.clone(),
+                unresolved_layers,
+                family_id,
+                tool_kind,
+                patch_kind,
+                bridge_capabilities: build_spec.suggested_bridge_capabilities.clone(),
+                requested_capabilities: build_spec.requested_capabilities.clone(),
+                missing_family_build_primitive_classes: build_spec
+                    .missing_family_build_primitive_classes
+                    .clone(),
+                missing_patch_primitive_classes: build_spec
+                    .missing_patch_primitive_classes
+                    .clone(),
+                missing_helper_primitive_kinds: build_spec
+                    .missing_helper_primitive_kinds
+                    .clone(),
+                source_stub_path,
+                scaffold_root,
+                integrated_paths,
+                promotion_artifacts: Vec::new(),
+                apply_patch_artifacts: Vec::new(),
+                proof_seed_template_id: build_spec.suggested_proof_seed_template_id.clone(),
+                proof_seed_bundle_id: build_spec.suggested_proof_seed_bundle_id.clone(),
+                proof_quality_status,
+                proof_quality_notes,
+                proof_lineage_receipt_path: None,
+                proof_drift_status: None,
+                proof_drift_notes: Vec::new(),
+                proof_change_since_last_pass_status: None,
+                proof_change_since_last_pass_notes: Vec::new(),
+                composition_lineage_receipt_path: None,
+                composition_drift_status: None,
+                composition_drift_notes: Vec::new(),
+                composition_change_since_last_live_status: None,
+                composition_change_since_last_live_notes: Vec::new(),
+                patch_lineage_receipt_path: None,
+                patch_drift_status: None,
+                patch_drift_notes: Vec::new(),
+                patch_change_since_last_live_status: None,
+                patch_change_since_last_live_notes: Vec::new(),
+                helper_lineage_receipt_path: None,
+                helper_drift_status: None,
+                helper_drift_notes: Vec::new(),
+                helper_change_since_last_live_status: None,
+                helper_change_since_last_live_notes: Vec::new(),
+                bridge_lineage_receipt_path: None,
+                bridge_drift_status: None,
+                bridge_drift_notes: Vec::new(),
+                bridge_change_since_last_live_status: None,
+                bridge_change_since_last_live_notes: Vec::new(),
+                archived_reason: None,
+                created_at: chatty_factory_core::timestamp_id("created"),
+            });
+            if let Some(entry) = registry.entries.last_mut() {
+                if entry.extension_kind == "proof_harness_bundle" {
+                    if let Ok((template, bundle)) = load_proof_harness_bundle_manifests(entry) {
+                        refresh_proof_harness_lineage(
+                            &self.workspace_root,
+                            &self.runtime_root,
+                            entry,
+                            &template,
+                            &bundle,
+                        )?;
+                    }
+                }
+            }
+        }
+        registry.updated_at = chatty_factory_core::timestamp_id("updated");
+        persist_json_pretty(&registry_path, &registry)?;
+        Ok(registry_path)
+    }
+
+    pub fn refresh_runtime(&self, planner: &HostPlannerOptions) -> Result<HostActionResult> {
+        let models_root = self.workspace_root.join("models");
+        let discovery = discover_runtime(&self.runtime_root, &models_root)?;
+        let catalog = build_runtime_model_catalog(&models_root)?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-discovery.json", discovery.discovery_id)),
+            &discovery,
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-catalog.json", catalog.catalog_id)),
+            &catalog,
+        )?;
+
+        let mut config = default_runtime_config(&self.runtime_root, &models_root)?;
+        config.default_model_path = resolve_model_choice(
+            planner.requested_model.as_deref(),
+            &catalog,
+            discovery.preferred_model_path.as_deref(),
+        );
+        if let Some(port) = planner.requested_port {
+            config.port = port;
+        }
+        persist_json_pretty(&self.runtime_root.join("runtime_config.json"), &config)?;
+
+        Ok(HostActionResult {
+            summary: "Runtime status refreshed".into(),
+            details: vec![
+                format!("models={}", catalog.models.len()),
+                format!("port={}", config.port),
+            ],
+            browser_state: None,
+            runtime_refresh: Some(HostRuntimeRefreshResult {
+                config: Some(config),
+                catalog: Some(catalog),
+                smoke: None,
+            }),
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn runtime_smoke(
+        &self,
+        planner: &HostPlannerOptions,
+        skip_launch: bool,
+    ) -> Result<HostActionResult> {
+        let models_root = self.workspace_root.join("models");
+        let discovery = discover_runtime(&self.runtime_root, &models_root)?;
+        let catalog = build_runtime_model_catalog(&models_root)?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-discovery.json", discovery.discovery_id)),
+            &discovery,
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-catalog.json", catalog.catalog_id)),
+            &catalog,
+        )?;
+
+        let mut config = default_runtime_config(&self.runtime_root, &models_root)?;
+        config.default_model_path = resolve_model_choice(
+            planner.requested_model.as_deref(),
+            &catalog,
+            discovery.preferred_model_path.as_deref(),
+        );
+        if let Some(port) = planner.requested_port {
+            config.port = port;
+        }
+        persist_json_pretty(&self.runtime_root.join("runtime_config.json"), &config)?;
+
+        let smoke = run_runtime_smoke(&config, !skip_launch)?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-smoke.json", smoke.smoke_id)),
+            &smoke,
+        )?;
+
+        Ok(HostActionResult {
+            summary: "Runtime smoke finished".into(),
+            details: vec![
+                format!("backend={}", discovery.planner_runtime_capability.backend_kind),
+                format!("vulkan={}", discovery.vulkan_backend_present),
+                format!("launch_attempted={}", smoke.server_launch_attempted),
+                format!("http_probe={}", smoke.http_probe_ok),
+            ],
+            browser_state: None,
+            runtime_refresh: Some(HostRuntimeRefreshResult {
+                config: Some(config),
+                catalog: Some(catalog),
+                smoke: Some(smoke),
+            }),
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn planner_run(
+        &self,
+        handoff_path: &Path,
+        planner: &HostPlannerOptions,
+    ) -> Result<HostActionResult> {
+        let handoff: PlannerHandoff = serde_json::from_str(&fs::read_to_string(handoff_path)?)?;
+        let models_root = self.workspace_root.join("models");
+        let discovery = discover_runtime(&self.runtime_root, &models_root)?;
+        let catalog = build_runtime_model_catalog(&models_root)?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-discovery.json", discovery.discovery_id)),
+            &discovery,
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-catalog.json", catalog.catalog_id)),
+            &catalog,
+        )?;
+
+        let mut config = default_runtime_config(&self.runtime_root, &models_root)?;
+        config.default_model_path = resolve_model_choice(
+            planner.requested_model.as_deref(),
+            &catalog,
+            discovery.preferred_model_path.as_deref(),
+        );
+        if let Some(port) = planner.requested_port {
+            config.port = port;
+        }
+        persist_json_pretty(&self.runtime_root.join("runtime_config.json"), &config)?;
+
+        let (planner_response, final_config, dispatch_receipt) = run_planner_with_model_fallback(
+            &self.runtime_root,
+            &catalog,
+            &handoff,
+            &config,
+            planner.requested_model.as_deref(),
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("planner_dispatches")
+                .join(format!("{}.json", dispatch_receipt.dispatch_id)),
+            &dispatch_receipt,
+        )?;
+
+        Ok(HostActionResult {
+            summary: "Planner run finished".into(),
+            details: vec![
+                format!("handoff={}", handoff_path.display()),
+                format!(
+                    "model={}",
+                    final_config
+                        .default_model_path
+                        .as_deref()
+                        .unwrap_or("none configured")
+                ),
+                format!("response_id={}", planner_response.response_id),
+                format!("dispatch_id={}", dispatch_receipt.dispatch_id),
+            ],
+            browser_state: None,
+            runtime_refresh: Some(HostRuntimeRefreshResult {
+                config: Some(final_config),
+                catalog: Some(catalog),
+                smoke: None,
+            }),
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn smart_request(
+        &self,
+        raw_request: &str,
+        planner_response_path: Option<&Path>,
+        planner: &HostPlannerOptions,
+    ) -> Result<HostActionResult> {
+        let followup_route =
+            self.resolve_followup_route(raw_request, planner_response_path, planner)?;
+        let mut result = if let Some(project_name) = followup_route.selected_active_project.as_deref()
+        {
+            self.patch_request(project_name, raw_request, planner)?
+        } else {
+            self.build_request(raw_request, planner)?
+        };
+
+        if let Some(execution) = result.execution_result.as_mut() {
+            execution.followup_request_mode =
+                Some(followup_route.selected_request_mode.clone());
+            execution.followup_rationale = followup_route.rationale.clone();
+        }
+        result.followup_route = Some(followup_route);
+        Ok(result)
+    }
+
+    pub fn resolve_followup_route(
+        &self,
+        raw_request: &str,
+        planner_response_path: Option<&Path>,
+        planner: &HostPlannerOptions,
+    ) -> Result<FollowupRouteResult> {
+        if let Some(path) = planner_response_path {
+            let response: PlannerResponse = serde_json::from_str(&fs::read_to_string(path)?)?;
+            if matches!(
+                response.recommended_request_mode.as_deref(),
+                Some("patch_active_project")
+            ) {
+                if let Some(project_name) = response.recommended_active_project {
+                    return Ok(FollowupRouteResult {
+                        selected_active_project: Some(project_name),
+                        selected_request_mode: "patch_active_project".into(),
+                        rationale: vec!["planner response explicitly named an active project".into()],
+                    });
+                }
+            }
+        }
+
+        let active_session = load_project_session(&self.runtime_root, "active_project_session.json")?;
+        let selected_session =
+            load_project_session(&self.runtime_root, "selected_project_session.json")?;
+        let preferred_session = selected_session.as_ref().or(active_session.as_ref());
+        let active_projects = discover_projects(&self.output_root, preferred_session)?;
+        let active_project_names = active_projects
+            .iter()
+            .map(|project| project.project_name.clone())
+            .collect::<Vec<_>>();
+        if !planner.auto_planner
+            || active_projects.is_empty()
+            || !should_route_followup_via_planner(raw_request, &active_project_names)
+        {
+            return Ok(FollowupRouteResult {
+                selected_active_project: None,
+                selected_request_mode: "new_build".into(),
+                rationale: vec!["request was not treated as an ambiguous short follow-up".into()],
+            });
+        }
+
+        let seed_request = normalize_request(raw_request);
+        let models_root = self.workspace_root.join("models");
+        let discovery = discover_runtime(&self.runtime_root, &models_root)?;
+        let catalog = build_runtime_model_catalog(&models_root)?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-discovery.json", discovery.discovery_id)),
+            &discovery,
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-catalog.json", catalog.catalog_id)),
+            &catalog,
+        )?;
+
+        let mut config = default_runtime_config(&self.runtime_root, &models_root)?;
+        config.default_model_path = resolve_model_choice(
+            planner.requested_model.as_deref(),
+            &catalog,
+            discovery.preferred_model_path.as_deref(),
+        );
+        if let Some(port) = planner.requested_port {
+            config.port = port;
+        }
+        persist_json_pretty(&self.runtime_root.join("runtime_config.json"), &config)?;
+
+        let handoff = PlannerHandoff {
+            handoff_id: chatty_factory_core::timestamp_id("planner-handoff-route-mode"),
+            request_id: seed_request.request_id.clone(),
+            source_plan_id: chatty_factory_core::timestamp_id("plan-route-mode"),
+            mode: None,
+            active_project: None,
+            interpreted_goal:
+                "Choose whether this short follow-up should start a new build or patch an existing project"
+                    .into(),
+            inferred_family_candidates: seed_request.candidate_family_ids.clone(),
+            inferred_tool_kind: None,
+            available_patch_kinds: Vec::new(),
+            candidate_request_modes: vec![
+                "new_build".into(),
+                "patch_active_project".into(),
+                "need_user_target".into(),
+            ],
+            candidate_active_projects: active_project_names.clone(),
+            candidate_active_project_summaries: active_projects
+                .iter()
+                .map(active_project_summary_line)
+                .collect(),
+            candidate_patch_recipe_ids: Vec::new(),
+            candidate_composition_patch_kinds: Vec::new(),
+            candidate_composition_patch_primitive_classes: Vec::new(),
+            candidate_composition_family_build_primitive_classes: Vec::new(),
+            candidate_composition_layers: Vec::new(),
+            candidate_composition_adapter_semantics: Vec::new(),
+            candidate_composition_helper_primitive_ids: Vec::new(),
+            candidate_composition_helper_primitive_kinds: Vec::new(),
+            candidate_operator_bundle_ids: Vec::new(),
+            candidate_acceptance_recipe_ids: Vec::new(),
+            rationale: {
+                let mut notes =
+                    vec!["request looks like a short follow-up and multiple routes may fit".into()];
+                if let Some(session) = &selected_session {
+                    notes.push(format!(
+                        "explicit selected project session: {} ({}, {})",
+                        session.project_name, session.last_action, session.source_kind
+                    ));
+                } else if let Some(session) = &active_session {
+                    notes.push(format!(
+                        "last active project session: {} ({}, {})",
+                        session.project_name, session.last_action, session.source_kind
+                    ));
+                }
+                notes
+            },
+            escalation_reasons: vec![
+                "need a tiny routing choice before build or patch planning".into(),
+            ],
+            requested_output: vec!["request mode choice".into()],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("planner_handoffs")
+                .join(format!("{}.json", handoff.handoff_id)),
+            &handoff,
+        )?;
+
+        let (response, _, dispatch) = run_planner_with_model_fallback(
+            &self.runtime_root,
+            &catalog,
+            &handoff,
+            &config,
+            planner.requested_model.as_deref(),
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("planner_dispatches")
+                .join(format!("{}.json", dispatch.dispatch_id)),
+            &dispatch,
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("planner_responses")
+                .join(format!("{}.json", response.response_id)),
+            &response,
+        )?;
+
+        match response.recommended_request_mode.as_deref() {
+            Some("patch_active_project") => {
+                let selected = response
+                    .recommended_active_project
+                    .clone()
+                    .or_else(|| {
+                        if active_project_names.len() == 1 {
+                            active_project_names.first().cloned()
+                        } else if let Some(session) = preferred_session {
+                            Some(session.project_name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "planner selected patch_active_project without a target project"
+                    ))?;
+                Ok(FollowupRouteResult {
+                    selected_active_project: Some(selected),
+                    selected_request_mode: "patch_active_project".into(),
+                    rationale: vec![
+                        "tiny planner route-mode choice selected patch_active_project".into(),
+                    ],
+                })
+            }
+            Some("need_user_target") => anyhow::bail!(
+                "follow-up request needs a project target; rerun as `patch <project_name> <request>` or provide a planner response naming the active project"
+            ),
+            _ => Ok(FollowupRouteResult {
+                selected_active_project: None,
+                selected_request_mode: "new_build".into(),
+                rationale: vec![
+                    "tiny planner route-mode choice did not require patching an active project"
+                        .into(),
+                ],
+            }),
+        }
+    }
+
+    pub fn build_request(
+        &self,
+        raw_request: &str,
+        planner: &HostPlannerOptions,
+    ) -> Result<HostActionResult> {
+        let control = ControlPlane::milestone_one();
+        let request = normalize_request(raw_request);
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("requests")
+                .join(format!("{}.json", request.request_id)),
+            &request,
+        )?;
+
+        let mut plan = derive_request_plan(&request, None);
+        if plan.needs_llm_review {
+            self.maybe_run_auto_planner(&request, &mut plan, None, planner)?;
+        }
+        apply_adapter_aware_family_preference_for_build(&request, &mut plan);
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("plans")
+                .join(format!("{}.json", plan.plan_id)),
+            &plan,
+        )?;
+        if plan.inferred_family_candidates.is_empty() {
+            return emit_fallback_result(
+                &self.runtime_root,
+                &request,
+                &plan,
+                None,
+                "No deterministic build family matched this request yet",
+            );
+        }
+        if plan.needs_llm_review {
+            return emit_fallback_result(
+                &self.runtime_root,
+                &request,
+                &plan,
+                None,
+                "Build request needs clarification or planner guidance before a deterministic lane can run",
+            );
+        }
+
+        let route = control.choose_milestone_one_route(&request, &plan);
+        let inputs = derive_scaffold_inputs(&request, &plan, &route);
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("routes")
+                .join(format!("{}.json", route.route_id)),
+            &route,
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("scaffold_inputs")
+                .join(format!("{}-inputs.json", request.request_id)),
+            &inputs,
+        )?;
+        let mut composition_patch_kinds = derive_bounded_build_composition_patch_kinds(
+            &request,
+            &plan,
+            route.selected_family_id.as_ref(),
+        );
+        let candidate_helper_primitive_ids = candidate_helper_primitive_ids_for_composition(
+            None,
+            route.selected_family_id.as_ref(),
+            &composition_patch_kinds,
+        );
+        let mut composition_review_notes = Vec::new();
+        let mut composition_review_receipt_path = None;
+        if !composition_patch_kinds.is_empty() {
+            let review = self.review_bounded_composition_candidates(
+                &request,
+                &plan,
+                None,
+                route.selected_family_id.as_ref(),
+                &composition_patch_kinds,
+                &candidate_helper_primitive_ids,
+                planner,
+            )?;
+            composition_review_notes.extend(review.rationale.clone());
+            if !review.selected_composition_layers.is_empty() {
+                composition_review_notes.push(format!(
+                    "host reviewed composition work-order layers: {}",
+                    review.selected_composition_layers.join(", ")
+                ));
+            }
+            composition_review_receipt_path = review.review_receipt_path.clone();
+            if planner.auto_planner && !review.approved {
+                return emit_fallback_result(
+                    &self.runtime_root,
+                    &request,
+                    &plan,
+                    None,
+                    "Bounded composition review did not approve the host-composed work order",
+                );
+            }
+            if !review.selected_patch_kinds.is_empty() {
+                composition_patch_kinds = review.selected_patch_kinds;
+            }
+        }
+        let composition_route_class = if composition_patch_kinds.is_empty() {
+            derive_composition_route_class(&request, &plan, None, None, true)
+        } else {
+            CompositionRouteClass::BoundedCompositionCandidate
+        };
+        let mut composable_route_plan = derive_composable_route_plan(
+            &request,
+            &plan,
+            None,
+            None,
+            composition_route_class.clone(),
+            &composition_patch_kinds,
+        );
+        let composable_route_plan_path =
+            persist_composable_route_plan(&self.runtime_root, &composable_route_plan)?;
+
+        let artifacts = match route.selected_family_id {
+            Some(FamilyId::ChattycogWebviewModule) => {
+                build_chattycog_webview_module(&self.output_root, &inputs)?
+            }
+            Some(FamilyId::ChattycogNativeWindowModule) => {
+                build_chattycog_native_window_module(&self.output_root, &inputs)?
+            }
+            Some(FamilyId::ChattycogWorkspaceModule) => {
+                build_chattycog_workspace_module(&self.output_root, &inputs)?
+            }
+            Some(FamilyId::PythonCliTool) => build_python_cli_tool(&self.output_root, &inputs)?,
+            Some(FamilyId::RustCliTool) => build_rust_cli_tool(&self.output_root, &inputs)?,
+            _ => build_static_web_dashboard(&self.output_root, &inputs)?,
+        };
+        persist_composition_step_receipt(
+            &self.runtime_root,
+            &composable_route_plan.composition_plan_id,
+            0,
+            "family_seed",
+            route
+                .selected_family_id
+                .as_ref()
+                .map(FamilyId::as_str)
+                .unwrap_or("static_web_dashboard"),
+            &serde_json::json!({
+                "composition_plan_id": composable_route_plan.composition_plan_id,
+                "request_id": request.request_id,
+                "step_index": 0,
+                "step_kind": "family_seed",
+                "primitive_id": route.selected_family_id.as_ref().map(FamilyId::as_str).unwrap_or("static_web_dashboard"),
+                "project_name": inputs.project_name,
+                "project_dir": artifacts.project_dir,
+                "status": "seeded",
+            }),
+        )?;
+        let mut composition_notes = Vec::new();
+        let mut selected_composition_patch_kinds = Vec::new();
+        let mut primitive_execution_plan = derive_primitive_execution_plan(&composable_route_plan);
+        let primitive_execution_plan_path =
+            persist_primitive_execution_plan(&self.runtime_root, &primitive_execution_plan)?;
+        if !composition_patch_kinds.is_empty() {
+            let outcome = execute_composable_route_plan(
+                &self.runtime_root,
+                &mut primitive_execution_plan,
+                &request.request_id,
+                &inputs.project_name,
+                &request.raw_request,
+                &artifacts.project_dir,
+            )?;
+            persist_primitive_execution_plan(&self.runtime_root, &primitive_execution_plan)?;
+            selected_composition_patch_kinds = outcome.applied_patch_kinds.clone();
+            composition_notes.push(format!(
+                "bounded composition executed from composable route plan: {}",
+                outcome.applied_patch_kinds.join(", ")
+            ));
+        }
+        composition_notes.extend(composition_review_notes);
+
+        apply_request_plan_enrichments(&artifacts.project_dir, &plan)?;
+        let execution_status = run_execution_safety(
+            &self.runtime_root,
+            &request.request_id,
+            &self.output_root,
+            &artifacts.project_dir,
+        )?;
+        persist_project_grounding(
+            &self.runtime_root,
+            &request.request_id,
+            &artifacts.project_dir,
+        )?;
+        let refreshed_spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(
+            artifacts.project_dir.join("ProjectSpec.json"),
+        )?)?;
+        sync_helper_acceptance_expectations(
+            &artifacts.project_dir,
+            Some(&primitive_execution_plan),
+        )?;
+        let helper_runtime_receipts = execute_and_persist_helper_runtime_state(
+            &self.runtime_root,
+            &request.request_id,
+            &artifacts.project_dir,
+            &refreshed_spec,
+        )?;
+        sync_helper_acceptance_expectations(
+            &artifacts.project_dir,
+            Some(&primitive_execution_plan),
+        )?;
+        let monitoring_acceptance: chatty_factory_core::AcceptancePlan = serde_json::from_str(
+            &fs::read_to_string(artifacts.project_dir.join("AcceptancePlan.json"))?,
+        )?;
+        let monitoring_capabilities =
+            proof_capability_classes(&refreshed_spec, &monitoring_acceptance);
+        let auto_monitoring_compare = if helper_monitoring_baseline_satisfied(&monitoring_capabilities)
+        {
+            if let Some(counterpart_project_name) = find_counterpart_monitoring_project(
+                &self.output_root,
+                &inputs.project_name,
+                refreshed_spec.family_id.as_ref(),
+            )? {
+                Some(self.persist_cross_family_monitoring_receipt(
+                    &inputs.project_name,
+                    &counterpart_project_name,
+                )?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        enrich_composable_route_plan(
+            &mut composable_route_plan,
+            &refreshed_spec,
+            &selected_composition_patch_kinds,
+        );
+        persist_composable_route_plan(&self.runtime_root, &composable_route_plan)?;
+        verify_build_artifacts(&self.runtime_root, &request.request_id, &artifacts)?;
+        let receipt = build_receipt(&request.request_id, &inputs, &artifacts);
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("build_receipts")
+                .join(format!("{}-build.json", request.request_id)),
+            &receipt,
+        )?;
+        persist_project_session(
+            &self.runtime_root,
+            "active_project_session.json",
+            "active_project_sessions",
+            &ProjectSession {
+                project_name: receipt.project_name.clone(),
+                family_id: receipt.family_id.clone(),
+                tool_kind: receipt.tool_kind.clone(),
+                request_summary: Some(inputs.summary.clone()),
+                last_action: "build".into(),
+                source_kind: "factory_build".into(),
+                source_request_id: request.request_id.clone(),
+                updated_at: chatty_factory_core::timestamp_id("updated"),
+            },
+        )?;
+        let _ = refresh_project_patch_readiness_receipt_for_project(
+            &self.runtime_root,
+            &artifacts.project_dir,
+            &receipt.project_name,
+        );
+        let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
+        let acceptance_status = load_acceptance_status(&self.runtime_root, &request.request_id);
+        let family = receipt.family_id.as_ref().map(FamilyId::as_str).unwrap_or("unknown_family");
+        Ok(HostActionResult {
+            summary: "Build request finished".into(),
+            details: vec![
+                format!("project={}", receipt.project_name),
+                format!("family={family}"),
+                format!(
+                    "composition_route_class={}",
+                    composition_route_class_label(&composition_route_class)
+                ),
+                format!("plan_confidence={} ({})", plan.confidence_score, plan.confidence_band),
+                format!("execution_smoke={execution_status}"),
+                format!("files={}", receipt.emitted_files.len()),
+            ],
+            browser_state: Some(browser_state),
+            runtime_refresh: None,
+            execution_result: Some(HostExecutionResult {
+                kind: "build".into(),
+                request_id: receipt.request_id,
+                project_name: receipt.project_name,
+                family_id: receipt.family_id.map(|id| id.as_str().to_string()),
+                tool_kind: receipt.tool_kind,
+                patch_kind: None,
+                composition_route_class: Some(composition_route_class_label(&composition_route_class)),
+                composable_route_plan_path: Some(composable_route_plan_path.display().to_string()),
+                composition_review_receipt_path,
+                followup_request_mode: None,
+                followup_rationale: Vec::new(),
+                plan_confidence_score: plan.confidence_score,
+                plan_confidence_band: plan.confidence_band.clone(),
+                needs_llm_review: plan.needs_llm_review,
+                acceptance_status,
+                route_notes: {
+                    let mut notes = route.decision_reasons;
+                    notes.extend(composition_notes);
+                    notes.push(format!(
+                        "primitive execution plan persisted: {}",
+                        primitive_execution_plan_path.display()
+                    ));
+                    if let Some((receipt, path)) = &auto_monitoring_compare {
+                        notes.push(format!(
+                            "cross-family helper monitoring receipt emitted: {}",
+                            path.display()
+                        ));
+                        notes.push(format!(
+                            "cross-family equivalent capability fulfillment={}",
+                            receipt.equivalent_capability_fulfillment
+                        ));
+                    }
+                    notes
+                },
+                file_paths: {
+                    let mut files = receipt.emitted_files;
+                    files.push(primitive_execution_plan_path.display().to_string());
+                    if let Some((_, path)) = &auto_monitoring_compare {
+                        files.push(path.display().to_string());
+                    }
+                    files
+                },
+                patch_lanes: refreshed_spec.patch_lanes,
+                acceptance_recipes: refreshed_spec.acceptance_recipes,
+                operator_bundles: refreshed_spec.operator_bundles,
+                chattycog_hosting_mode: refreshed_spec.chattycog_hosting_mode,
+                chattycog_ui_owner: refreshed_spec.chattycog_ui_owner,
+                chattycog_bridge_capabilities: refreshed_spec.chattycog_bridge_capabilities,
+                helper_services: refreshed_spec.helper_services,
+                helper_runtime_receipts,
+            }),
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn patch_request(
+        &self,
+        project_name: &str,
+        raw_request: &str,
+        planner: &HostPlannerOptions,
+    ) -> Result<HostActionResult> {
+        let request = normalize_patch_request(project_name, raw_request);
+        let project_dir = self.output_root.join(project_name);
+        let spec = load_project_spec_with_contract_refresh(&project_dir)?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("requests")
+                .join(format!("{}.json", request.request_id)),
+            &request,
+        )?;
+
+        let mut plan = derive_request_plan(&request, Some(&spec));
+        if plan.needs_llm_review {
+            self.maybe_run_auto_planner(&request, &mut plan, Some(&spec), planner)?;
+        }
+        run_patch_snapshot_gate(&self.runtime_root, &request.request_id, &project_dir, &spec)?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("plans")
+                .join(format!("{}.json", plan.plan_id)),
+            &plan,
+        )?;
+        if plan.inferred_family_candidates.is_empty() {
+            return emit_fallback_result(
+                &self.runtime_root,
+                &request,
+                &plan,
+                Some(&spec),
+                "Patch request could not be grounded to a deterministic family lane",
+            );
+        }
+        if plan.needs_llm_review {
+            return emit_fallback_result(
+                &self.runtime_root,
+                &request,
+                &plan,
+                Some(&spec),
+                "Patch request needs clarification or planner guidance before a deterministic lane can run",
+            );
+        }
+
+        let patch_diagnosis = derive_project_patch_diagnosis(&request, &plan, &project_dir, &spec)?;
+        let patch_diagnosis_path = persist_project_patch_diagnosis(&self.runtime_root, &patch_diagnosis)?;
+        let patch_intent_freeze = derive_patch_intent_freeze(&request, &plan, &spec, &patch_diagnosis);
+        let patch_intent_freeze_path =
+            persist_patch_intent_freeze(&self.runtime_root, &patch_intent_freeze)?;
+        if let Some(reason) = patch_intent_freeze_preflight(
+            &project_dir,
+            &spec,
+            &patch_intent_freeze,
+            raw_request,
+        ) {
+            return emit_patch_freeze_skip_result(
+                &self.runtime_root,
+                &self.output_root,
+                &request,
+                &plan,
+                &spec,
+                &patch_intent_freeze,
+                &patch_diagnosis_path,
+                &patch_intent_freeze_path,
+                &reason,
+            );
+        }
+        let mut composition_patch_kinds = derive_bounded_patch_composition_patch_kinds(&request, &spec);
+        let prefer_composed_patch =
+            request_prefers_bounded_patch_composition(&request, &composition_patch_kinds);
+        let patch_out = if prefer_composed_patch {
+            None
+        } else {
+            dispatch_patch_request(
+            &project_dir,
+            project_name,
+            &request.request_id,
+            raw_request,
+            &spec,
+            &plan.planner_patch_recipe_ids,
+            plan.intended_patch_kind.as_deref(),
+        )?
+        };
+        if patch_out.is_some() {
+            composition_patch_kinds.clear();
+        }
+        let candidate_helper_primitive_ids = candidate_helper_primitive_ids_for_composition(
+            Some(&spec),
+            spec.family_id.as_ref(),
+            &composition_patch_kinds,
+        );
+        let mut composition_review_notes = Vec::new();
+        let mut composition_review_receipt_path = None;
+        if patch_out.is_none() && !composition_patch_kinds.is_empty() {
+            let review = self.review_bounded_composition_candidates(
+                &request,
+                &plan,
+                Some(&spec),
+                spec.family_id.as_ref(),
+                &composition_patch_kinds,
+                &candidate_helper_primitive_ids,
+                planner,
+            )?;
+            composition_review_notes.extend(review.rationale.clone());
+            if !review.selected_composition_layers.is_empty() {
+                composition_review_notes.push(format!(
+                    "host reviewed composition work-order layers: {}",
+                    review.selected_composition_layers.join(", ")
+                ));
+            }
+            composition_review_receipt_path = review.review_receipt_path.clone();
+            if planner.auto_planner && !review.approved {
+                return emit_fallback_result(
+                    &self.runtime_root,
+                    &request,
+                    &plan,
+                    Some(&spec),
+                    "Bounded composition review did not approve the host-composed patch work order",
+                );
+            }
+            if !review.selected_patch_kinds.is_empty() {
+                composition_patch_kinds = review.selected_patch_kinds;
+            }
+        }
+        let composition_route_class = if patch_out.is_some() {
+            derive_composition_route_class(&request, &plan, Some(&spec), None, true)
+        } else if !composition_patch_kinds.is_empty() {
+            CompositionRouteClass::BoundedCompositionCandidate
+        } else {
+            derive_composition_route_class(&request, &plan, Some(&spec), None, true)
+        };
+        let patch_execution: Option<(
+            PatchArtifacts,
+            PatchReceipt,
+            PathBuf,
+            PathBuf,
+            Vec<String>,
+            Vec<String>,
+            Vec<HelperRuntimeReceipt>,
+        )> = if let Some((artifacts, receipt)) = patch_out {
+            let refreshed_spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(
+                artifacts.project_dir.join("ProjectSpec.json"),
+            )?)?;
+            sync_helper_acceptance_expectations(&artifacts.project_dir, None)?;
+            let helper_runtime_receipts = execute_and_persist_helper_runtime_state(
+                &self.runtime_root,
+                &request.request_id,
+                &artifacts.project_dir,
+                &refreshed_spec,
+            )?;
+            let selected_patch_kinds = vec![receipt.patch_kind.clone()];
+            let composable_route_plan = derive_composable_route_plan(
+                &request,
+                &plan,
+                Some(&spec),
+                Some(&refreshed_spec),
+                composition_route_class.clone(),
+                &selected_patch_kinds,
+            );
+            let composable_route_plan_path =
+                persist_composable_route_plan(&self.runtime_root, &composable_route_plan)?;
+            let mut primitive_execution_plan = derive_primitive_execution_plan(&composable_route_plan);
+            primitive_execution_plan.overall_status = "executed".into();
+            let primitive_execution_plan_path =
+                persist_primitive_execution_plan(&self.runtime_root, &primitive_execution_plan)?;
+            Some((
+                artifacts,
+                receipt,
+                composable_route_plan_path,
+                primitive_execution_plan_path,
+                selected_patch_kinds,
+                plan.rationale.clone(),
+                helper_runtime_receipts,
+            ))
+        } else if !composition_patch_kinds.is_empty() {
+            let mut composable_route_plan = derive_composable_route_plan(
+                &request,
+                &plan,
+                Some(&spec),
+                None,
+                composition_route_class.clone(),
+                &composition_patch_kinds,
+            );
+            let composable_route_plan_path =
+                persist_composable_route_plan(&self.runtime_root, &composable_route_plan)?;
+            let mut primitive_execution_plan =
+                derive_primitive_execution_plan(&composable_route_plan);
+            let primitive_execution_plan_path =
+                persist_primitive_execution_plan(&self.runtime_root, &primitive_execution_plan)?;
+            let outcome = execute_composable_route_plan(
+                &self.runtime_root,
+                &mut primitive_execution_plan,
+                &request.request_id,
+                project_name,
+                raw_request,
+                &project_dir,
+            )?;
+            persist_primitive_execution_plan(&self.runtime_root, &primitive_execution_plan)?;
+            let Some(artifacts) = outcome.final_artifacts else {
+                return emit_fallback_result(
+                    &self.runtime_root,
+                    &request,
+                    &plan,
+                    Some(&spec),
+                    "Bounded patch composition produced no patch artifacts",
+                );
+            };
+            let Some(receipt) = outcome.final_receipt else {
+                return emit_fallback_result(
+                    &self.runtime_root,
+                    &request,
+                    &plan,
+                    Some(&spec),
+                    "Bounded patch composition produced no patch receipt",
+                );
+            };
+            let refreshed_spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(
+                artifacts.project_dir.join("ProjectSpec.json"),
+            )?)?;
+            sync_helper_acceptance_expectations(
+                &artifacts.project_dir,
+                Some(&primitive_execution_plan),
+            )?;
+            let helper_runtime_receipts = execute_and_persist_helper_runtime_state(
+                &self.runtime_root,
+                &request.request_id,
+                &artifacts.project_dir,
+                &refreshed_spec,
+            )?;
+            sync_helper_acceptance_expectations(
+                &artifacts.project_dir,
+                Some(&primitive_execution_plan),
+            )?;
+            enrich_composable_route_plan(
+                &mut composable_route_plan,
+                &refreshed_spec,
+                &outcome.applied_patch_kinds,
+            );
+            persist_composable_route_plan(&self.runtime_root, &composable_route_plan)?;
+            let mut notes = vec![format!(
+                "bounded patch composition executed from composable route plan: {}",
+                outcome.applied_patch_kinds.join(", ")
+            )];
+            notes.extend(composition_review_notes);
+            notes.push(format!(
+                "primitive execution plan persisted: {}",
+                primitive_execution_plan_path.display()
+            ));
+            Some((
+                artifacts,
+                receipt,
+                composable_route_plan_path,
+                primitive_execution_plan_path,
+                outcome.applied_patch_kinds,
+                notes,
+                helper_runtime_receipts,
+            ))
+        } else {
+            None
+        };
+        let Some((artifacts, receipt, composable_route_plan_path, primitive_execution_plan_path, selected_patch_kinds, composition_notes, helper_runtime_receipts)) = patch_execution else {
+            return emit_fallback_result(
+                &self.runtime_root,
+                &request,
+                &plan,
+                Some(&spec),
+                "No deterministic patch lane matched this follow-up request yet",
+            );
+        };
+
+        apply_request_plan_enrichments(&artifacts.project_dir, &plan)?;
+        let execution_status = run_execution_safety(
+            &self.runtime_root,
+            &request.request_id,
+            &self.output_root,
+            &artifacts.project_dir,
+        )?;
+        persist_project_grounding(
+            &self.runtime_root,
+            &request.request_id,
+            &artifacts.project_dir,
+        )?;
+        let refreshed_spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(
+            artifacts.project_dir.join("ProjectSpec.json"),
+        )?)?;
+        let patch_diagnosis_postcheck = run_patch_diagnosis_postcheck(
+            &self.runtime_root,
+            &patch_diagnosis,
+            &artifacts.project_dir,
+            &spec,
+            &refreshed_spec,
+            &receipt,
+        )?;
+        let patch_diagnosis_postcheck_path =
+            patch_diagnosis_postcheck_path(&self.runtime_root, &patch_diagnosis.request_id);
+        verify_patch_artifacts(&self.runtime_root, &request.request_id, &artifacts)?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("patch_receipts")
+                .join(format!("{}-patch.json", request.request_id)),
+            &receipt,
+        )?;
+        persist_project_session(
+            &self.runtime_root,
+            "active_project_session.json",
+            "active_project_sessions",
+            &ProjectSession {
+                project_name: receipt.project_name.clone(),
+                family_id: receipt.family_id.clone(),
+                tool_kind: spec.tool_kind.clone(),
+                request_summary: Some(receipt.request_summary.clone()),
+                last_action: "patch".into(),
+                source_kind: "factory_patch".into(),
+                source_request_id: request.request_id.clone(),
+                updated_at: chatty_factory_core::timestamp_id("updated"),
+            },
+        )?;
+        let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
+        let acceptance_status = load_acceptance_status(&self.runtime_root, &request.request_id);
+        let family = receipt.family_id.as_ref().map(FamilyId::as_str).unwrap_or("unknown_family");
+        Ok(HostActionResult {
+            summary: "Patch request finished".into(),
+            details: vec![
+                format!("project={}", receipt.project_name),
+                format!("family={family}"),
+                format!("patch_kind={}", receipt.patch_kind),
+                format!(
+                    "composition_route_class={}",
+                    composition_route_class_label(&composition_route_class)
+                ),
+                format!(
+                    "patch_diagnosis={}",
+                    patch_diagnosis_path.display()
+                ),
+                format!(
+                    "patch_diagnosis_postcheck={}",
+                    if patch_diagnosis_postcheck.passed {
+                        "passed"
+                    } else {
+                        "warning"
+                    }
+                ),
+                format!(
+                    "patch_diagnosis_postcheck_path={}",
+                    patch_diagnosis_postcheck_path.display()
+                ),
+                format!(
+                    "patch_intent_freeze={}",
+                    patch_intent_freeze_path.display()
+                ),
+                format!("plan_confidence={} ({})", plan.confidence_score, plan.confidence_band),
+                format!("execution_smoke={execution_status}"),
+            ],
+            browser_state: Some(browser_state),
+            runtime_refresh: None,
+            execution_result: Some(HostExecutionResult {
+                kind: "patch".into(),
+                request_id: receipt.request_id,
+                project_name: receipt.project_name,
+                family_id: receipt.family_id.map(|id| id.as_str().to_string()),
+                tool_kind: spec.tool_kind,
+                patch_kind: Some(receipt.patch_kind),
+                composition_route_class: Some(composition_route_class_label(&composition_route_class)),
+                composable_route_plan_path: Some(composable_route_plan_path.display().to_string()),
+                composition_review_receipt_path,
+                followup_request_mode: None,
+                followup_rationale: Vec::new(),
+                plan_confidence_score: plan.confidence_score,
+                plan_confidence_band: plan.confidence_band.clone(),
+                needs_llm_review: plan.needs_llm_review,
+                acceptance_status,
+                route_notes: composition_notes,
+                file_paths: if matches!(composition_route_class, CompositionRouteClass::BoundedCompositionCandidate) {
+                    let mut files = selected_patch_kinds
+                        .iter()
+                        .map(|patch_kind| format!("composition_patch={patch_kind}"))
+                        .collect::<Vec<_>>();
+                    files.push(patch_diagnosis_path.display().to_string());
+                    files.push(patch_diagnosis_postcheck_path.display().to_string());
+                    files.push(patch_intent_freeze_path.display().to_string());
+                    files.push(primitive_execution_plan_path.display().to_string());
+                    files
+                } else {
+                    let mut files = receipt.modified_files.clone();
+                    files.push(patch_diagnosis_path.display().to_string());
+                    files.push(patch_diagnosis_postcheck_path.display().to_string());
+                    files.push(patch_intent_freeze_path.display().to_string());
+                    files
+                },
+                patch_lanes: refreshed_spec.patch_lanes,
+                acceptance_recipes: refreshed_spec.acceptance_recipes,
+                operator_bundles: refreshed_spec.operator_bundles,
+                chattycog_hosting_mode: refreshed_spec.chattycog_hosting_mode,
+                chattycog_ui_owner: refreshed_spec.chattycog_ui_owner,
+                chattycog_bridge_capabilities: refreshed_spec.chattycog_bridge_capabilities,
+                helper_services: refreshed_spec.helper_services,
+                helper_runtime_receipts,
+            }),
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    fn maybe_run_auto_planner(
+        &self,
+        request: &chatty_factory_core::RequestRecord,
+        plan: &mut chatty_factory_core::RequestPlan,
+        active_spec: Option<&ProjectSpec>,
+        planner: &HostPlannerOptions,
+    ) -> Result<()> {
+        if !planner.auto_planner || !plan.needs_llm_review {
+            return Ok(());
+        }
+
+        let handoff = derive_planner_handoff(request, plan, active_spec);
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("planner_handoffs")
+                .join(format!("{}.json", handoff.handoff_id)),
+            &handoff,
+        )?;
+
+        let models_root = self.workspace_root.join("models");
+        let discovery = discover_runtime(&self.runtime_root, &models_root)?;
+        let catalog = build_runtime_model_catalog(&models_root)?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-discovery.json", discovery.discovery_id)),
+            &discovery,
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-catalog.json", catalog.catalog_id)),
+            &catalog,
+        )?;
+
+        let mut config = default_runtime_config(&self.runtime_root, &models_root)?;
+        config.default_model_path = resolve_model_choice(
+            planner.requested_model.as_deref(),
+            &catalog,
+            discovery.preferred_model_path.as_deref(),
+        );
+        if let Some(port) = planner.requested_port {
+            config.port = port;
+        }
+        persist_json_pretty(&self.runtime_root.join("runtime_config.json"), &config)?;
+
+        let (planner_response, final_config, dispatch_receipt) = run_planner_with_model_fallback(
+            &self.runtime_root,
+            &catalog,
+            &handoff,
+            &config,
+            planner.requested_model.as_deref(),
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("planner_dispatches")
+                .join(format!("{}.json", dispatch_receipt.dispatch_id)),
+            &dispatch_receipt,
+        )?;
+        *plan = apply_planner_response(plan, &planner_response);
+        run_supplemental_planner_choices(
+            &self.runtime_root,
+            &catalog,
+            &final_config,
+            request,
+            plan,
+            active_spec,
+            planner.requested_model.as_deref(),
+        )?;
+        Ok(())
+    }
+
+    fn review_bounded_composition_candidates(
+        &self,
+        request: &chatty_factory_core::RequestRecord,
+        plan: &chatty_factory_core::RequestPlan,
+        active_spec: Option<&ProjectSpec>,
+        selected_family_id: Option<&FamilyId>,
+        candidate_patch_kinds: &[String],
+        candidate_helper_primitive_ids: &[String],
+        planner: &HostPlannerOptions,
+    ) -> Result<CompositionReviewDecision> {
+        if candidate_patch_kinds.is_empty() {
+            return Ok(CompositionReviewDecision::default());
+        }
+        if !planner.auto_planner {
+            let rationale =
+                vec!["auto planner disabled; host used bounded composition candidate list".into()];
+            let candidate_family_build_primitive_classes =
+                candidate_family_build_primitive_classes_for_composition(selected_family_id);
+            let candidate_patch_primitive_classes =
+                candidate_patch_primitive_classes_for_composition(
+                    selected_family_id,
+                    plan.inferred_tool_kind.as_deref(),
+                    candidate_patch_kinds,
+                );
+            let candidate_helper_primitive_kinds = candidate_helper_primitive_kinds_for_composition(
+                active_spec,
+                selected_family_id,
+                candidate_patch_kinds,
+            );
+            let candidate_composition_layers = derive_composition_layers(
+                &candidate_family_build_primitive_classes,
+                &candidate_patch_primitive_classes,
+                &candidate_helper_primitive_kinds,
+                &Vec::new(),
+            );
+            let candidate_composition_adapter_semantics = composition_adapter_semantics_for_review(
+                selected_family_id,
+                &candidate_family_build_primitive_classes,
+                &candidate_patch_primitive_classes,
+                &candidate_helper_primitive_kinds,
+            );
+            let review_receipt_path = persist_composition_review_receipt(
+                &self.runtime_root,
+                &request.request_id,
+                None,
+                None,
+                true,
+                &candidate_composition_layers,
+                &candidate_composition_layers,
+                &candidate_composition_layers,
+                candidate_patch_kinds,
+                candidate_patch_kinds,
+                candidate_patch_kinds,
+                &candidate_family_build_primitive_classes,
+                &candidate_family_build_primitive_classes,
+                &candidate_family_build_primitive_classes,
+                &candidate_patch_primitive_classes,
+                &candidate_patch_primitive_classes,
+                &candidate_patch_primitive_classes,
+                candidate_helper_primitive_ids,
+                candidate_helper_primitive_ids,
+                candidate_helper_primitive_ids,
+                &candidate_helper_primitive_kinds,
+                &candidate_helper_primitive_kinds,
+                &candidate_helper_primitive_kinds,
+                &candidate_composition_adapter_semantics,
+                &candidate_composition_adapter_semantics,
+                &rationale,
+            )?;
+            return Ok(CompositionReviewDecision {
+                approved: true,
+                selected_patch_kinds: candidate_patch_kinds.to_vec(),
+                selected_composition_layers: candidate_composition_layers,
+                rationale,
+                review_receipt_path: Some(review_receipt_path.display().to_string()),
+            });
+        }
+
+        let models_root = self.workspace_root.join("models");
+        let discovery = discover_runtime(&self.runtime_root, &models_root)?;
+        let catalog = build_runtime_model_catalog(&models_root)?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-discovery.json", discovery.discovery_id)),
+            &discovery,
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("runtime_checks")
+                .join(format!("{}-catalog.json", catalog.catalog_id)),
+            &catalog,
+        )?;
+
+        let mut config = default_runtime_config(&self.runtime_root, &models_root)?;
+        config.default_model_path = resolve_model_choice(
+            planner.requested_model.as_deref(),
+            &catalog,
+            discovery.preferred_model_path.as_deref(),
+        );
+        if let Some(port) = planner.requested_port {
+            config.port = port;
+        }
+        persist_json_pretty(&self.runtime_root.join("runtime_config.json"), &config)?;
+
+        let mut handoff = derive_planner_handoff(request, plan, None);
+        handoff.handoff_id = chatty_factory_core::timestamp_id("planner-handoff-composition");
+        handoff.interpreted_goal =
+            "Review and refine bounded composition patch primitives for host-owned execution"
+                .into();
+        handoff.candidate_composition_patch_kinds = candidate_patch_kinds.to_vec();
+        handoff.candidate_composition_family_build_primitive_classes =
+            candidate_family_build_primitive_classes_for_composition(selected_family_id);
+        handoff.candidate_composition_patch_primitive_classes =
+            candidate_patch_primitive_classes_for_composition(
+                selected_family_id,
+                plan.inferred_tool_kind.as_deref(),
+                candidate_patch_kinds,
+            );
+        handoff.candidate_composition_helper_primitive_ids =
+            candidate_helper_primitive_ids.to_vec();
+        handoff.candidate_composition_helper_primitive_kinds =
+            candidate_helper_primitive_kinds_for_composition(
+                active_spec,
+                selected_family_id,
+                candidate_patch_kinds,
+            );
+        handoff.candidate_composition_adapter_semantics =
+            composition_adapter_semantics_for_review(
+                selected_family_id,
+                &handoff.candidate_composition_family_build_primitive_classes,
+                &handoff.candidate_composition_patch_primitive_classes,
+                &handoff.candidate_composition_helper_primitive_kinds,
+            );
+        handoff.candidate_composition_layers = derive_composition_layers(
+            &handoff.candidate_composition_family_build_primitive_classes,
+            &handoff.candidate_composition_patch_primitive_classes,
+            &handoff.candidate_composition_helper_primitive_kinds,
+            &Vec::new(),
+        );
+        handoff.requested_output = vec!["bounded composition patch primitive review".into()];
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("planner_handoffs")
+                .join(format!("{}.json", handoff.handoff_id)),
+            &handoff,
+        )?;
+
+        let (response, _, dispatch) = run_planner_with_model_fallback(
+            &self.runtime_root,
+            &catalog,
+            &handoff,
+            &config,
+            planner.requested_model.as_deref(),
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("planner_dispatches")
+                .join(format!("{}.json", dispatch.dispatch_id)),
+            &dispatch,
+        )?;
+
+        let reviewed_patch_kinds = if response.recommended_composition_patch_kinds.is_empty() {
+            candidate_patch_kinds.to_vec()
+        } else {
+            response
+                .recommended_composition_patch_kinds
+                .iter()
+                .filter(|patch_kind| candidate_patch_kinds.contains(*patch_kind))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let reviewed_patch_primitive_classes =
+            if response.recommended_composition_patch_primitive_classes.is_empty() {
+                candidate_patch_primitive_classes_for_composition(
+                    selected_family_id,
+                    plan.inferred_tool_kind.as_deref(),
+                    candidate_patch_kinds,
+                )
+            } else {
+                response
+                    .recommended_composition_patch_primitive_classes
+                    .iter()
+                    .filter(|class| {
+                        handoff
+                            .candidate_composition_patch_primitive_classes
+                            .contains(*class)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+        let reviewed_family_build_primitive_classes =
+            if response
+                .recommended_composition_family_build_primitive_classes
+                .is_empty()
+            {
+                handoff.candidate_composition_family_build_primitive_classes.clone()
+            } else {
+                response
+                    .recommended_composition_family_build_primitive_classes
+                    .iter()
+                    .filter(|class| {
+                        handoff
+                            .candidate_composition_family_build_primitive_classes
+                            .contains(*class)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+        let reviewed_composition_layers = if response.recommended_composition_layers.is_empty() {
+            handoff.candidate_composition_layers.clone()
+        } else {
+            response
+                .recommended_composition_layers
+                .iter()
+                .filter(|layer| handoff.candidate_composition_layers.contains(*layer))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let reviewed_helper_primitive_ids =
+            if response.recommended_composition_helper_primitive_ids.is_empty() {
+                candidate_helper_primitive_ids.to_vec()
+            } else {
+                response
+                    .recommended_composition_helper_primitive_ids
+                    .iter()
+                    .filter(|primitive_id| candidate_helper_primitive_ids.contains(*primitive_id))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+        let reviewed_helper_primitive_kinds =
+            if response.recommended_composition_helper_primitive_kinds.is_empty() {
+                candidate_helper_primitive_kinds_for_composition(
+                    active_spec,
+                    selected_family_id,
+                    candidate_patch_kinds,
+                )
+            } else {
+                response
+                    .recommended_composition_helper_primitive_kinds
+                    .iter()
+                    .filter(|kind| {
+                        handoff
+                            .candidate_composition_helper_primitive_kinds
+                            .contains(*kind)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+        let mut selected_patch_kinds = reviewed_patch_kinds.clone();
+        let mut rationale = response.rationale;
+        if !reviewed_patch_primitive_classes.is_empty() {
+            rationale.push(format!(
+                "planner reviewed patch primitive classes: {}",
+                reviewed_patch_primitive_classes.join(", ")
+            ));
+        }
+        if !reviewed_family_build_primitive_classes.is_empty() {
+            rationale.push(format!(
+                "planner reviewed base family build classes: {}",
+                reviewed_family_build_primitive_classes.join(", ")
+            ));
+        }
+        if !reviewed_helper_primitive_ids.is_empty() {
+            rationale.push(format!(
+                "planner reviewed helper primitive bundle: {}",
+                reviewed_helper_primitive_ids.join(", ")
+            ));
+        }
+        if !reviewed_helper_primitive_kinds.is_empty() {
+            rationale.push(format!(
+                "planner reviewed helper primitive classes: {}",
+                reviewed_helper_primitive_kinds.join(", ")
+            ));
+        }
+        if !reviewed_composition_layers.is_empty() {
+            rationale.push(format!(
+                "planner reviewed composition layers: {}",
+                reviewed_composition_layers.join(", ")
+            ));
+        }
+        if !handoff.candidate_composition_adapter_semantics.is_empty() {
+            rationale.push(format!(
+                "planner reviewed adapter execution semantics: {}",
+                handoff.candidate_composition_adapter_semantics.join(" ; ")
+            ));
+        }
+        let initial_features: Vec<String> = Vec::new();
+        if !selected_patch_kinds.is_empty() {
+            let (reconciled_patch_kinds, restored_patch_kinds) =
+                restore_composition_required_primitives(
+                    plan.inferred_family_candidates.first(),
+                    plan.inferred_tool_kind.as_deref(),
+                    &initial_features,
+                    candidate_patch_kinds,
+                    &selected_patch_kinds,
+                );
+            selected_patch_kinds = reconciled_patch_kinds;
+            if !restored_patch_kinds.is_empty() {
+                rationale.push(format!(
+                    "host restored required bounded composition primitives using declared dependency and companion semantics: {}",
+                    restored_patch_kinds.join(", ")
+                ));
+            }
+        } else {
+            selected_patch_kinds = order_composition_patch_kinds_by_dependencies(
+                plan.inferred_family_candidates.first(),
+                plan.inferred_tool_kind.as_deref(),
+                &initial_features,
+                candidate_patch_kinds,
+            );
+        }
+        let final_helper_primitive_ids = candidate_helper_primitive_ids_for_composition(
+            active_spec,
+            selected_family_id,
+            &selected_patch_kinds,
+        );
+        let final_patch_primitive_classes = candidate_patch_primitive_classes_for_composition(
+            selected_family_id,
+            plan.inferred_tool_kind.as_deref(),
+            &selected_patch_kinds,
+        );
+        let final_family_build_primitive_classes =
+            candidate_family_build_primitive_classes_for_composition(selected_family_id);
+        let final_helper_primitive_kinds = candidate_helper_primitive_kinds_for_composition(
+            active_spec,
+            selected_family_id,
+            &selected_patch_kinds,
+        );
+        let final_composition_layers = derive_composition_layers(
+            &final_family_build_primitive_classes,
+            &final_patch_primitive_classes,
+            &final_helper_primitive_kinds,
+            &Vec::new(),
+        );
+        let final_composition_adapter_semantics = composition_adapter_semantics_for_review(
+            selected_family_id,
+            &final_family_build_primitive_classes,
+            &final_patch_primitive_classes,
+            &final_helper_primitive_kinds,
+        );
+        let restored_helper_primitive_ids: Vec<String> = final_helper_primitive_ids
+            .iter()
+            .filter(|primitive_id| !reviewed_helper_primitive_ids.contains(*primitive_id))
+            .cloned()
+            .collect();
+        if !restored_helper_primitive_ids.is_empty() {
+            rationale.push(format!(
+                "host restored required helper primitives to preserve helper coverage: {}",
+                restored_helper_primitive_ids.join(", ")
+            ));
+        }
+        let review_receipt_path = persist_composition_review_receipt(
+            &self.runtime_root,
+            &request.request_id,
+            Some(&handoff.handoff_id),
+            Some(&response.response_id),
+            response.approved,
+            &handoff.candidate_composition_layers,
+            &reviewed_composition_layers,
+            &final_composition_layers,
+            candidate_patch_kinds,
+            &reviewed_patch_kinds,
+            &selected_patch_kinds,
+            &handoff.candidate_composition_family_build_primitive_classes,
+            &reviewed_family_build_primitive_classes,
+            &final_family_build_primitive_classes,
+            &handoff.candidate_composition_patch_primitive_classes,
+            &reviewed_patch_primitive_classes,
+            &final_patch_primitive_classes,
+            candidate_helper_primitive_ids,
+            &reviewed_helper_primitive_ids,
+            &final_helper_primitive_ids,
+            &handoff.candidate_composition_helper_primitive_kinds,
+            &reviewed_helper_primitive_kinds,
+            &final_helper_primitive_kinds,
+            &handoff.candidate_composition_adapter_semantics,
+            &final_composition_adapter_semantics,
+            &rationale,
+        )?;
+        Ok(CompositionReviewDecision {
+            approved: response.approved,
+            selected_patch_kinds,
+            selected_composition_layers: final_composition_layers,
+            rationale,
+            review_receipt_path: Some(review_receipt_path.display().to_string()),
+        })
+    }
+}
+
+fn load_project_spec_with_contract_refresh(project_dir: &Path) -> Result<ProjectSpec> {
+    let mut spec: ProjectSpec =
+        serde_json::from_str(&fs::read_to_string(project_dir.join("ProjectSpec.json"))?)?;
+    refresh_project_contract_views_for_project(Some(project_dir), &mut spec);
+    Ok(spec)
+}
+
+fn run_planner_with_model_fallback(
+    runtime_root: &PathBuf,
+    catalog: &RuntimeModelCatalogReceipt,
+    handoff: &PlannerHandoff,
+    base_config: &RuntimeConfig,
+    requested_model: Option<&str>,
+) -> Result<(PlannerResponse, RuntimeConfig, PlannerDispatchReceipt)> {
+    let model_candidates = planner_model_candidates(requested_model, catalog, base_config);
+    let mut fallback_success: Option<(PlannerResponse, RuntimeConfig)> = None;
+    let mut last_error = None;
+    let mut attempted_model_paths = Vec::new();
+    let mut run_receipt_paths = Vec::new();
+    let mut dispatch_notes = Vec::new();
+    let mut fallback_used = false;
+    let mut degraded_response_used = false;
+
+    for model_path in model_candidates {
+        attempted_model_paths.push(model_path.clone());
+        let mut config = base_config.clone();
+        config.default_model_path = Some(model_path.clone());
+        let attempt = run_local_planner(
+            &config,
+            handoff,
+            &runtime_root.join("planner_responses"),
+            &runtime_root.join("planner_raw"),
+            Some(&model_path),
+        );
+
+        match attempt {
+            Ok((planner_response, mut receipt)) => {
+                let receipt_path = runtime_root
+                    .join("planner_runs")
+                    .join(format!("{}.json", receipt.execution_id));
+                if planner_response_needs_retry(&planner_response) && requested_model.is_none() {
+                    fallback_used = true;
+                    degraded_response_used = true;
+                    receipt.notes.push(
+                        "planner response was recovered from incomplete text; escalating model tier"
+                            .into(),
+                    );
+                    persist_json_pretty(&receipt_path, &receipt)?;
+                    run_receipt_paths.push(receipt_path.display().to_string());
+                    dispatch_notes.push(format!(
+                        "model {} returned degraded planner output; escalating",
+                        model_path
+                    ));
+                    fallback_success = Some((planner_response, config));
+                    continue;
+                }
+
+                degraded_response_used |= receipt.degraded_recovery_used;
+                persist_json_pretty(&receipt_path, &receipt)?;
+                run_receipt_paths.push(receipt_path.display().to_string());
+                let dispatch_receipt = PlannerDispatchReceipt {
+                    dispatch_id: chatty_factory_core::timestamp_id("planner-dispatch"),
+                    source_handoff_id: handoff.handoff_id.clone(),
+                    source_plan_id: handoff.source_plan_id.clone(),
+                    requested_model_selector: requested_model.map(str::to_string),
+                    attempted_model_paths,
+                    successful_model_path: Some(model_path),
+                    fallback_used,
+                    degraded_response_used,
+                    final_response_path: Some(
+                        runtime_root
+                            .join("planner_responses")
+                            .join(format!("{}.json", planner_response.response_id))
+                            .display()
+                            .to_string(),
+                    ),
+                    run_receipt_paths,
+                    notes: dispatch_notes,
+                    created_at: Some(chatty_factory_core::timestamp_id("created")),
+                };
+                return Ok((planner_response, config, dispatch_receipt));
+            }
+            Err(err) => {
+                dispatch_notes.push(format!("model {} failed: {}", model_path, err));
+                last_error = Some(err);
+            }
+        }
+    }
+
+    if let Some((planner_response, config)) = fallback_success {
+        let dispatch_receipt = PlannerDispatchReceipt {
+            dispatch_id: chatty_factory_core::timestamp_id("planner-dispatch"),
+            source_handoff_id: handoff.handoff_id.clone(),
+            source_plan_id: handoff.source_plan_id.clone(),
+            requested_model_selector: requested_model.map(str::to_string),
+            attempted_model_paths,
+            successful_model_path: config.default_model_path.clone(),
+            fallback_used: true,
+            degraded_response_used: true,
+            final_response_path: Some(
+                runtime_root
+                    .join("planner_responses")
+                    .join(format!("{}.json", planner_response.response_id))
+                    .display()
+                    .to_string(),
+            ),
+            run_receipt_paths,
+            notes: dispatch_notes,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        return Ok((planner_response, config, dispatch_receipt));
+    }
+
+    match last_error {
+        Some(err) => Err(err),
+        None => anyhow::bail!("no planner model candidates were available"),
+    }
+}
+
+fn planner_model_candidates(
+    requested_model: Option<&str>,
+    catalog: &RuntimeModelCatalogReceipt,
+    base_config: &RuntimeConfig,
+) -> Vec<String> {
+    if let Some(selected) = resolve_model_choice(
+        requested_model,
+        catalog,
+        base_config.default_model_path.as_deref(),
+    ) {
+        if requested_model.is_some() {
+            return vec![selected];
+        }
+    }
+
+    let mut candidates = Vec::new();
+    for profile in ["fast", "balanced", "heavy"] {
+        if let Some(model_path) = resolve_model_choice(Some(profile), catalog, None) {
+            if !candidates.contains(&model_path) {
+                candidates.push(model_path);
+            }
+        }
+    }
+    if candidates.is_empty() {
+        if let Some(fallback) = base_config.default_model_path.clone() {
+            candidates.push(fallback);
+        }
+    }
+    candidates
+}
+
+fn planner_response_needs_retry(response: &PlannerResponse) -> bool {
+    response
+        .rationale
+        .iter()
+        .any(|item| item.contains("derived from incomplete planner text response"))
+}
+
+fn run_supplemental_planner_choices(
+    runtime_root: &PathBuf,
+    catalog: &RuntimeModelCatalogReceipt,
+    base_config: &RuntimeConfig,
+    request: &chatty_factory_core::RequestRecord,
+    plan: &mut chatty_factory_core::RequestPlan,
+    active_spec: Option<&ProjectSpec>,
+    requested_model: Option<&str>,
+) -> Result<()> {
+    let patch_recipe_candidates = candidate_patch_recipe_ids(plan, active_spec);
+    if !patch_recipe_candidates.is_empty() && plan.planner_patch_recipe_ids.is_empty() {
+        let mut handoff = derive_planner_handoff(request, plan, active_spec);
+        handoff.handoff_id = chatty_factory_core::timestamp_id("planner-handoff-patch-recipes");
+        handoff.interpreted_goal =
+            "Choose patch recipe ids for host-owned bolt-on execution".into();
+        handoff.candidate_patch_recipe_ids = patch_recipe_candidates;
+        handoff.requested_output = vec!["patch recipe choice".into()];
+        persist_json_pretty(
+            &runtime_root
+                .join("planner_handoffs")
+                .join(format!("{}.json", handoff.handoff_id)),
+            &handoff,
+        )?;
+        let (response, _, dispatch) = run_planner_with_model_fallback(
+            runtime_root,
+            catalog,
+            &handoff,
+            base_config,
+            requested_model,
+        )?;
+        persist_json_pretty(
+            &runtime_root
+                .join("planner_dispatches")
+                .join(format!("{}.json", dispatch.dispatch_id)),
+            &dispatch,
+        )?;
+        *plan = apply_planner_response(plan, &response);
+    }
+
+    let operator_bundle_candidates = candidate_operator_bundle_ids(plan);
+    if !operator_bundle_candidates.is_empty() && plan.planner_operator_bundle_ids.is_empty() {
+        let mut handoff = derive_planner_handoff(request, plan, active_spec);
+        handoff.handoff_id = chatty_factory_core::timestamp_id("planner-handoff-bundles");
+        handoff.interpreted_goal = "Choose operator bundle ids for host-owned composition".into();
+        handoff.candidate_operator_bundle_ids = operator_bundle_candidates;
+        handoff.requested_output = vec!["operator bundle choice".into()];
+        persist_json_pretty(
+            &runtime_root
+                .join("planner_handoffs")
+                .join(format!("{}.json", handoff.handoff_id)),
+            &handoff,
+        )?;
+        let (response, _, dispatch) = run_planner_with_model_fallback(
+            runtime_root,
+            catalog,
+            &handoff,
+            base_config,
+            requested_model,
+        )?;
+        persist_json_pretty(
+            &runtime_root
+                .join("planner_dispatches")
+                .join(format!("{}.json", dispatch.dispatch_id)),
+            &dispatch,
+        )?;
+        *plan = apply_planner_response(plan, &response);
+    }
+
+    let acceptance_recipe_candidates = candidate_acceptance_recipe_ids(plan);
+    if !acceptance_recipe_candidates.is_empty() && plan.planner_acceptance_recipe_ids.is_empty() {
+        let mut handoff = derive_planner_handoff(request, plan, active_spec);
+        handoff.handoff_id = chatty_factory_core::timestamp_id("planner-handoff-acceptance");
+        handoff.interpreted_goal =
+            "Choose acceptance recipe ids for host-owned verification".into();
+        handoff.candidate_acceptance_recipe_ids = acceptance_recipe_candidates;
+        handoff.requested_output = vec!["acceptance recipe choice".into()];
+        persist_json_pretty(
+            &runtime_root
+                .join("planner_handoffs")
+                .join(format!("{}.json", handoff.handoff_id)),
+            &handoff,
+        )?;
+        let (response, _, dispatch) = run_planner_with_model_fallback(
+            runtime_root,
+            catalog,
+            &handoff,
+            base_config,
+            requested_model,
+        )?;
+        persist_json_pretty(
+            &runtime_root
+                .join("planner_dispatches")
+                .join(format!("{}.json", dispatch.dispatch_id)),
+            &dispatch,
+        )?;
+        *plan = apply_planner_response(plan, &response);
+    }
+
+    Ok(())
+}
+
+fn candidate_patch_recipe_ids(
+    plan: &chatty_factory_core::RequestPlan,
+    active_spec: Option<&ProjectSpec>,
+) -> Vec<String> {
+    registry_candidate_patch_recipe_ids(
+        plan.inferred_family_candidates.first(),
+        plan.inferred_tool_kind.as_deref(),
+        active_spec
+            .map(|spec| spec.features.as_slice())
+            .unwrap_or(&[]),
+    )
+}
+
+fn candidate_operator_bundle_ids(plan: &chatty_factory_core::RequestPlan) -> Vec<String> {
+    plan.inferred_family_candidates
+        .first()
+        .map(FamilyId::as_str)
+        .map(candidate_operator_bundle_ids_for)
+        .unwrap_or_default()
+}
+
+fn candidate_acceptance_recipe_ids(plan: &chatty_factory_core::RequestPlan) -> Vec<String> {
+    registry_candidate_acceptance_recipe_ids(
+        plan.inferred_family_candidates.first(),
+        plan.inferred_tool_kind.as_deref(),
+    )
+}
+
+fn derive_bounded_build_composition_patch_kinds(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    selected_family_id: Option<&FamilyId>,
+) -> Vec<String> {
+    if !matches!(request.mode, Some(chatty_factory_core::RequestMode::NewBuild)) {
+        return Vec::new();
+    }
+    let lower = request.raw_request.to_ascii_lowercase();
+    if matches!(selected_family_id, Some(FamilyId::StaticWebDashboard)) {
+        let helperish = request_looks_helper_or_service_shaped(request, plan)
+            || lower.contains("inbox")
+            || lower.contains("watch")
+            || lower.contains("monitor")
+            || lower.contains("local file");
+        let surfaceish = lower.contains("banner")
+            || lower.contains("progress")
+            || lower.contains("status")
+            || lower.contains("surface");
+        if helperish && surfaceish {
+            return vec!["progress_banner".to_string()];
+        }
+        return Vec::new();
+    }
+    let Some(FamilyId::ChattycogWebviewModule) = selected_family_id else {
+        return Vec::new();
+    };
+    let helperish = request_looks_helper_or_service_shaped(request, plan)
+        || lower.contains("monitor")
+        || lower.contains("status")
+        || lower.contains("filter");
+    let multi_lane = lower.contains("two inbox")
+        || lower.contains("two-inbox")
+        || lower.contains("secondary inbox")
+        || lower.contains("multi lane")
+        || lower.contains("multi-lane")
+        || lower.contains("two lanes");
+    if !helperish {
+        return Vec::new();
+    }
+
+    let mut patch_kinds = Vec::new();
+    if multi_lane || lower.contains("inbox") {
+        patch_kinds.push("secondary_inbox_lane".to_string());
+    }
+    if lower.contains("filter") || lower.contains("filtered") || lower.contains(".txt") {
+        patch_kinds.push("file_type_filter".to_string());
+    }
+    patch_kinds.push("helper_summary_panel".to_string());
+    patch_kinds.push("helper_summary_status_chip".to_string());
+    patch_kinds.push("helper_summary_lane_count_chip".to_string());
+    patch_kinds.push("helper_summary_types_chip".to_string());
+    patch_kinds.push("helper_summary_count_delta".to_string());
+    if multi_lane || lower.contains("lane") {
+        patch_kinds.push("lane_scoped_metadata_row".to_string());
+    }
+    if lower.contains("filter") || lower.contains("filtered") {
+        patch_kinds.push("lane_scoped_filter_notice".to_string());
+    }
+    let mut ordered_unique = Vec::new();
+    for patch_kind in patch_kinds {
+        if !ordered_unique.contains(&patch_kind) {
+            ordered_unique.push(patch_kind);
+        }
+    }
+    ordered_unique
+}
+
+fn derive_bounded_patch_composition_patch_kinds(
+    request: &chatty_factory_core::RequestRecord,
+    active_spec: &ProjectSpec,
+) -> Vec<String> {
+    if !matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch)) {
+        return Vec::new();
+    }
+    let Some(FamilyId::ChattycogWebviewModule) = active_spec.family_id.as_ref() else {
+        return Vec::new();
+    };
+    let lower = request.raw_request.to_ascii_lowercase();
+    let available_patch_kinds: Vec<String> = active_spec
+        .patch_lanes
+        .iter()
+        .filter(|lane| lane.availability_status == "available")
+        .map(|lane| lane.patch_kind.clone())
+        .collect();
+    let has = |patch_kind: &str| available_patch_kinds.iter().any(|item| item == patch_kind);
+    let mut patch_kinds = Vec::new();
+
+    let helper_surfaceish = lower.contains("helper")
+        || lower.contains("monitor")
+        || lower.contains("monitoring")
+        || lower.contains("summary")
+        || lower.contains("filtered file status")
+        || lower.contains("helper status");
+    let lane_infoish = lower.contains("lane info")
+        || lower.contains("lane metadata")
+        || lower.contains("lane status")
+        || lower.contains("two inboxes")
+        || lower.contains("across two inboxes");
+    let chipish = lower.contains("chip") || lower.contains("chips");
+    let filterish = lower.contains("filter")
+        || lower.contains("filtered")
+        || lower.contains("type rules")
+        || lower.contains("file status");
+
+    if helper_surfaceish && has("helper_summary_status_chip") {
+        patch_kinds.push("helper_summary_status_chip".to_string());
+    }
+    if (lane_infoish || lower.contains("lane count")) && has("helper_summary_lane_count_chip") {
+        patch_kinds.push("helper_summary_lane_count_chip".to_string());
+    }
+    if (filterish || lower.contains("types")) && has("helper_summary_types_chip") {
+        patch_kinds.push("helper_summary_types_chip".to_string());
+    }
+    if (filterish || lower.contains("count") || lower.contains("delta")) && has("helper_summary_count_delta") {
+        patch_kinds.push("helper_summary_count_delta".to_string());
+    }
+    if (lane_infoish || lower.contains("metadata")) && has("lane_scoped_metadata_row") {
+        patch_kinds.push("lane_scoped_metadata_row".to_string());
+    }
+    if filterish && has("lane_scoped_filter_notice") {
+        patch_kinds.push("lane_scoped_filter_notice".to_string());
+    }
+    if helper_surfaceish && chipish && has("helper_summary_badges") {
+        patch_kinds.push("helper_summary_badges".to_string());
+    }
+
+    let mut ordered_unique = Vec::new();
+    for patch_kind in patch_kinds {
+        if !ordered_unique.contains(&patch_kind) {
+            ordered_unique.push(patch_kind);
+        }
+    }
+    ordered_unique
+}
+
+fn request_prefers_bounded_patch_composition(
+    request: &chatty_factory_core::RequestRecord,
+    composition_patch_kinds: &[String],
+) -> bool {
+    if composition_patch_kinds.len() < 2 {
+        return false;
+    }
+    let lower = request.raw_request.to_ascii_lowercase();
+    lower.contains(" and ")
+        || lower.contains(',')
+        || lower.contains(" plus ")
+        || lower.contains("show ")
+        || lower.contains("surface ")
+        || lower.contains("summarize ")
+}
+
+fn composition_primitive_dependencies(
+    family_id: Option<&FamilyId>,
+    tool_kind: Option<&str>,
+    project_features: &[String],
+    patch_kinds: &[String],
+) -> Vec<CompositionPrimitiveDependency> {
+    registry_patch_lane_statuses(family_id, tool_kind, project_features)
+        .into_iter()
+        .filter(|status| patch_kinds.contains(&status.patch_kind))
+        .map(|status| CompositionPrimitiveDependency {
+            patch_kind: status.patch_kind.clone(),
+            requires_features: status.requires_features,
+            provides_features: status.provides_features,
+            composition_role: bounded_composition_role(&status.patch_kind).to_string(),
+            exclusive_group: bounded_composition_exclusive_group(&status.patch_kind)
+                .map(str::to_string),
+        })
+        .collect()
+}
+
+fn bounded_composition_role(patch_kind: &str) -> &'static str {
+    match patch_kind {
+        "helper_summary_status_chip"
+        | "helper_summary_lane_count_chip"
+        | "helper_summary_types_chip"
+        | "helper_summary_count_delta"
+        | "helper_summary_metadata_row"
+        | "helper_summary_filter_notice"
+        | "helper_summary_discovered_notice"
+        | "helper_summary_updated_at_chip"
+        | "lane_scoped_metadata_row"
+        | "lane_scoped_filter_notice"
+        | "helper_status_chip"
+        | "helper_summary_badges"
+        | "helper_summary_empty_state"
+        | "helper_last_run_stamp" => "optional_companion",
+        _ => "required",
+    }
+}
+
+fn bounded_composition_exclusive_group(patch_kind: &str) -> Option<&'static str> {
+    match patch_kind {
+        "helper_status_chip" | "helper_summary_status_chip" => Some("helper_status_chip_family"),
+        _ => None,
+    }
+}
+
+fn enforce_composition_exclusive_groups(
+    patch_kinds: &[String],
+    dependency_specs: &[CompositionPrimitiveDependency],
+) -> Vec<String> {
+    let mut chosen_groups: Vec<String> = Vec::new();
+    let mut filtered = Vec::new();
+    for patch_kind in patch_kinds {
+        let exclusive_group = dependency_specs
+            .iter()
+            .find(|spec| spec.patch_kind == *patch_kind)
+            .and_then(|spec| spec.exclusive_group.clone());
+        if let Some(group) = exclusive_group {
+            if chosen_groups.contains(&group) {
+                continue;
+            }
+            chosen_groups.push(group);
+        }
+        filtered.push(patch_kind.clone());
+    }
+    filtered
+}
+
+fn order_composition_patch_kinds_by_dependencies(
+    family_id: Option<&FamilyId>,
+    tool_kind: Option<&str>,
+    project_features: &[String],
+    patch_kinds: &[String],
+) -> Vec<String> {
+    let dependency_specs =
+        composition_primitive_dependencies(family_id, tool_kind, project_features, patch_kinds);
+    if dependency_specs.is_empty() {
+        return patch_kinds.to_vec();
+    }
+    let patch_kinds = enforce_composition_exclusive_groups(patch_kinds, &dependency_specs);
+
+    let mut ordered = Vec::new();
+    let mut remaining = patch_kinds;
+    let mut available_features = project_features.to_vec();
+
+    while !remaining.is_empty() {
+        let mut progress = false;
+        let snapshot = remaining.clone();
+        for patch_kind in snapshot {
+            let Some(spec) = dependency_specs
+                .iter()
+                .find(|spec| spec.patch_kind == patch_kind)
+            else {
+                continue;
+            };
+            let requirements_met = spec.requires_features.iter().all(|required| {
+                available_features
+                    .iter()
+                    .any(|existing| existing == required)
+            });
+            if requirements_met {
+                ordered.push(patch_kind.clone());
+                remaining.retain(|candidate| candidate != &patch_kind);
+                for provided in &spec.provides_features {
+                    if !available_features.contains(provided) {
+                        available_features.push(provided.clone());
+                    }
+                }
+                progress = true;
+            }
+        }
+        if !progress {
+            ordered.extend(remaining.into_iter());
+            break;
+        }
+    }
+
+    ordered
+}
+
+fn restore_composition_required_primitives(
+    family_id: Option<&FamilyId>,
+    tool_kind: Option<&str>,
+    project_features: &[String],
+    candidate_patch_kinds: &[String],
+    selected_patch_kinds: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let dependency_specs = composition_primitive_dependencies(
+        family_id,
+        tool_kind,
+        project_features,
+        candidate_patch_kinds,
+    );
+    if dependency_specs.is_empty() {
+        return (selected_patch_kinds.to_vec(), Vec::new());
+    }
+
+    let mut restored = enforce_composition_exclusive_groups(selected_patch_kinds, &dependency_specs);
+    let mut restored_notes = Vec::new();
+
+    for spec in &dependency_specs {
+        if spec.composition_role == "required" && !restored.contains(&spec.patch_kind) {
+            restored.push(spec.patch_kind.clone());
+            restored_notes.push(spec.patch_kind.clone());
+        }
+    }
+
+    for semantic_restore in adapter_semantic_patch_restores(
+        family_id,
+        tool_kind,
+        candidate_patch_kinds,
+        &restored,
+    ) {
+        if !restored.contains(&semantic_restore) {
+            restored.push(semantic_restore.clone());
+            restored_notes.push(semantic_restore);
+        }
+    }
+
+    let mut available_features = project_features.to_vec();
+    for patch_kind in &restored {
+        if let Some(spec) = dependency_specs.iter().find(|spec| spec.patch_kind == *patch_kind) {
+            for feature in &spec.provides_features {
+                if !available_features.contains(feature) {
+                    available_features.push(feature.clone());
+                }
+            }
+        }
+    }
+
+    let mut progress = true;
+    while progress {
+        progress = false;
+        let snapshot = restored.clone();
+        for patch_kind in snapshot {
+            let Some(spec) = dependency_specs.iter().find(|spec| spec.patch_kind == patch_kind) else {
+                continue;
+            };
+            for required_feature in &spec.requires_features {
+                if available_features.contains(required_feature) {
+                    continue;
+                }
+                if let Some(provider) = dependency_specs.iter().find(|candidate| {
+                    candidate.provides_features.iter().any(|provided| provided == required_feature)
+                }) {
+                    if !restored.contains(&provider.patch_kind) {
+                        restored.push(provider.patch_kind.clone());
+                        restored_notes.push(provider.patch_kind.clone());
+                        for provided in &provider.provides_features {
+                            if !available_features.contains(provided) {
+                                available_features.push(provided.clone());
+                            }
+                        }
+                        progress = true;
+                    }
+                }
+            }
+        }
+    }
+
+    restored = order_composition_patch_kinds_by_dependencies(
+        family_id,
+        tool_kind,
+        project_features,
+        &restored,
+    );
+    restored_notes.sort();
+    restored_notes.dedup();
+    (restored, restored_notes)
+}
+
+fn verify_build_artifacts(
+    runtime_root: &PathBuf,
+    request_id: &str,
+    artifacts: &BuildArtifacts,
+) -> Result<()> {
+    let acceptance_path = artifacts.project_dir.join("AcceptancePlan.json");
+    let acceptance_plan = serde_json::from_str(&fs::read_to_string(&acceptance_path)?)?;
+    persist_json_pretty(
+        &runtime_root
+            .join("acceptance_plans")
+            .join(format!("{}-acceptance.json", request_id)),
+        &acceptance_plan,
+    )?;
+
+    match verify_acceptance_plan(&artifacts.project_dir, &acceptance_plan) {
+        Ok(()) => {
+            let success_receipt = serde_json::json!({
+                "request_id": request_id,
+                "project_dir": artifacts.project_dir,
+                "status": "passed"
+            });
+            persist_json_pretty(
+                &runtime_root
+                    .join("acceptance_results")
+                    .join(format!("{}-result.json", request_id)),
+                &success_receipt,
+            )?;
+            Ok(())
+        }
+        Err(err) => persist_failure(
+            runtime_root,
+            request_id,
+            artifacts.project_dir.clone(),
+            acceptance_plan.family_id.clone(),
+            err,
+        ),
+    }
+}
+
+fn helper_is_selected_for_acceptance(
+    helper: &HelperServiceSpec,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> bool {
+    primitive_plan
+        .map(|plan| {
+            plan.selected_helper_ids.is_empty()
+                || plan
+                    .selected_helper_ids
+                    .iter()
+                    .any(|helper_id| helper_id == &helper.helper_id)
+        })
+        .unwrap_or(true)
+}
+
+fn helper_has_primitive_kind(helper: &HelperServiceSpec, primitive_kind: &str) -> bool {
+    helper
+        .primitives
+        .iter()
+        .any(|primitive| primitive.primitive_kind == primitive_kind)
+}
+
+#[derive(Debug, Clone, Default)]
+struct HelperDerivedSummaryExpectations {
+    observed_count: String,
+    discovered_count: String,
+    filtered_count: String,
+    observed_lanes: String,
+    lane_rules: String,
+    filtered_files: String,
+}
+
+fn helper_summary_target(helper: &HelperServiceSpec) -> Option<String> {
+    helper
+        .output_paths
+        .iter()
+        .chain(helper.status_paths.iter())
+        .find(|path| path.ends_with("summary.json"))
+        .cloned()
+}
+
+fn derive_helper_summary_expectations(
+    project_dir: &Path,
+    helper: &HelperServiceSpec,
+) -> Result<HelperDerivedSummaryExpectations> {
+    let allowed_extensions = normalized_helper_allowed_extensions(helper);
+    let lane_allowed_extensions = normalized_helper_lane_allowed_extensions(helper);
+    let mut discovered_count = 0usize;
+    let mut observed_count = 0usize;
+    let mut observed_lanes = Vec::new();
+    let mut lane_rules = Vec::new();
+    let mut filtered_files = Vec::new();
+
+    for input_path in &helper.input_paths {
+        let input_root = project_dir.join(input_path);
+        let lane_name = input_root
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let lane_extensions = lane_allowed_extensions
+            .get(&lane_name)
+            .cloned()
+            .unwrap_or_else(|| allowed_extensions.clone());
+        let observed_files = collect_helper_input_files(&input_root)?;
+        let accepted_for_lane = observed_files
+            .iter()
+            .filter(|path| helper_accepts_file(path, &lane_extensions))
+            .count();
+        for path in &observed_files {
+            if !helper_accepts_file(path, &lane_extensions) {
+                let relative = path
+                    .strip_prefix(&input_root)
+                    .map(|value| value.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_else(|_| path.display().to_string());
+                if !lane_name.is_empty() {
+                    filtered_files.push(format!("{lane_name}/{relative}"));
+                } else {
+                    filtered_files.push(relative);
+                }
+            }
+        }
+        discovered_count += observed_files.len();
+        observed_count += accepted_for_lane;
+        if accepted_for_lane > 0 && !lane_name.is_empty() {
+            observed_lanes.push(lane_name.clone());
+        }
+        if !lane_name.is_empty() && !lane_extensions.is_empty() {
+            lane_rules.push(format!("{lane_name}={}", lane_extensions.join("|")));
+        }
+    }
+
+    observed_lanes.sort();
+    observed_lanes.dedup();
+    lane_rules.sort();
+    lane_rules.dedup();
+    filtered_files.sort();
+    filtered_files.dedup();
+
+    Ok(HelperDerivedSummaryExpectations {
+        observed_count: observed_count.to_string(),
+        discovered_count: discovered_count.to_string(),
+        filtered_count: discovered_count.saturating_sub(observed_count).to_string(),
+        observed_lanes: observed_lanes.join(","),
+        lane_rules: lane_rules.join(","),
+        filtered_files: filtered_files.join(","),
+    })
+}
+
+fn helper_matches_acceptance_target(helper: &HelperServiceSpec, target: &str) -> bool {
+    let normalized_target = target.replace('\\', "/");
+    let helper_spec_path = format!("{}/HelperServiceSpec.json", helper.working_directory);
+    if normalized_target == helper_spec_path || normalized_target == helper.entrypoint {
+        return true;
+    }
+    helper
+        .input_paths
+        .iter()
+        .chain(helper.output_paths.iter())
+        .chain(helper.status_paths.iter())
+        .any(|path| path == &normalized_target)
+}
+
+fn helper_for_acceptance_target<'a>(
+    spec: &'a ProjectSpec,
+    target: &str,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> Option<&'a HelperServiceSpec> {
+    spec.helper_services.iter().find(|helper| {
+        helper_is_selected_for_acceptance(helper, primitive_plan)
+            && helper_matches_acceptance_target(helper, target)
+    })
+}
+
+fn derive_helper_expected_observed_count(
+    project_dir: &Path,
+    helper: &HelperServiceSpec,
+) -> Result<Option<String>> {
+    Ok(Some(
+        derive_helper_summary_expectations(project_dir, helper)?.observed_count,
+    ))
+}
+
+fn read_live_helper_observed_count(project_dir: &Path, target: &str) -> Result<Option<String>> {
+    let summary_path = project_dir.join(target);
+    if !summary_path.exists() {
+        return Ok(None);
+    }
+    let summary: serde_json::Value = serde_json::from_str(&fs::read_to_string(&summary_path)?)?;
+    Ok(Some(
+        summary
+            .get("observed_file_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0)
+            .to_string(),
+    ))
+}
+
+fn read_live_helper_observed_files(project_dir: &Path, target: &str) -> Result<Vec<String>> {
+    let summary_path = project_dir.join(target);
+    if !summary_path.exists() {
+        return Ok(Vec::new());
+    }
+    let summary: serde_json::Value = serde_json::from_str(&fs::read_to_string(&summary_path)?)?;
+    Ok(summary
+        .get("observed_files")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default())
+}
+
+fn derive_helper_acceptance_expected(
+    project_dir: &Path,
+    spec: &ProjectSpec,
+    check: &chatty_factory_core::AcceptanceCheck,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> Result<Option<String>> {
+    let Some(helper) = helper_for_acceptance_target(spec, &check.target, primitive_plan) else {
+        return Ok(check.expected.clone());
+    };
+
+    match check.kind.as_str() {
+        "helper_service_spec" => Ok(Some(helper.helper_id.clone())),
+        "helper_status_snapshot" => {
+            if helper_has_primitive_kind(helper, "status_reporter") {
+                Ok(Some("completed".into()))
+            } else {
+                Ok(check.expected.clone())
+            }
+        }
+        "helper_summary_snapshot" => {
+            if helper_has_primitive_kind(helper, "summary_emitter") {
+                if let Some(expected) = derive_helper_expected_observed_count(project_dir, helper)? {
+                    return Ok(Some(expected));
+                }
+            }
+            read_live_helper_observed_count(project_dir, &check.target)
+        }
+        _ => Ok(check.expected.clone()),
+    }
+}
+
+fn ensure_or_update_check(checks: &mut Vec<AcceptanceCheck>, check: AcceptanceCheck) {
+    if let Some(existing) = checks
+        .iter_mut()
+        .find(|existing| existing.check_id == check.check_id)
+    {
+        *existing = check;
+    } else {
+        checks.push(check);
+    }
+}
+
+fn inject_helper_summary_derived_checks(
+    project_dir: &Path,
+    spec: &ProjectSpec,
+    checks: &mut Vec<AcceptanceCheck>,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> Result<bool> {
+    let mut changed = false;
+
+    for helper in &spec.helper_services {
+        if !helper_is_selected_for_acceptance(helper, primitive_plan)
+            || !helper_has_primitive_kind(helper, "summary_emitter")
+        {
+            continue;
+        }
+        let Some(target) = helper_summary_target(helper) else {
+            continue;
+        };
+        let expectations = derive_helper_summary_expectations(project_dir, helper)?;
+        let derived_checks = vec![
+            AcceptanceCheck {
+                check_id: format!("{}-summary-discovered-count", helper.helper_id),
+                kind: "helper_summary_discovered_count".into(),
+                target: target.clone(),
+                expected: Some(expectations.discovered_count.clone()),
+            },
+            AcceptanceCheck {
+                check_id: format!("{}-summary-filtered-count", helper.helper_id),
+                kind: "helper_summary_filtered_count".into(),
+                target: target.clone(),
+                expected: Some(expectations.filtered_count.clone()),
+            },
+            AcceptanceCheck {
+                check_id: format!("{}-summary-observed-lanes", helper.helper_id),
+                kind: "helper_summary_observed_lanes".into(),
+                target,
+                expected: Some(expectations.observed_lanes.clone()),
+            },
+            AcceptanceCheck {
+                check_id: format!("{}-summary-lane-rules", helper.helper_id),
+                kind: "helper_summary_lane_rules".into(),
+                target: helper_summary_target(helper).unwrap_or_default(),
+                expected: Some(expectations.lane_rules.clone()),
+            },
+            AcceptanceCheck {
+                check_id: format!("{}-summary-filtered-files", helper.helper_id),
+                kind: "helper_summary_filtered_files".into(),
+                target: helper_summary_target(helper).unwrap_or_default(),
+                expected: Some(expectations.filtered_files.clone()),
+            },
+        ];
+
+        for derived in derived_checks {
+            let needs_change = checks
+                .iter()
+                .find(|existing| existing.check_id == derived.check_id)
+                .map(|existing| existing != &derived)
+                .unwrap_or(true);
+            ensure_or_update_check(checks, derived);
+            changed |= needs_change;
+        }
+    }
+
+    Ok(changed)
+}
+
+fn sync_helper_processed_output_checks(
+    project_dir: &Path,
+    spec: &ProjectSpec,
+    checks: &mut Vec<AcceptanceCheck>,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> Result<bool> {
+    let mut changed = false;
+
+    for check in checks.iter_mut() {
+        if check.kind != "exists"
+            || !check.target.starts_with("bridge/helpers/local_inbox/processed/")
+            || !check.target.ends_with(".txt")
+        {
+            continue;
+        }
+        let Some(helper) = spec.helper_services.iter().find(|helper| {
+            helper_is_selected_for_acceptance(helper, primitive_plan)
+                && helper_has_primitive_kind(helper, "processed_output")
+        }) else {
+            continue;
+        };
+        let Some(summary_target) = helper_summary_target(helper) else {
+            continue;
+        };
+        let observed_files = read_live_helper_observed_files(project_dir, &summary_target)?;
+        let Some(first_file) = observed_files.first() else {
+            continue;
+        };
+        let synced_target = format!("bridge/helpers/local_inbox/processed/{first_file}");
+        if check.target != synced_target {
+            check.target = synced_target;
+            changed = true;
+        }
+    }
+
+    Ok(changed)
+}
+
+fn helper_summary_surface_contract_expected(
+    spec: &ProjectSpec,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> Option<String> {
+    let selected_patch_kinds = effective_applied_patch_kinds(spec, primitive_plan);
+    let has_panel = selected_patch_kinds.iter().any(|kind| kind == "helper_summary_panel");
+    if !has_panel {
+        return None;
+    }
+
+    let mut components = vec!["panel".to_string()];
+    let optional_components = [
+        ("helper_summary_status_chip", "status_chip"),
+        ("helper_summary_lane_count_chip", "lane_count_chip"),
+        ("helper_summary_types_chip", "types_chip"),
+        ("helper_summary_count_delta", "count_delta"),
+    ];
+
+    for (patch_kind, component) in optional_components {
+        if selected_patch_kinds.iter().any(|kind| kind == patch_kind)
+            || spec.features.iter().any(|feature| feature == patch_kind)
+        {
+            components.push(component.to_string());
+        }
+    }
+
+    Some(components.join(","))
+}
+
+fn helper_processed_files_surface_contract_expected(
+    spec: &ProjectSpec,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> Option<String> {
+    let selected_patch_kinds = effective_applied_patch_kinds(spec, primitive_plan);
+    let has_panel = selected_patch_kinds.iter().any(|kind| kind == "processed_files_panel")
+        ;
+    if !has_panel {
+        return None;
+    }
+
+    let mut components = vec!["panel".to_string()];
+    if selected_patch_kinds
+        .iter()
+        .any(|kind| kind == "processed_file_selection")
+    {
+        components.push("selection".to_string());
+    }
+    Some(components.join(","))
+}
+
+fn helper_processed_preview_surface_contract_expected(
+    spec: &ProjectSpec,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> Option<String> {
+    let selected_patch_kinds = effective_applied_patch_kinds(spec, primitive_plan);
+    let has_panel = selected_patch_kinds
+        .iter()
+        .any(|kind| kind == "processed_file_preview_panel");
+    if !has_panel {
+        return None;
+    }
+
+    let mut components = vec!["panel".to_string()];
+    if selected_patch_kinds
+        .iter()
+        .any(|kind| kind == "processed_file_selection")
+    {
+        components.push("selection".to_string());
+    }
+    Some(components.join(","))
+}
+
+fn helper_processed_output_contract_expected(
+    spec: &ProjectSpec,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> Option<String> {
+    let selected_patch_kinds = effective_applied_patch_kinds(spec, primitive_plan);
+    if !selected_patch_kinds.iter().any(|kind| {
+        matches!(
+            kind.as_str(),
+            "processed_files_panel" | "processed_file_preview_panel" | "processed_file_selection"
+        )
+    }) {
+        return None;
+    }
+
+    spec.helper_services
+        .iter()
+        .find(|helper| {
+            helper_is_selected_for_acceptance(helper, primitive_plan)
+                && helper_has_primitive_kind(helper, "processed_output")
+                && helper_has_primitive_kind(helper, "summary_emitter")
+        })
+        .map(|_| "observed_files".to_string())
+}
+
+fn effective_applied_patch_kinds(
+    spec: &ProjectSpec,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> Vec<String> {
+    let mut patch_kinds = primitive_plan
+        .map(|plan| plan.selected_patch_kinds.clone())
+        .unwrap_or_default();
+    if patch_kinds.is_empty() {
+        patch_kinds.extend(
+            spec.patch_lanes
+                .iter()
+                .filter(|lane| lane.availability_status == "already_applied")
+                .map(|lane| lane.patch_kind.clone()),
+        );
+    }
+    dedup_strings(patch_kinds)
+}
+
+fn inject_helper_summary_surface_contract_check(
+    spec: &ProjectSpec,
+    checks: &mut Vec<AcceptanceCheck>,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> bool {
+    let Some(expected) = helper_summary_surface_contract_expected(spec, primitive_plan) else {
+        return false;
+    };
+    let contract_check = AcceptanceCheck {
+        check_id: "helper-summary-surface-contract".into(),
+        kind: "helper_summary_surface_contract".into(),
+        target: "index.html".into(),
+        expected: Some(expected),
+    };
+    let needs_change = checks
+        .iter()
+        .find(|existing| existing.check_id == contract_check.check_id)
+        .map(|existing| existing != &contract_check)
+        .unwrap_or(true);
+    ensure_or_update_check(checks, contract_check);
+    needs_change
+}
+
+fn inject_helper_processed_files_surface_contract_check(
+    spec: &ProjectSpec,
+    checks: &mut Vec<AcceptanceCheck>,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> bool {
+    let Some(expected) = helper_processed_files_surface_contract_expected(spec, primitive_plan)
+    else {
+        return false;
+    };
+    let contract_check = AcceptanceCheck {
+        check_id: "helper-processed-files-surface-contract".into(),
+        kind: "helper_processed_files_surface_contract".into(),
+        target: "index.html".into(),
+        expected: Some(expected),
+    };
+    let needs_change = checks
+        .iter()
+        .find(|existing| existing.check_id == contract_check.check_id)
+        .map(|existing| existing != &contract_check)
+        .unwrap_or(true);
+    ensure_or_update_check(checks, contract_check);
+    needs_change
+}
+
+fn inject_helper_processed_preview_surface_contract_check(
+    spec: &ProjectSpec,
+    checks: &mut Vec<AcceptanceCheck>,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> bool {
+    let Some(expected) = helper_processed_preview_surface_contract_expected(spec, primitive_plan)
+    else {
+        return false;
+    };
+    let contract_check = AcceptanceCheck {
+        check_id: "helper-processed-preview-surface-contract".into(),
+        kind: "helper_processed_preview_surface_contract".into(),
+        target: "index.html".into(),
+        expected: Some(expected),
+    };
+    let needs_change = checks
+        .iter()
+        .find(|existing| existing.check_id == contract_check.check_id)
+        .map(|existing| existing != &contract_check)
+        .unwrap_or(true);
+    ensure_or_update_check(checks, contract_check);
+    needs_change
+}
+
+fn inject_helper_processed_selection_surface_contract_check(
+    spec: &ProjectSpec,
+    checks: &mut Vec<AcceptanceCheck>,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> bool {
+    let selected_patch_kinds = effective_applied_patch_kinds(spec, primitive_plan);
+    if !selected_patch_kinds
+        .iter()
+        .any(|kind| kind == "processed_file_selection")
+    {
+        return false;
+    }
+    let contract_check = AcceptanceCheck {
+        check_id: "helper-processed-selection-surface-contract".into(),
+        kind: "helper_processed_selection_surface_contract".into(),
+        target: "app.js".into(),
+        expected: Some("selection".into()),
+    };
+    let needs_change = checks
+        .iter()
+        .find(|existing| existing.check_id == contract_check.check_id)
+        .map(|existing| existing != &contract_check)
+        .unwrap_or(true);
+    ensure_or_update_check(checks, contract_check);
+    needs_change
+}
+
+fn inject_helper_processed_output_contract_check(
+    spec: &ProjectSpec,
+    checks: &mut Vec<AcceptanceCheck>,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> bool {
+    let Some(expected) = helper_processed_output_contract_expected(spec, primitive_plan) else {
+        return false;
+    };
+    let Some(helper) = spec.helper_services.iter().find(|helper| {
+        helper_is_selected_for_acceptance(helper, primitive_plan)
+            && helper_has_primitive_kind(helper, "processed_output")
+            && helper_has_primitive_kind(helper, "summary_emitter")
+    }) else {
+        return false;
+    };
+    let Some(target) = helper_summary_target(helper) else {
+        return false;
+    };
+    let contract_check = AcceptanceCheck {
+        check_id: "helper-processed-output-contract".into(),
+        kind: "helper_processed_output_contract".into(),
+        target,
+        expected: Some(expected),
+    };
+    let needs_change = checks
+        .iter()
+        .find(|existing| existing.check_id == contract_check.check_id)
+        .map(|existing| existing != &contract_check)
+        .unwrap_or(true);
+    ensure_or_update_check(checks, contract_check);
+    needs_change
+}
+
+fn prune_redundant_helper_summary_contains_checks(
+    checks: &mut Vec<AcceptanceCheck>,
+    required_markers: Option<&mut Vec<String>>,
+) -> bool {
+    let mut changed = false;
+    let has_filtered_count = checks.iter().any(|check| {
+        check.kind == "helper_summary_filtered_count"
+            && check.target == "bridge/helpers/local_inbox/summary.json"
+    });
+    let has_observed_lanes = checks.iter().any(|check| {
+        check.kind == "helper_summary_observed_lanes"
+            && check.target == "bridge/helpers/local_inbox/summary.json"
+    });
+    let has_lane_rules = checks.iter().any(|check| {
+        check.kind == "helper_summary_lane_rules"
+            && check.target == "bridge/helpers/local_inbox/summary.json"
+    });
+    let has_filtered_files = checks.iter().any(|check| {
+        check.kind == "helper_summary_filtered_files"
+            && check.target == "bridge/helpers/local_inbox/summary.json"
+    });
+
+    checks.retain(|check| {
+        if check.kind != "contains" || check.target != "bridge/helpers/local_inbox/summary.json" {
+            return true;
+        }
+
+        let is_redundant_filtered =
+            has_filtered_count && check.expected.as_deref() == Some("\"filtered_out_file_count\": 1");
+        let is_redundant_lanes =
+            has_observed_lanes && check.expected.as_deref() == Some("\"secondary_assets\"");
+        let is_redundant_lane_rules = has_lane_rules
+            && (check.expected.as_deref() == Some("\"lane_allowed_extensions\": {")
+                || check.expected.as_deref() == Some("\"module_assets\""));
+        let is_redundant_filtered_files =
+            has_filtered_files && check.expected.as_deref() == Some("sample-ignore.json");
+        let keep = !(is_redundant_filtered
+            || is_redundant_lanes
+            || is_redundant_lane_rules
+            || is_redundant_filtered_files);
+        if !keep {
+            changed = true;
+        }
+        keep
+    });
+
+    if let Some(markers) = required_markers {
+        let before_len = markers.len();
+        markers.retain(|marker| {
+            if has_filtered_count && marker == "\"filtered_out_file_count\": 1" {
+                return false;
+            }
+            if has_observed_lanes && marker == "\"secondary_assets\"" {
+                return false;
+            }
+            if has_lane_rules && marker == "\"lane_allowed_extensions\": {" {
+                return false;
+            }
+            if has_filtered_count && marker == "\"filtered_out_file_count\": 1" {
+                return false;
+            }
+            true
+        });
+        changed |= markers.len() != before_len;
+    }
+
+    changed
+}
+
+fn prune_redundant_helper_summary_surface_checks(
+    checks: &mut Vec<AcceptanceCheck>,
+    required_markers: Option<&mut Vec<String>>,
+) -> bool {
+    let has_surface_contract = checks.iter().any(|check| {
+        check.kind == "helper_summary_surface_contract" && check.target == "index.html"
+    });
+    if !has_surface_contract {
+        return false;
+    }
+
+    let redundant_check_ids = [
+        "helper-summary-panel-marker",
+        "helper-summary-fetch-marker",
+        "helper-summary-status-chip-marker",
+        "helper-summary-status-chip-script",
+        "helper-summary-lane-count-chip-marker",
+        "helper-summary-lane-count-chip-script",
+        "helper-summary-types-chip-marker",
+        "helper-summary-types-chip-script",
+        "helper-summary-count-delta-marker",
+        "helper-summary-count-delta-script",
+    ];
+    let redundant_markers = [
+        "helper-summary-panel",
+        "bridge/helpers/local_inbox/summary.json",
+        "helper-summary-status-chip",
+        "helper-summary-lane-count-chip",
+        "helper-summary-types-chip",
+        "helper-summary-count-delta",
+    ];
+
+    let before_checks = checks.len();
+    checks.retain(|check| !redundant_check_ids.contains(&check.check_id.as_str()));
+    let mut changed = checks.len() != before_checks;
+
+    if let Some(markers) = required_markers {
+        let before_markers = markers.len();
+        markers.retain(|marker| !redundant_markers.contains(&marker.as_str()));
+        changed |= markers.len() != before_markers;
+    }
+
+    changed
+}
+
+fn prune_redundant_processed_files_surface_checks(
+    checks: &mut Vec<AcceptanceCheck>,
+    required_markers: Option<&mut Vec<String>>,
+) -> bool {
+    let has_surface_contract = checks.iter().any(|check| {
+        check.kind == "helper_processed_files_surface_contract" && check.target == "index.html"
+    });
+    if !has_surface_contract {
+        return false;
+    }
+
+    let redundant_check_ids = [
+        "processed-files-panel-marker",
+        "processed-files-panel-script",
+        "processed-files-fetch-marker",
+        "processed-file-selection-script",
+        "processed-file-selection-marker",
+        "processed-file-selection-preview",
+        "processed-file-selection-style",
+    ];
+    let redundant_markers = [
+        "processed-files-panel",
+        "data-select-processed-file",
+        "selectedProcessedFile",
+    ];
+
+    let before_checks = checks.len();
+    checks.retain(|check| !redundant_check_ids.contains(&check.check_id.as_str()));
+    let mut changed = checks.len() != before_checks;
+    if let Some(markers) = required_markers {
+        let before_markers = markers.len();
+        markers.retain(|marker| !redundant_markers.contains(&marker.as_str()));
+        changed |= markers.len() != before_markers;
+    }
+    changed
+}
+
+fn prune_redundant_processed_preview_surface_checks(
+    checks: &mut Vec<AcceptanceCheck>,
+    required_markers: Option<&mut Vec<String>>,
+) -> bool {
+    let has_surface_contract = checks.iter().any(|check| {
+        check.kind == "helper_processed_preview_surface_contract" && check.target == "index.html"
+    });
+    if !has_surface_contract {
+        return false;
+    }
+
+    let redundant_check_ids = [
+        "processed-file-preview-panel-marker",
+        "processed-file-preview-panel-script",
+        "processed-file-preview-loader-marker",
+    ];
+    let redundant_markers = ["processed-file-preview-panel"];
+
+    let before_checks = checks.len();
+    checks.retain(|check| !redundant_check_ids.contains(&check.check_id.as_str()));
+    let mut changed = checks.len() != before_checks;
+    if let Some(markers) = required_markers {
+        let before_markers = markers.len();
+        markers.retain(|marker| !redundant_markers.contains(&marker.as_str()));
+        changed |= markers.len() != before_markers;
+    }
+    changed
+}
+
+fn prune_unapplied_processed_surface_checks(
+    spec: &ProjectSpec,
+    checks: &mut Vec<AcceptanceCheck>,
+    required_markers: Option<&mut Vec<String>>,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> bool {
+    let applied_patch_kinds = effective_applied_patch_kinds(spec, primitive_plan);
+    let has_processed_files = applied_patch_kinds
+        .iter()
+        .any(|kind| kind == "processed_files_panel");
+    let has_processed_preview = applied_patch_kinds
+        .iter()
+        .any(|kind| kind == "processed_file_preview_panel");
+    let has_processed_selection = applied_patch_kinds
+        .iter()
+        .any(|kind| kind == "processed_file_selection");
+
+    let mut removable_check_ids = Vec::new();
+    if !has_processed_files {
+        removable_check_ids.extend([
+            "processed-files-panel-marker",
+            "processed-files-panel-script",
+            "helper-processed-files-surface-contract",
+        ]);
+    }
+    if !has_processed_preview {
+        removable_check_ids.extend([
+            "processed-file-preview-panel-marker",
+            "processed-file-preview-panel-script",
+            "helper-processed-preview-surface-contract",
+        ]);
+    }
+    if !has_processed_selection {
+        removable_check_ids.extend([
+            "processed-file-selection-state",
+            "processed-file-selection-handler",
+            "processed-file-selection-marker",
+            "processed-file-selection-preview",
+            "processed-file-selection-style",
+        ]);
+    }
+
+    let before_checks = checks.len();
+    checks.retain(|check| !removable_check_ids.contains(&check.check_id.as_str()));
+    let mut changed = checks.len() != before_checks;
+
+    if let Some(markers) = required_markers {
+        let mut removable_markers = Vec::new();
+        if !has_processed_files {
+            removable_markers.push("processed-files-panel");
+        }
+        if !has_processed_preview {
+            removable_markers.push("processed-file-preview-panel");
+        }
+        if !has_processed_selection {
+            removable_markers.extend(["data-select-processed-file", "selectedProcessedFile"]);
+        }
+        let before_markers = markers.len();
+        markers.retain(|marker| !removable_markers.contains(&marker.as_str()));
+        changed |= markers.len() != before_markers;
+    }
+
+    changed
+}
+
+fn prune_redundant_processed_selection_surface_checks(
+    checks: &mut Vec<AcceptanceCheck>,
+    required_markers: Option<&mut Vec<String>>,
+) -> bool {
+    let has_surface_contract = checks.iter().any(|check| {
+        check.kind == "helper_processed_selection_surface_contract" && check.target == "app.js"
+    });
+    if !has_surface_contract {
+        return false;
+    }
+
+    let redundant_check_ids = [
+        "processed-file-selection-state",
+        "processed-file-selection-handler",
+        "processed-file-selection-preview",
+        "processed-file-selection-style",
+    ];
+    let redundant_markers = ["data-select-processed-file", "selectedProcessedFile"];
+
+    let before_checks = checks.len();
+    checks.retain(|check| !redundant_check_ids.contains(&check.check_id.as_str()));
+    let mut changed = checks.len() != before_checks;
+    if let Some(markers) = required_markers {
+        let before_markers = markers.len();
+        markers.retain(|marker| !redundant_markers.contains(&marker.as_str()));
+        changed |= markers.len() != before_markers;
+    }
+    changed
+}
+
+fn prune_processed_contract_covered_marker_checks(checks: &mut Vec<AcceptanceCheck>) -> bool {
+    let has_files_contract = checks.iter().any(|check| {
+        check.kind == "helper_processed_files_surface_contract" && check.target == "index.html"
+    });
+    let has_preview_contract = checks.iter().any(|check| {
+        check.kind == "helper_processed_preview_surface_contract" && check.target == "index.html"
+    });
+    let has_selection_contract = checks.iter().any(|check| {
+        check.kind == "helper_processed_selection_surface_contract" && check.target == "app.js"
+    });
+
+    let before_checks = checks.len();
+    checks.retain(|check| {
+        if has_files_contract && check.check_id == "processed-files-fetch-marker" {
+            return false;
+        }
+        if has_preview_contract && check.check_id == "processed-file-preview-loader-marker" {
+            return false;
+        }
+        if has_selection_contract
+            && matches!(
+                check.check_id.as_str(),
+                "processed-file-selection-state"
+                    | "processed-file-selection-handler"
+                    | "processed-file-selection-preview"
+                    | "processed-file-selection-style"
+            )
+        {
+            return false;
+        }
+        true
+    });
+    checks.len() != before_checks
+}
+
+fn prune_redundant_processed_output_checks(checks: &mut Vec<AcceptanceCheck>) -> bool {
+    let has_output_contract = checks.iter().any(|check| {
+        check.kind == "helper_processed_output_contract"
+            && check.target == "bridge/helpers/local_inbox/summary.json"
+    });
+    if !has_output_contract {
+        return false;
+    }
+
+    let redundant_check_ids = ["processed-files-helper-output", "processed-file-preview-source"];
+    let before_checks = checks.len();
+    checks.retain(|check| !redundant_check_ids.contains(&check.check_id.as_str()));
+    checks.len() != before_checks
+}
+
+fn sync_helper_acceptance_expectations(
+    project_dir: &Path,
+    primitive_plan: Option<&PrimitiveExecutionPlan>,
+) -> Result<()> {
+    let acceptance_path = project_dir.join("AcceptancePlan.json");
+    let spec_path = project_dir.join("ProjectSpec.json");
+    if !acceptance_path.exists() || !spec_path.exists() {
+        return Ok(());
+    }
+
+    let mut acceptance_plan: chatty_factory_core::AcceptancePlan =
+        serde_json::from_str(&fs::read_to_string(&acceptance_path)?)?;
+    let mut spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(&spec_path)?)?;
+    let spec_snapshot = spec.clone();
+    let mut changed = false;
+
+    for check in &mut acceptance_plan.checks {
+        let derived =
+            derive_helper_acceptance_expected(project_dir, &spec_snapshot, check, primitive_plan)?;
+        if check.expected != derived {
+            check.expected = derived;
+            changed = true;
+        }
+    }
+
+    for check in &mut spec.acceptance_checks {
+        let derived =
+            derive_helper_acceptance_expected(project_dir, &spec_snapshot, check, primitive_plan)?;
+        if check.expected != derived {
+            check.expected = derived;
+            changed = true;
+        }
+    }
+
+    changed |= inject_helper_summary_derived_checks(
+        project_dir,
+        &spec_snapshot,
+        &mut acceptance_plan.checks,
+        primitive_plan,
+    )?;
+    changed |= inject_helper_summary_derived_checks(
+        project_dir,
+        &spec_snapshot,
+        &mut spec.acceptance_checks,
+        primitive_plan,
+    )?;
+    changed |= sync_helper_processed_output_checks(
+        project_dir,
+        &spec_snapshot,
+        &mut acceptance_plan.checks,
+        primitive_plan,
+    )?;
+    changed |= sync_helper_processed_output_checks(
+        project_dir,
+        &spec_snapshot,
+        &mut spec.acceptance_checks,
+        primitive_plan,
+    )?;
+    changed |= inject_helper_summary_surface_contract_check(
+        &spec_snapshot,
+        &mut acceptance_plan.checks,
+        primitive_plan,
+    );
+    changed |= inject_helper_summary_surface_contract_check(
+        &spec_snapshot,
+        &mut spec.acceptance_checks,
+        primitive_plan,
+    );
+    changed |= inject_helper_processed_files_surface_contract_check(
+        &spec_snapshot,
+        &mut acceptance_plan.checks,
+        primitive_plan,
+    );
+    changed |= inject_helper_processed_files_surface_contract_check(
+        &spec_snapshot,
+        &mut spec.acceptance_checks,
+        primitive_plan,
+    );
+    changed |= inject_helper_processed_preview_surface_contract_check(
+        &spec_snapshot,
+        &mut acceptance_plan.checks,
+        primitive_plan,
+    );
+    changed |= inject_helper_processed_preview_surface_contract_check(
+        &spec_snapshot,
+        &mut spec.acceptance_checks,
+        primitive_plan,
+    );
+    changed |= inject_helper_processed_selection_surface_contract_check(
+        &spec_snapshot,
+        &mut acceptance_plan.checks,
+        primitive_plan,
+    );
+    changed |= inject_helper_processed_selection_surface_contract_check(
+        &spec_snapshot,
+        &mut spec.acceptance_checks,
+        primitive_plan,
+    );
+    changed |= inject_helper_processed_output_contract_check(
+        &spec_snapshot,
+        &mut acceptance_plan.checks,
+        primitive_plan,
+    );
+    changed |= inject_helper_processed_output_contract_check(
+        &spec_snapshot,
+        &mut spec.acceptance_checks,
+        primitive_plan,
+    );
+    changed |= prune_redundant_helper_summary_contains_checks(
+        &mut acceptance_plan.checks,
+        Some(&mut acceptance_plan.required_markers),
+    );
+    changed |= prune_redundant_helper_summary_contains_checks(
+        &mut spec.acceptance_checks,
+        None,
+    );
+    changed |= prune_redundant_helper_summary_surface_checks(
+        &mut acceptance_plan.checks,
+        Some(&mut acceptance_plan.required_markers),
+    );
+    changed |= prune_redundant_helper_summary_surface_checks(
+        &mut spec.acceptance_checks,
+        None,
+    );
+    changed |= prune_unapplied_processed_surface_checks(
+        &spec_snapshot,
+        &mut acceptance_plan.checks,
+        Some(&mut acceptance_plan.required_markers),
+        primitive_plan,
+    );
+    changed |= prune_unapplied_processed_surface_checks(
+        &spec_snapshot,
+        &mut spec.acceptance_checks,
+        None,
+        primitive_plan,
+    );
+    changed |= prune_redundant_processed_files_surface_checks(
+        &mut acceptance_plan.checks,
+        Some(&mut acceptance_plan.required_markers),
+    );
+    changed |= prune_redundant_processed_files_surface_checks(
+        &mut spec.acceptance_checks,
+        None,
+    );
+    changed |= prune_redundant_processed_preview_surface_checks(
+        &mut acceptance_plan.checks,
+        Some(&mut acceptance_plan.required_markers),
+    );
+    changed |= prune_redundant_processed_preview_surface_checks(
+        &mut spec.acceptance_checks,
+        None,
+    );
+    changed |= prune_redundant_processed_selection_surface_checks(
+        &mut acceptance_plan.checks,
+        Some(&mut acceptance_plan.required_markers),
+    );
+    changed |= prune_redundant_processed_selection_surface_checks(
+        &mut spec.acceptance_checks,
+        None,
+    );
+    changed |= prune_processed_contract_covered_marker_checks(&mut acceptance_plan.checks);
+    changed |= prune_processed_contract_covered_marker_checks(&mut spec.acceptance_checks);
+    changed |= prune_redundant_processed_output_checks(&mut acceptance_plan.checks);
+    changed |= prune_redundant_processed_output_checks(&mut spec.acceptance_checks);
+
+    if changed {
+        persist_json_pretty(&acceptance_path, &acceptance_plan)?;
+        persist_json_pretty(&spec_path, &spec)?;
+    }
+
+    Ok(())
+}
+
+fn run_execution_safety(
+    runtime_root: &Path,
+    request_id: &str,
+    output_root: &Path,
+    project_dir: &Path,
+) -> Result<String> {
+    let spec_path = project_dir.join("ProjectSpec.json");
+    let spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(&spec_path)?)?;
+    let policy = build_execution_policy(
+        request_id,
+        output_root,
+        project_dir,
+        spec.family_id.as_ref(),
+        &spec.entrypoints,
+    )?;
+    persist_json_pretty(
+        &runtime_root
+            .join("execution_policies")
+            .join(format!("{}-policy.json", request_id)),
+        &policy,
+    )?;
+    let receipt = run_execution_policy(&policy)?;
+    let status = receipt.status.clone();
+    persist_json_pretty(
+        &runtime_root
+            .join("execution_receipts")
+            .join(format!("{}-execution.json", request_id)),
+        &receipt,
+    )?;
+    Ok(status)
+}
+
+fn persist_project_grounding(
+    runtime_root: &Path,
+    request_id: &str,
+    project_dir: &Path,
+) -> Result<()> {
+    let spec_path = project_dir.join("ProjectSpec.json");
+    let spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(&spec_path)?)?;
+    let snapshot = build_project_snapshot(project_dir, &spec)?;
+    let context = build_context_bundle(request_id, &spec, &snapshot);
+    persist_json_pretty(
+        &runtime_root
+            .join("project_snapshots")
+            .join(format!("{}-snapshot.json", request_id)),
+        &snapshot,
+    )?;
+    persist_json_pretty(
+        &runtime_root
+            .join("context_bundles")
+            .join(format!("{}-context.json", request_id)),
+        &context,
+    )?;
+    Ok(())
+}
+
+fn run_patch_snapshot_gate(
+    runtime_root: &Path,
+    request_id: &str,
+    project_dir: &Path,
+    spec: &ProjectSpec,
+) -> Result<()> {
+    let snapshot = build_project_snapshot(project_dir, spec)?;
+    let context = build_context_bundle(request_id, spec, &snapshot);
+    let gate = gate_patch_project_snapshot(request_id, &snapshot, spec)?;
+    persist_json_pretty(
+        &runtime_root
+            .join("project_snapshots")
+            .join(format!("{}-pre-patch-snapshot.json", request_id)),
+        &snapshot,
+    )?;
+    persist_json_pretty(
+        &runtime_root
+            .join("context_bundles")
+            .join(format!("{}-pre-patch-context.json", request_id)),
+        &context,
+    )?;
+    persist_json_pretty(
+        &runtime_root
+            .join("snapshot_gates")
+            .join(format!("{}-gate.json", request_id)),
+        &gate,
+    )?;
+    if gate.status != "passed" {
+        anyhow::bail!(
+            "snapshot gate failed for project `{}`; missing grounded files: {}",
+            spec.project_name,
+            gate.missing_paths.join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn derive_project_patch_diagnosis(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    project_dir: &Path,
+    spec: &ProjectSpec,
+) -> Result<ProjectPatchDiagnosis> {
+    let patch_surgical_maturity = patch_surgical_maturity_for_plan(spec, plan);
+    let candidate_target_files = candidate_target_files_for_patch_diagnosis(project_dir, spec, &request.raw_request);
+    let pre_patch_artifact_hashes = file_hashes_for_relative_paths(project_dir, &candidate_target_files);
+    let candidate_insertion_points =
+        candidate_insertion_points_for_patch_diagnosis(spec, &candidate_target_files);
+    let diagnosed_artifact_groups =
+        diagnosed_artifact_groups_for_patch_diagnosis(spec, &candidate_target_files);
+    let declared_surface_groups =
+        declared_surface_groups_for_patch_diagnosis(spec, plan);
+    let expected_anchor_markers =
+        expected_anchor_markers_for_patch_diagnosis(spec, plan, &candidate_target_files);
+    let present_anchor_markers =
+        present_anchor_markers_for_patch_diagnosis(project_dir, &expected_anchor_markers);
+    let conflicting_anchor_markers =
+        conflicting_anchor_markers_for_patch_diagnosis(spec, plan);
+    let present_conflicting_anchor_markers =
+        present_anchor_markers_for_patch_diagnosis(project_dir, &conflicting_anchor_markers);
+    let structural_guard_source = structural_guard_source_for_patch_diagnosis(spec, plan);
+    let preserve_invariants = preserve_invariants_for_patch_diagnosis(spec);
+    let declared_ownership_boundaries =
+        declared_ownership_boundaries_for_patch_diagnosis(spec, plan);
+    let project_structure_notes =
+        project_structure_notes_for_patch_diagnosis(
+            spec,
+            &diagnosed_artifact_groups,
+            &declared_surface_groups,
+            &declared_ownership_boundaries,
+        );
+    let risk_notes = risk_notes_for_patch_diagnosis(spec, &candidate_target_files);
+    let post_patch_checks = vec![
+        "project spec still exists".into(),
+        "acceptance plan still exists".into(),
+        "family id and tool kind remain stable".into(),
+        "at least one diagnosed target file was modified".into(),
+    ];
+
+    Ok(ProjectPatchDiagnosis {
+        diagnosis_id: chatty_factory_core::timestamp_id("patch-diagnosis"),
+        request_id: request.request_id.clone(),
+        project_name: spec.project_name.clone(),
+        family_id: spec.family_id.clone(),
+        tool_kind: spec.tool_kind.clone(),
+        substrate: spec.substrate.clone(),
+        request_summary: plan.interpreted_goal.clone(),
+        entrypoints: spec.entrypoints.clone(),
+        expected_files: spec.expected_files.clone(),
+        candidate_target_files,
+        candidate_insertion_points,
+        diagnosed_artifact_groups,
+        declared_surface_groups,
+        patch_surgical_maturity,
+        expected_anchor_markers,
+        present_anchor_markers,
+        structural_guard_source,
+        conflicting_anchor_markers,
+        present_conflicting_anchor_markers,
+        preserve_invariants,
+        declared_ownership_boundaries,
+        project_structure_notes,
+        risk_notes,
+        pre_patch_artifact_hashes,
+        post_patch_checks,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    })
+}
+
+fn persist_project_patch_diagnosis(
+    runtime_root: &Path,
+    diagnosis: &ProjectPatchDiagnosis,
+) -> Result<PathBuf> {
+    let path = patch_diagnosis_path(runtime_root, &diagnosis.request_id);
+    persist_json_pretty(&path, diagnosis)?;
+    Ok(path)
+}
+
+fn derive_patch_intent_freeze(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    spec: &ProjectSpec,
+    diagnosis: &ProjectPatchDiagnosis,
+) -> PatchIntentFreeze {
+    let candidate_patch_kinds = if !plan.planner_suggested_patch_kinds.is_empty() {
+        plan.planner_suggested_patch_kinds.clone()
+    } else if let Some(patch_kind) = &plan.intended_patch_kind {
+        vec![patch_kind.clone()]
+    } else {
+        spec.supported_patch_kinds.clone()
+    };
+
+    let mut freeze_notes = Vec::new();
+    if let Some(patch_kind) = &plan.intended_patch_kind {
+        freeze_notes.push(format!(
+            "bind interpreted patch intent `{patch_kind}` to diagnosed project surfaces"
+        ));
+    }
+    if !diagnosis.candidate_target_files.is_empty() {
+        freeze_notes.push(format!(
+            "operate only within diagnosed candidate files: {}",
+            diagnosis.candidate_target_files.join(", ")
+        ));
+    }
+    if !diagnosis.preserve_invariants.is_empty() {
+        freeze_notes.push(format!(
+            "preserve diagnosis invariants: {}",
+            diagnosis.preserve_invariants.join("; ")
+        ));
+    }
+    if request.mode == Some(chatty_factory_core::RequestMode::Patch) {
+        freeze_notes.push("freeze prepared before patch execution on an existing project".into());
+    }
+
+    if let Some(source) = &diagnosis.structural_guard_source {
+        freeze_notes.push(format!("structural guard contract sourced from {source}"));
+    }
+    if !diagnosis.expected_anchor_markers.is_empty() {
+        freeze_notes.push(format!(
+            "required anchor markers: {}",
+            diagnosis.expected_anchor_markers.join(", ")
+        ));
+    }
+    if !diagnosis.present_conflicting_anchor_markers.is_empty() {
+        freeze_notes.push(format!(
+            "present conflicting markers: {}",
+            diagnosis.present_conflicting_anchor_markers.join(", ")
+        ));
+    }
+    if let Some(maturity) = &diagnosis.patch_surgical_maturity {
+        freeze_notes.push(format!("lane surgical maturity: {maturity}"));
+    }
+    let superseded_by_patch_kinds = patch_superseded_replacements_for_plan(spec, plan);
+    if !superseded_by_patch_kinds.is_empty() {
+        freeze_notes.push(format!(
+            "historical lane replacement path: {}",
+            superseded_by_patch_kinds.join(", ")
+        ));
+    }
+    let contract_confidence_summary =
+        patch_contract_confidence_summary_for_freeze(diagnosis.patch_surgical_maturity.as_deref());
+    let replacement_guidance_summary = if superseded_by_patch_kinds.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "historical blocker with modern replacement guidance: use {}",
+            superseded_by_patch_kinds.join(", ")
+        ))
+    };
+
+    PatchIntentFreeze {
+        freeze_id: chatty_factory_core::timestamp_id("patch-intent-freeze"),
+        request_id: request.request_id.clone(),
+        project_name: spec.project_name.clone(),
+        family_id: spec.family_id.clone(),
+        tool_kind: spec.tool_kind.clone(),
+        interpreted_goal: plan.interpreted_goal.clone(),
+        intended_patch_kind: plan.intended_patch_kind.clone(),
+        candidate_patch_kinds,
+        diagnosis_id: diagnosis.diagnosis_id.clone(),
+        diagnosed_target_files: diagnosis.candidate_target_files.clone(),
+        diagnosed_insertion_points: diagnosis.candidate_insertion_points.clone(),
+        declared_surface_groups: diagnosis.declared_surface_groups.clone(),
+        confirmed_surface_groups: diagnosis
+            .declared_surface_groups
+            .iter()
+            .filter(|group| diagnosis.diagnosed_artifact_groups.contains_key(*group))
+            .cloned()
+            .collect(),
+        patch_surgical_maturity: diagnosis.patch_surgical_maturity.clone(),
+        superseded_by_patch_kinds,
+        structural_guard_source: diagnosis.structural_guard_source.clone(),
+        required_anchor_markers: diagnosis.expected_anchor_markers.clone(),
+        confirmed_anchor_markers: diagnosis.present_anchor_markers.clone(),
+        conflicting_anchor_markers: diagnosis.conflicting_anchor_markers.clone(),
+        present_conflicting_anchor_markers: diagnosis.present_conflicting_anchor_markers.clone(),
+        preserve_invariants: diagnosis.preserve_invariants.clone(),
+        declared_ownership_boundaries: diagnosis.declared_ownership_boundaries.clone(),
+        risk_notes: diagnosis.risk_notes.clone(),
+        contract_confidence_summary,
+        replacement_guidance_summary,
+        freeze_notes,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn patch_superseded_replacements_for_plan(
+    spec: &ProjectSpec,
+    plan: &chatty_factory_core::RequestPlan,
+) -> Vec<String> {
+    let Some(patch_kind) = plan.intended_patch_kind.as_deref() else {
+        return Vec::new();
+    };
+    spec.patch_lanes
+        .iter()
+        .find(|lane| lane.patch_kind == patch_kind)
+        .map(|lane| lane.superseded_by_patch_kinds.clone())
+        .unwrap_or_default()
+}
+
+fn patch_surgical_maturity_for_plan(
+    spec: &ProjectSpec,
+    plan: &chatty_factory_core::RequestPlan,
+) -> Option<String> {
+    let patch_kind = plan.intended_patch_kind.as_deref()?;
+    let project_spec_maturity = spec
+        .patch_lanes
+        .iter()
+        .find(|lane| lane.patch_kind == patch_kind)
+        .map(|lane| lane.surgical_maturity.clone())
+        .filter(|maturity| !maturity.trim().is_empty());
+    if project_spec_maturity.is_some() {
+        return project_spec_maturity;
+    }
+    chatty_factory_families::patch_surgical_maturity(
+        spec.family_id.as_ref(),
+        spec.tool_kind.as_deref(),
+        patch_kind,
+    )
+}
+
+fn persist_patch_intent_freeze(
+    runtime_root: &Path,
+    freeze: &PatchIntentFreeze,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("patch_intent_freezes")
+        .join(format!("{}-freeze.json", freeze.request_id));
+    persist_json_pretty(&path, freeze)?;
+    Ok(path)
+}
+
+fn patch_intent_freeze_preflight(
+    project_dir: &Path,
+    spec: &ProjectSpec,
+    freeze: &PatchIntentFreeze,
+    raw_request: &str,
+) -> Option<String> {
+    if freeze.diagnosed_target_files.is_empty() {
+        return Some(
+            "patch diagnosis found no candidate target files, so patch execution was blocked"
+                .into(),
+        );
+    }
+
+    let missing_targets = freeze
+        .diagnosed_target_files
+        .iter()
+        .filter(|path| !project_dir.join(path).exists())
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing_targets.is_empty() {
+        return Some(format!(
+            "diagnosed target files are missing before patch execution: {}",
+            missing_targets.join(", ")
+        ));
+    }
+
+    if let Some(intended_patch_kind) = freeze.intended_patch_kind.as_deref() {
+        if !freeze.candidate_patch_kinds.is_empty()
+            && !freeze
+                .candidate_patch_kinds
+                .iter()
+                .any(|kind| kind == intended_patch_kind)
+        {
+            return Some(format!(
+                "intended patch kind `{intended_patch_kind}` fell outside the frozen candidate patch set"
+            ));
+        }
+
+        if let Some(lane) = spec
+            .patch_lanes
+            .iter()
+            .find(|lane| lane.patch_kind == intended_patch_kind)
+        {
+            if !lane.provides_features.is_empty()
+                && lane
+                    .provides_features
+                    .iter()
+                    .all(|feature| spec.features.iter().any(|existing| existing == feature))
+                && !request_explicitly_allows_patch_reapply(raw_request)
+            {
+                return Some(format!(
+                    "patch lane `{intended_patch_kind}` already has all provided features present; diagnosis freeze blocked duplicate surface insertion"
+                ));
+            }
+            if lane.availability_status == "already_applied"
+                && !request_explicitly_allows_patch_reapply(raw_request)
+            {
+                return Some(format!(
+                    "patch lane `{intended_patch_kind}` is already applied; diagnosis freeze blocked duplicate patch execution"
+                ));
+            }
+        }
+    }
+
+    if !freeze.declared_surface_groups.is_empty() {
+        let diagnosed_groups =
+            diagnosed_artifact_groups_for_patch_diagnosis(spec, &freeze.diagnosed_target_files);
+        let missing_surface_groups = freeze
+            .declared_surface_groups
+            .iter()
+            .filter(|group| !diagnosed_groups.contains_key(*group))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing_surface_groups.is_empty() {
+            return Some(format!(
+                "diagnosis freeze could not confirm declared patch surface groups: {}",
+                missing_surface_groups.join(", ")
+            ));
+        }
+    }
+
+    let expected_anchor_markers = expected_anchor_markers_for_patch_intent_freeze(spec, freeze);
+    if !expected_anchor_markers.is_empty() {
+        let present_anchor_markers =
+            present_anchor_markers_for_patch_diagnosis(project_dir, &expected_anchor_markers);
+        let missing_anchor_markers = expected_anchor_markers
+            .iter()
+            .filter(|marker| !present_anchor_markers.iter().any(|present| present == *marker))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing_anchor_markers.is_empty() {
+            return Some(format!(
+                "diagnosis freeze could not confirm required insertion anchors: {}",
+                missing_anchor_markers.join(", ")
+            ));
+        }
+    }
+
+    if let Some(reason) = patch_kind_specific_structural_conflict_reason(
+        project_dir,
+        spec,
+        freeze.intended_patch_kind.as_deref(),
+    )
+    {
+        return Some(reason);
+    }
+
+    None
+}
+
+fn request_explicitly_allows_patch_reapply(raw_request: &str) -> bool {
+    let lower = raw_request.to_ascii_lowercase();
+    ["reapply", "re-run", "rerun", "repair", "force", "refresh"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
+fn patch_kind_specific_structural_conflict_reason(
+    project_dir: &Path,
+    spec: &ProjectSpec,
+    intended_patch_kind: Option<&str>,
+) -> Option<String> {
+    let patch_kind = intended_patch_kind?;
+    let conflicting_markers = patch_conflicting_anchor_markers(
+        spec.family_id.as_ref(),
+        spec.tool_kind.as_deref(),
+        patch_kind,
+    );
+    if conflicting_markers.is_empty() {
+        return None;
+    }
+    let present_conflicts =
+        present_anchor_markers_for_patch_diagnosis(project_dir, &conflicting_markers);
+    if present_conflicts.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "patch kind `{patch_kind}` conflicts with already-present structural markers: {}",
+        present_conflicts.join(", ")
+    ))
+}
+
+fn emit_patch_freeze_skip_result(
+    runtime_root: &Path,
+    output_root: &Path,
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    spec: &ProjectSpec,
+    patch_intent_freeze: &PatchIntentFreeze,
+    patch_diagnosis_path: &Path,
+    patch_intent_freeze_path: &Path,
+    reason: &str,
+) -> Result<HostActionResult> {
+    let project_dir = output_root.join(&spec.project_name);
+    if project_dir.join("ProjectSpec.json").exists() {
+        let _ = refresh_project_patch_readiness_receipt_for_project(
+            runtime_root,
+            &project_dir,
+            &spec.project_name,
+        );
+    }
+    let browser_state = persist_project_browser_state(output_root, runtime_root)?;
+    let family = spec
+        .family_id
+        .as_ref()
+        .map(FamilyId::as_str)
+        .unwrap_or("unknown_family");
+    let mut details = vec![
+        format!("project={}", spec.project_name),
+        format!("family={family}"),
+        format!("reason={reason}"),
+        format!("patch_diagnosis={}", patch_diagnosis_path.display()),
+        format!("patch_intent_freeze={}", patch_intent_freeze_path.display()),
+    ];
+    let mut route_notes = vec![reason.to_string()];
+    if let Some(summary) = &patch_intent_freeze.replacement_guidance_summary {
+        details.push(format!("replacement_guidance={summary}"));
+        route_notes.push(summary.clone());
+    }
+    Ok(HostActionResult {
+        summary: "Patch request skipped by diagnosis freeze".into(),
+        details,
+        browser_state: Some(browser_state),
+        runtime_refresh: None,
+        execution_result: Some(HostExecutionResult {
+            kind: "patch_skip".into(),
+            request_id: request.request_id.clone(),
+            project_name: spec.project_name.clone(),
+            family_id: spec.family_id.as_ref().map(|id| id.as_str().to_string()),
+            tool_kind: spec.tool_kind.clone(),
+            patch_kind: plan.intended_patch_kind.clone(),
+            composition_route_class: Some("direct_deterministic_lane".into()),
+            composable_route_plan_path: None,
+            composition_review_receipt_path: None,
+            followup_request_mode: None,
+            followup_rationale: Vec::new(),
+            plan_confidence_score: plan.confidence_score,
+            plan_confidence_band: plan.confidence_band.clone(),
+            needs_llm_review: plan.needs_llm_review,
+            acceptance_status: None,
+            route_notes,
+            file_paths: vec![
+                patch_diagnosis_path.display().to_string(),
+                patch_intent_freeze_path.display().to_string(),
+            ],
+            patch_lanes: spec.patch_lanes.clone(),
+            acceptance_recipes: spec.acceptance_recipes.clone(),
+            operator_bundles: spec.operator_bundles.clone(),
+            chattycog_hosting_mode: spec.chattycog_hosting_mode.clone(),
+            chattycog_ui_owner: spec.chattycog_ui_owner.clone(),
+            chattycog_bridge_capabilities: spec.chattycog_bridge_capabilities.clone(),
+            helper_services: spec.helper_services.clone(),
+            helper_runtime_receipts: Vec::new(),
+        }),
+        fallback_result: None,
+        followup_route: None,
+        extension_registry: None,
+    })
+}
+
+fn patch_diagnosis_path(runtime_root: &Path, request_id: &str) -> PathBuf {
+    runtime_root
+        .join("patch_diagnoses")
+        .join(format!("{request_id}-diagnosis.json"))
+}
+
+fn patch_diagnosis_postcheck_path(runtime_root: &Path, request_id: &str) -> PathBuf {
+    runtime_root
+        .join("patch_diagnoses")
+        .join(format!("{request_id}-postcheck.json"))
+}
+
+fn run_patch_diagnosis_postcheck(
+    runtime_root: &Path,
+    diagnosis: &ProjectPatchDiagnosis,
+    project_dir: &Path,
+    pre_patch_spec: &ProjectSpec,
+    post_patch_spec: &ProjectSpec,
+    receipt: &PatchReceipt,
+) -> Result<PatchDiagnosisPostcheckReceipt> {
+    let mut verified_invariants = Vec::new();
+    let mut warnings = Vec::new();
+    let relative_modified_files = relative_modified_files_for_postcheck(project_dir, &receipt.modified_files);
+    let modified_artifact_groups =
+        modified_artifact_groups_for_postcheck(&diagnosis.diagnosed_artifact_groups, &relative_modified_files);
+    let out_of_contract_modified_files = out_of_contract_modified_files_for_postcheck(
+        diagnosis,
+        &relative_modified_files,
+    );
+
+    if post_patch_spec.family_id == pre_patch_spec.family_id {
+        verified_invariants.push("family id remained stable".into());
+    } else {
+        warnings.push("family id changed after patch".into());
+    }
+
+    if post_patch_spec.tool_kind == pre_patch_spec.tool_kind {
+        verified_invariants.push("tool kind remained stable".into());
+    } else {
+        warnings.push("tool kind changed after patch".into());
+    }
+
+    let modified_targets = diagnosis
+        .candidate_target_files
+        .iter()
+        .filter(|target| receipt.modified_files.iter().any(|path| path.ends_with(target.as_str())))
+        .cloned()
+        .collect::<Vec<_>>();
+    if modified_targets.is_empty() {
+        warnings.push("patch did not modify any diagnosed target file".into());
+    } else {
+        verified_invariants.push(format!(
+            "diagnosed target files modified: {}",
+            modified_targets.join(", ")
+        ));
+    }
+
+    let post_project_files = ["ProjectSpec.json", "AcceptancePlan.json"];
+    for required in post_project_files {
+        if project_dir.join(required).exists() {
+            verified_invariants.push(format!("{required} remained present"));
+        } else {
+            warnings.push(format!("{required} is missing after patch"));
+        }
+    }
+
+    let missing_entrypoints = diagnosis
+        .entrypoints
+        .iter()
+        .filter(|entrypoint| !project_dir.join(entrypoint).exists())
+        .cloned()
+        .collect::<Vec<_>>();
+    if missing_entrypoints.is_empty() {
+        if !diagnosis.entrypoints.is_empty() {
+            verified_invariants.push("declared entrypoints remained present".into());
+        }
+    } else {
+        warnings.push(format!(
+            "declared entrypoints missing after patch: {}",
+            missing_entrypoints.join(", ")
+        ));
+    }
+
+    for (group_name, paths) in &diagnosis.diagnosed_artifact_groups {
+        if paths.is_empty() {
+            continue;
+        }
+        let missing_group_paths = paths
+            .iter()
+            .filter(|path| !project_dir.join(path).exists())
+            .cloned()
+            .collect::<Vec<_>>();
+        if missing_group_paths.is_empty() {
+            verified_invariants.push(format!(
+                "diagnosed {group_name} remained present ({} file(s))",
+                paths.len()
+            ));
+        } else {
+            warnings.push(format!(
+                "diagnosed {group_name} missing after patch: {}",
+                missing_group_paths.join(", ")
+            ));
+        }
+    }
+
+    if !diagnosis.declared_surface_groups.is_empty() {
+        verified_invariants.push(format!(
+            "declared patch surface groups were diagnosed: {}",
+            diagnosis.declared_surface_groups.join(", ")
+        ));
+        if !modified_artifact_groups.is_empty() {
+            verified_invariants.push(format!(
+                "modified files stayed within declared surface groups: {}",
+                modified_artifact_groups
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        } else if !relative_modified_files.is_empty() {
+            warnings.push(format!(
+                "modified files did not map back to any declared surface groups: {}",
+                relative_modified_files.join(", ")
+            ));
+        }
+    }
+    if !diagnosis.declared_ownership_boundaries.is_empty() {
+        verified_invariants.push(format!(
+            "declared ownership boundaries were carried into diagnosis: {}",
+            diagnosis.declared_ownership_boundaries.join(" ; ")
+        ));
+    }
+    if out_of_contract_modified_files.is_empty() {
+        verified_invariants.push("no modified files escaped the declared patch surface contract".into());
+    } else {
+        warnings.push(format!(
+            "patch modified files outside the declared patch surface contract: {}",
+            out_of_contract_modified_files.join(", ")
+        ));
+    }
+    let contract_confidence_summary = patch_contract_confidence_summary_for_postcheck(
+        diagnosis.patch_surgical_maturity.as_deref(),
+        warnings.is_empty(),
+        !out_of_contract_modified_files.is_empty(),
+    );
+
+    let receipt_out = PatchDiagnosisPostcheckReceipt {
+        receipt_id: chatty_factory_core::timestamp_id("patch-diagnosis-postcheck"),
+        diagnosis_id: diagnosis.diagnosis_id.clone(),
+        request_id: diagnosis.request_id.clone(),
+        project_name: diagnosis.project_name.clone(),
+        patch_kind: receipt.patch_kind.clone(),
+        declared_surface_groups: diagnosis.declared_surface_groups.clone(),
+        patch_surgical_maturity: diagnosis.patch_surgical_maturity.clone(),
+        contract_confidence_summary,
+        modified_artifact_groups,
+        out_of_contract_modified_files,
+        verified_invariants,
+        warnings: warnings.clone(),
+        modified_files: receipt.modified_files.clone(),
+        passed: warnings.is_empty(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    persist_json_pretty(
+        &patch_diagnosis_postcheck_path(runtime_root, &diagnosis.request_id),
+        &receipt_out,
+    )?;
+    if !receipt_out.passed {
+        anyhow::bail!(
+            "patch diagnosis postcheck failed for project `{}`: {}",
+            diagnosis.project_name,
+            receipt_out.warnings.join(", ")
+        );
+    }
+    Ok(receipt_out)
+}
+
+fn patch_contract_confidence_summary_for_freeze(maturity: Option<&str>) -> Option<String> {
+    let maturity = maturity?;
+    Some(match maturity {
+        "narrow_surface_contract" => {
+            "contract confidence: narrow surface contract should allow a tightly bounded surgery when anchors and surface groups line up".to_string()
+        }
+        "broad_surface_contract" => {
+            "contract confidence: broad surface contract allows surgery across multiple declared groups, so anchor and ownership checks matter more".to_string()
+        }
+        "legacy_shape_sensitive" => {
+            "contract confidence: legacy-shape-sensitive lane should block evolved project shapes rather than forcing an outdated insertion pattern".to_string()
+        }
+        "anchor_only_contract" => {
+            "contract confidence: anchor-only lane depends mainly on structural anchor confirmation and has a lighter surface contract".to_string()
+        }
+        "uncontracted" => {
+            "contract confidence: uncontracted lane relies more heavily on general diagnosis heuristics because it lacks a strong declared surgical contract".to_string()
+        }
+        _ => format!("contract confidence: lane maturity is `{maturity}`"),
+    })
+}
+
+fn patch_contract_confidence_summary_for_postcheck(
+    maturity: Option<&str>,
+    passed: bool,
+    escaped_contract: bool,
+) -> Option<String> {
+    let maturity = maturity?;
+    let outcome = if passed && !escaped_contract {
+        "held"
+    } else if escaped_contract {
+        "was breached"
+    } else {
+        "was weakened"
+    };
+    Some(match maturity {
+        "narrow_surface_contract" => format!(
+            "contract confidence {outcome}: the surgery stayed within a narrowly declared surface contract"
+        ),
+        "broad_surface_contract" => format!(
+            "contract confidence {outcome}: the surgery stayed within a broader declared multi-surface contract"
+        ),
+        "legacy_shape_sensitive" => format!(
+            "contract confidence {outcome}: this legacy-shape-sensitive lane was verified against its declared structural assumptions"
+        ),
+        "anchor_only_contract" => format!(
+            "contract confidence {outcome}: the surgery respected its anchor-driven contract, though the declared surface model remains lighter"
+        ),
+        "uncontracted" => format!(
+            "contract confidence {outcome}: the surgery passed without a strong declared lane contract, so diagnosis heuristics did more of the safety work"
+        ),
+        _ => format!("contract confidence {outcome} under lane maturity `{maturity}`"),
+    })
+}
+
+fn relative_modified_files_for_postcheck(
+    project_dir: &Path,
+    modified_files: &[String],
+) -> Vec<String> {
+    modified_files
+        .iter()
+        .filter_map(|path| {
+            Path::new(path)
+                .strip_prefix(project_dir)
+                .ok()
+                .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+        })
+        .collect()
+}
+
+fn modified_artifact_groups_for_postcheck(
+    diagnosed_artifact_groups: &BTreeMap<String, Vec<String>>,
+    relative_modified_files: &[String],
+) -> BTreeMap<String, Vec<String>> {
+    let mut groups = BTreeMap::new();
+    for (group_name, paths) in diagnosed_artifact_groups {
+        let touched = paths
+            .iter()
+            .filter(|path| relative_modified_files.iter().any(|modified| modified == *path))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !touched.is_empty() {
+            groups.insert(group_name.clone(), touched);
+        }
+    }
+    groups
+}
+
+fn out_of_contract_modified_files_for_postcheck(
+    diagnosis: &ProjectPatchDiagnosis,
+    relative_modified_files: &[String],
+) -> Vec<String> {
+    if diagnosis.declared_surface_groups.is_empty() {
+        return Vec::new();
+    }
+    let mut allowed_paths = Vec::new();
+    for group_name in &diagnosis.declared_surface_groups {
+        if let Some(paths) = diagnosis.diagnosed_artifact_groups.get(group_name) {
+            allowed_paths.extend(paths.iter().cloned());
+        }
+    }
+    allowed_paths.sort();
+    allowed_paths.dedup();
+    relative_modified_files
+        .iter()
+        .filter(|path| !allowed_paths.iter().any(|allowed| allowed == *path))
+        .cloned()
+        .collect()
+}
+
+fn candidate_target_files_for_patch_diagnosis(
+    project_dir: &Path,
+    spec: &ProjectSpec,
+    raw_request: &str,
+) -> Vec<String> {
+    let lower = raw_request.to_ascii_lowercase();
+    let mut files = spec.entrypoints.clone();
+    files.extend(spec.expected_files.clone());
+
+    if spec.family_id.as_ref() == Some(&FamilyId::StaticWebDashboard) {
+        files.extend(
+            ["index.html", "styles.css", "app.js"]
+                .into_iter()
+                .map(str::to_string),
+        );
+        if lower.contains("style") || lower.contains("theme") {
+            files.push("styles.css".into());
+        }
+        if lower.contains("script")
+            || lower.contains("preview")
+            || lower.contains("json")
+            || lower.contains("selection")
+        {
+            files.push("app.js".into());
+        }
+    } else if spec.family_id.as_ref() == Some(&FamilyId::ChattycogWebviewModule) {
+        files.extend(
+            ["index.html", "styles.css", "app.js"]
+                .into_iter()
+                .map(str::to_string),
+        );
+    } else if spec.tool_kind.as_deref() == Some("python_cli") {
+        files.extend(["main.py", "README.md"].into_iter().map(str::to_string));
+    } else if spec.tool_kind.as_deref() == Some("rust_cli") {
+        files.extend(
+            ["src/main.rs", "Cargo.toml", "README.md"]
+                .into_iter()
+                .map(str::to_string),
+        );
+    }
+
+    files.extend(
+        ["ProjectSpec.json", "AcceptancePlan.json"]
+            .into_iter()
+            .map(str::to_string),
+    );
+
+    let mut deduped = sorted_string_values(&files);
+    deduped.dedup();
+    deduped
+        .into_iter()
+        .filter(|path| project_dir.join(path).exists())
+        .collect()
+}
+
+fn candidate_insertion_points_for_patch_diagnosis(
+    spec: &ProjectSpec,
+    candidate_target_files: &[String],
+) -> Vec<String> {
+    let mut points = Vec::new();
+    if candidate_target_files.iter().any(|path| path == "index.html") {
+        points.push("index.html -> insert near existing panel or section markers".into());
+    }
+    if candidate_target_files.iter().any(|path| path == "app.js") {
+        points.push("app.js -> extend existing render/load/update helpers".into());
+    }
+    if candidate_target_files.iter().any(|path| path == "styles.css") {
+        points.push("styles.css -> extend existing surface styling blocks".into());
+    }
+    if candidate_target_files.iter().any(|path| path == "main.py") {
+        points.push("main.py -> extend existing CLI flow near current command/output entrypoint".into());
+    }
+    if candidate_target_files.iter().any(|path| path == "src/main.rs") {
+        points.push("src/main.rs -> extend existing CLI entrypoint and command wiring".into());
+    }
+    if candidate_target_files.iter().any(|path| path == "ProjectSpec.json") {
+        points.push("ProjectSpec.json -> keep project contract and patch lane inventory synchronized".into());
+    }
+    if candidate_target_files.iter().any(|path| path == "AcceptancePlan.json") {
+        points.push("AcceptancePlan.json -> update acceptance checks only where the patch surface requires it".into());
+    }
+    if points.is_empty() {
+        points.push(format!(
+            "family `{}` -> extend declared entrypoints without changing ownership boundaries",
+            spec.family_id
+                .as_ref()
+                .map(FamilyId::as_str)
+                .unwrap_or("unknown_family")
+        ));
+    }
+    points
+}
+
+fn declared_surface_groups_for_patch_diagnosis(
+    spec: &ProjectSpec,
+    plan: &chatty_factory_core::RequestPlan,
+) -> Vec<String> {
+    let Some(patch_kind) = plan.intended_patch_kind.as_deref() else {
+        return Vec::new();
+    };
+    patch_expected_artifact_groups(spec.family_id.as_ref(), spec.tool_kind.as_deref(), patch_kind)
+}
+
+fn declared_ownership_boundaries_for_patch_diagnosis(
+    spec: &ProjectSpec,
+    plan: &chatty_factory_core::RequestPlan,
+) -> Vec<String> {
+    let Some(patch_kind) = plan.intended_patch_kind.as_deref() else {
+        return Vec::new();
+    };
+    patch_ownership_boundaries(spec.family_id.as_ref(), spec.tool_kind.as_deref(), patch_kind)
+}
+
+fn diagnosed_artifact_groups_for_patch_diagnosis(
+    spec: &ProjectSpec,
+    candidate_target_files: &[String],
+) -> BTreeMap<String, Vec<String>> {
+    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for path in candidate_target_files {
+        let key = if spec.entrypoints.iter().any(|entrypoint| entrypoint == path) {
+            "entrypoints"
+        } else if path.ends_with("ProjectSpec.json")
+            || path.ends_with("AcceptancePlan.json")
+            || path.ends_with("ChattyCogModuleSpec.json")
+            || path.ends_with("HelperServiceSpec.json")
+            || path.ends_with("manifest.json")
+        {
+            "contract_files"
+        } else if path.ends_with(".css") {
+            "style_surfaces"
+        } else if path.ends_with(".js") || path.ends_with(".py") || path.ends_with(".rs") {
+            "logic_surfaces"
+        } else if path.starts_with("bridge/") {
+            "bridge_surfaces"
+        } else if path.starts_with("helpers/") {
+            "helper_service_surfaces"
+        } else if path.ends_with(".md") {
+            "documentation_surfaces"
+        } else {
+            "supporting_artifacts"
+        };
+        groups.entry(key.to_string()).or_default().push(path.clone());
+    }
+    for paths in groups.values_mut() {
+        paths.sort();
+        paths.dedup();
+    }
+    groups
+}
+
+fn expected_anchor_markers_for_patch_diagnosis(
+    spec: &ProjectSpec,
+    plan: &chatty_factory_core::RequestPlan,
+    candidate_target_files: &[String],
+) -> Vec<String> {
+    let intended_patch_kind = plan.intended_patch_kind.as_deref();
+    expected_anchor_markers_for_patch_kind(spec, intended_patch_kind, candidate_target_files)
+}
+
+fn conflicting_anchor_markers_for_patch_diagnosis(
+    spec: &ProjectSpec,
+    plan: &chatty_factory_core::RequestPlan,
+) -> Vec<String> {
+    let Some(patch_kind) = plan.intended_patch_kind.as_deref() else {
+        return Vec::new();
+    };
+    patch_conflicting_anchor_markers(spec.family_id.as_ref(), spec.tool_kind.as_deref(), patch_kind)
+}
+
+fn structural_guard_source_for_patch_diagnosis(
+    spec: &ProjectSpec,
+    plan: &chatty_factory_core::RequestPlan,
+) -> Option<String> {
+    let patch_kind = plan.intended_patch_kind.as_deref()?;
+    let has_required =
+        !patch_required_anchor_markers(spec.family_id.as_ref(), spec.tool_kind.as_deref(), patch_kind)
+            .is_empty();
+    let has_conflicts =
+        !patch_conflicting_anchor_markers(spec.family_id.as_ref(), spec.tool_kind.as_deref(), patch_kind)
+            .is_empty();
+    if !(has_required || has_conflicts) {
+        return None;
+    }
+    let family = spec
+        .family_id
+        .as_ref()
+        .map(FamilyId::as_str)
+        .unwrap_or("unknown_family");
+    Some(format!("patch_recipe_structural_guard:{family}:{patch_kind}"))
+}
+
+fn expected_anchor_markers_for_patch_intent_freeze(
+    spec: &ProjectSpec,
+    freeze: &PatchIntentFreeze,
+) -> Vec<String> {
+    expected_anchor_markers_for_patch_kind(
+        spec,
+        freeze.intended_patch_kind.as_deref(),
+        &freeze.diagnosed_target_files,
+    )
+}
+
+fn expected_anchor_markers_for_patch_kind(
+    spec: &ProjectSpec,
+    intended_patch_kind: Option<&str>,
+    candidate_target_files: &[String],
+) -> Vec<String> {
+    if let Some(patch_kind) = intended_patch_kind {
+        let declarative =
+            patch_required_anchor_markers(spec.family_id.as_ref(), spec.tool_kind.as_deref(), patch_kind);
+        if !declarative.is_empty() {
+            return declarative;
+        }
+    }
+    let mut markers = Vec::new();
+    match intended_patch_kind {
+        Some("progress_banner") => {
+            if candidate_target_files.iter().any(|path| path == "index.html") {
+                markers.push("index.html::results-panel".into());
+            }
+        }
+        Some("bridge_activity_panel") | Some("asset_inbox_panel") | Some("processed_files_panel")
+        | Some("processed_file_preview_panel") => {
+            if candidate_target_files.iter().any(|path| path == "index.html") {
+                if spec.family_id.as_ref() == Some(&FamilyId::ChattycogWebviewModule) {
+                    markers.push("index.html::<section class=\"module-panel\">".into());
+                } else {
+                    markers.push("index.html::results-panel".into());
+                }
+            }
+        }
+        Some("metric_strip") => {
+            if candidate_target_files.iter().any(|path| path == "index.html") {
+                markers.push("index.html::module-results".into());
+            }
+        }
+        Some("helper_summary_panel") => {
+            if candidate_target_files.iter().any(|path| path == "index.html") {
+                markers.push("index.html::results-panel".into());
+            }
+            if candidate_target_files.iter().any(|path| path == "app.js") {
+                markers.push("app.js::writeStatus();".into());
+            }
+        }
+        Some("helper_summary_badges")
+        | Some("helper_summary_empty_state")
+        | Some("helper_summary_metadata_row")
+        | Some("lane_scoped_metadata_row")
+        | Some("helper_status_chip") => {
+            if candidate_target_files.iter().any(|path| path == "index.html") {
+                markers.push("index.html::helper-summary-status".into());
+            }
+            if candidate_target_files.iter().any(|path| path == "app.js") {
+                markers.push("app.js::helperSummaryStatus".into());
+            }
+        }
+        _ => {
+            if spec.family_id.as_ref() == Some(&FamilyId::StaticWebDashboard)
+                && candidate_target_files.iter().any(|path| path == "index.html")
+            {
+                markers.push("index.html::results-panel".into());
+            }
+        }
+    }
+    dedup_strings(markers)
+}
+
+fn present_anchor_markers_for_patch_diagnosis(
+    project_dir: &Path,
+    expected_anchor_markers: &[String],
+) -> Vec<String> {
+    let mut present = Vec::new();
+    for marker in expected_anchor_markers {
+        let Some((relative_path, needle)) = marker.split_once("::") else {
+            continue;
+        };
+        let Ok(contents) = fs::read_to_string(project_dir.join(relative_path)) else {
+            continue;
+        };
+        if contents.contains(needle) {
+            present.push(marker.clone());
+        }
+    }
+    present
+}
+
+fn preserve_invariants_for_patch_diagnosis(spec: &ProjectSpec) -> Vec<String> {
+    let mut invariants = vec![
+        "ProjectSpec.json remains present".into(),
+        "AcceptancePlan.json remains present".into(),
+        "family id remains stable".into(),
+        "tool kind remains stable".into(),
+    ];
+    if !spec.entrypoints.is_empty() {
+        invariants.push(format!(
+            "preserve declared entrypoints: {}",
+            spec.entrypoints.join(", ")
+        ));
+    }
+    if !spec.helper_services.is_empty() {
+        invariants.push(format!(
+            "preserve helper service contract count: {}",
+            spec.helper_services.len()
+        ));
+    }
+    invariants
+}
+
+fn project_structure_notes_for_patch_diagnosis(
+    spec: &ProjectSpec,
+    diagnosed_artifact_groups: &BTreeMap<String, Vec<String>>,
+    declared_surface_groups: &[String],
+    declared_ownership_boundaries: &[String],
+) -> Vec<String> {
+    let mut notes = Vec::new();
+    if !declared_surface_groups.is_empty() {
+        notes.push(format!(
+            "declared patch surface groups: {}",
+            declared_surface_groups.join(", ")
+        ));
+    }
+    if let Some(paths) = diagnosed_artifact_groups.get("entrypoints") {
+        notes.push(format!(
+            "project exposes {} declared entrypoint surface(s): {}",
+            paths.len(),
+            paths.join(", ")
+        ));
+    }
+    if let Some(paths) = diagnosed_artifact_groups.get("contract_files") {
+        notes.push(format!(
+            "patch touches {} contract-bearing artifact(s): {}",
+            paths.len(),
+            paths.join(", ")
+        ));
+    }
+    if let Some(paths) = diagnosed_artifact_groups.get("bridge_surfaces") {
+        notes.push(format!(
+            "project includes bridge-owned runtime surface(s): {}",
+            paths.join(", ")
+        ));
+    }
+    if let Some(paths) = diagnosed_artifact_groups.get("helper_service_surfaces") {
+        notes.push(format!(
+            "project includes helper-service surface(s): {}",
+            paths.join(", ")
+        ));
+    }
+    notes.extend(declared_ownership_boundaries.iter().cloned());
+    if spec.family_id.as_ref() == Some(&FamilyId::ChattycogWebviewModule) {
+        notes.push("chattycog module patches should preserve wrapper-owned UI and bridge boundaries".into());
+    } else if spec.family_id.as_ref() == Some(&FamilyId::StaticWebDashboard) {
+        notes.push("static dashboard patches should preserve index/app/style ownership split".into());
+    } else if spec.tool_kind.as_deref() == Some("rust_cli") || spec.tool_kind.as_deref() == Some("python_cli") {
+        notes.push("CLI patches should preserve entrypoint command flow and contract-file synchronization".into());
+    }
+    notes
+}
+
+fn risk_notes_for_patch_diagnosis(
+    spec: &ProjectSpec,
+    candidate_target_files: &[String],
+) -> Vec<String> {
+    let mut notes = Vec::new();
+    if candidate_target_files.len() > 3 {
+        notes.push("patch touches multiple coordinated surfaces; review insertion points carefully".into());
+    }
+    if candidate_target_files
+        .iter()
+        .any(|path| path == "ProjectSpec.json" || path == "AcceptancePlan.json")
+    {
+        notes.push("patch updates contract files as well as product files".into());
+    }
+    if !spec.helper_services.is_empty() {
+        notes.push("project has helper wiring; preserve helper-related acceptance and status surfaces".into());
+    }
+    notes
+}
+
+fn file_hashes_for_relative_paths(project_dir: &Path, relative_paths: &[String]) -> BTreeMap<String, String> {
+    let mut hashes = BTreeMap::new();
+    for relative_path in relative_paths {
+        let full_path = project_dir.join(relative_path);
+        if full_path.exists() {
+            if let Ok(bytes) = fs::read(&full_path) {
+                let mut hasher = DefaultHasher::new();
+                hasher.write(&bytes);
+                hashes.insert(relative_path.clone(), format!("{:016x}", hasher.finish()));
+            }
+        }
+    }
+    hashes
+}
+
+fn composition_route_class_label(class: &CompositionRouteClass) -> String {
+    match class {
+        CompositionRouteClass::DirectDeterministicLane => "direct_deterministic_lane",
+        CompositionRouteClass::BoundedCompositionCandidate => "bounded_composition_candidate",
+        CompositionRouteClass::HelperNeededMissing => "helper_needed_missing",
+        CompositionRouteClass::Unsupported => "unsupported",
+    }
+    .to_string()
+}
+
+fn request_looks_helper_or_service_shaped(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+) -> bool {
+    let raw = request.raw_request.to_lowercase();
+    let capability_hits = request.requested_capabilities.iter().any(|capability| {
+        let capability = capability.to_lowercase();
+        [
+            "helper",
+            "service",
+            "background",
+            "watch",
+            "watcher",
+            "filesystem",
+            "file_system",
+            "local filesystem",
+            "local_native",
+            "queue",
+            "inbox",
+            "sidecar",
+        ]
+        .iter()
+        .any(|needle| capability.contains(needle))
+    });
+    capability_hits
+        || [
+            "helper",
+            "service",
+            "background",
+            "watch",
+            "watcher",
+            "filesystem",
+            "folder",
+            "queue",
+            "inbox",
+            "sidecar",
+        ]
+        .iter()
+        .any(|needle| raw.contains(needle))
+        || plan
+            .constraints
+            .iter()
+            .any(|constraint| {
+                let lower = constraint.to_lowercase();
+                lower.contains("helper")
+                    || lower.contains("background")
+                    || lower.contains("filesystem")
+                    || lower.contains("service")
+            })
+}
+
+fn derive_composition_route_class(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    active_spec: Option<&ProjectSpec>,
+    fallback_shape: Option<&ChattyCogFallbackShape>,
+    direct_lane: bool,
+) -> CompositionRouteClass {
+    if direct_lane {
+        return CompositionRouteClass::DirectDeterministicLane;
+    }
+    let helper_present = active_spec
+        .map(|spec| !spec.helper_services.is_empty())
+        .unwrap_or(false);
+    let supported_bridge_overlap = fallback_shape
+        .map(|shape| {
+            !shape.requested_bridge_capabilities.is_empty()
+                && shape
+                    .requested_bridge_capabilities
+                    .iter()
+                    .all(|capability| shape.supported_bridge_capabilities.contains(capability))
+        })
+        .unwrap_or(false);
+    if (helper_present || supported_bridge_overlap)
+        && !plan.inferred_family_candidates.is_empty()
+        && request.mode == Some(chatty_factory_core::RequestMode::Patch)
+    {
+        return CompositionRouteClass::BoundedCompositionCandidate;
+    }
+    if request_looks_helper_or_service_shaped(request, plan) {
+        return CompositionRouteClass::HelperNeededMissing;
+    }
+    CompositionRouteClass::Unsupported
+}
+
+fn derive_composable_route_plan(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    active_spec: Option<&ProjectSpec>,
+    selected_spec: Option<&ProjectSpec>,
+    route_class: CompositionRouteClass,
+    selected_patch_kinds: &[String],
+) -> ComposableRoutePlan {
+    let target_family_id = selected_spec
+        .and_then(|spec| spec.family_id.clone())
+        .or_else(|| active_spec.and_then(|spec| spec.family_id.clone()))
+        .or_else(|| plan.inferred_family_candidates.first().cloned());
+    let helper_ids = active_spec
+        .map(|spec| {
+            spec.helper_services
+                .iter()
+                .map(|helper| helper.helper_id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let helper_primitive_ids = candidate_helper_primitive_ids_for_composition(
+        active_spec,
+        plan.inferred_family_candidates.first(),
+        selected_patch_kinds,
+    );
+    let patch_primitive_classes = candidate_patch_primitive_classes_for_composition(
+        selected_spec
+            .and_then(|spec| spec.family_id.as_ref())
+            .or_else(|| active_spec.and_then(|spec| spec.family_id.as_ref()))
+            .or_else(|| plan.inferred_family_candidates.first()),
+        selected_spec
+            .and_then(|spec| spec.tool_kind.as_deref())
+            .or_else(|| active_spec.and_then(|spec| spec.tool_kind.as_deref()))
+            .or_else(|| plan.inferred_tool_kind.as_deref()),
+        selected_patch_kinds,
+    );
+    let family_build_primitive_classes = target_family_id
+        .as_ref()
+        .map(build_primitive_classes_for_family)
+        .unwrap_or_default();
+    let helper_primitive_kinds = candidate_helper_primitive_kinds_for_composition(
+        active_spec,
+        plan.inferred_family_candidates.first(),
+        selected_patch_kinds,
+    );
+    let bridge_capabilities = active_spec
+        .and_then(|spec| spec.chattycog_bridge_capabilities.as_ref())
+        .map(bridge_capability_ids)
+        .unwrap_or_default();
+    let selected_helper_ids = selected_spec
+        .map(|spec| {
+            spec.helper_services
+                .iter()
+                .map(|helper| helper.helper_id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let selected_helper_primitive_ids = selected_spec
+        .map(helper_primitive_ids_from_spec)
+        .unwrap_or_else(|| helper_primitive_ids.clone());
+    let selected_helper_primitive_kinds = selected_spec
+        .map(helper_primitive_kinds_from_spec)
+        .unwrap_or_else(|| helper_primitive_kinds.clone());
+    let selected_patch_primitive_classes = patch_primitive_classes.clone();
+    let selected_family_build_primitive_classes = selected_spec
+        .and_then(|spec| spec.family_id.as_ref())
+        .map(build_primitive_classes_for_family)
+        .unwrap_or_else(|| family_build_primitive_classes.clone());
+    let selected_bridge_capabilities = selected_spec
+        .and_then(|spec| spec.chattycog_bridge_capabilities.as_ref())
+        .map(bridge_capability_ids)
+        .unwrap_or_default();
+    let selected_operator_bundle_ids = selected_spec
+        .map(|spec| {
+            spec.operator_bundles
+                .iter()
+                .filter(|bundle| bundle.availability_status != "unavailable")
+                .map(|bundle| bundle.bundle_id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let selected_acceptance_recipe_ids = selected_spec
+        .map(|spec| {
+            spec.acceptance_recipes
+                .iter()
+                .filter(|recipe| recipe.availability_status != "unavailable")
+                .map(|recipe| recipe.recipe_id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let composition_layers = derive_composition_layers(
+        &family_build_primitive_classes,
+        &patch_primitive_classes,
+        &helper_primitive_kinds,
+        &bridge_capabilities,
+    );
+    let selected_composition_layers = derive_composition_layers(
+        &selected_family_build_primitive_classes,
+        &selected_patch_primitive_classes,
+        &selected_helper_primitive_kinds,
+        &selected_bridge_capabilities,
+    );
+    let mut notes = plan.rationale.clone();
+    if matches!(route_class, CompositionRouteClass::BoundedCompositionCandidate) {
+        notes.push(
+            "host sees nearby machinery that may support bounded composition without requiring a brand-new deterministic lane"
+                .into(),
+        );
+    }
+    if matches!(route_class, CompositionRouteClass::HelperNeededMissing) {
+        notes.push(
+            "request shape suggests helper/service decomposition, but the required helper machinery is not yet sufficiently wired"
+                .into(),
+        );
+    }
+    let interpreted_goal = if request.mode == Some(chatty_factory_core::RequestMode::Patch)
+        && matches!(route_class, CompositionRouteClass::BoundedCompositionCandidate)
+        && !selected_patch_kinds.is_empty()
+    {
+        let project_name = request
+            .active_project
+            .clone()
+            .or_else(|| selected_spec.map(|spec| spec.project_name.clone()))
+            .unwrap_or_else(|| "active_project".into());
+        if selected_patch_kinds.len() == 1 {
+            format!(
+                "Patch {project_name} by applying the {} primitive",
+                selected_patch_kinds[0]
+            )
+        } else {
+            format!(
+                "Patch {project_name} using bounded composition primitives: {}",
+                selected_patch_kinds.join(", ")
+            )
+        }
+    } else {
+        plan.interpreted_goal.clone()
+    };
+    let target_patch_kind = if matches!(route_class, CompositionRouteClass::BoundedCompositionCandidate)
+        && selected_patch_kinds.len() > 1
+    {
+        None
+    } else if !selected_patch_kinds.is_empty() {
+        Some(selected_patch_kinds[0].clone())
+    } else {
+        plan.intended_patch_kind.clone()
+    };
+    if matches!(route_class, CompositionRouteClass::BoundedCompositionCandidate)
+        && selected_patch_kinds.len() > 1
+    {
+        notes.push(format!(
+            "host composed a bounded patch bundle rather than applying one direct patch lane: {}",
+            selected_patch_kinds.join(", ")
+        ));
+    }
+    if !selected_composition_layers.is_empty() {
+        notes.push(format!(
+            "host composed work-order layers: {} ({})",
+            selected_composition_layers.join(", "),
+            composition_work_order_kind(&selected_composition_layers)
+        ));
+    }
+    ComposableRoutePlan {
+        composition_plan_id: chatty_factory_core::timestamp_id("composable-route"),
+        request_id: request.request_id.clone(),
+        route_class,
+        mode: request.mode.clone(),
+        active_project: request.active_project.clone(),
+        interpreted_goal,
+        target_family_id,
+        target_tool_kind: plan.inferred_tool_kind.clone(),
+        target_patch_kind,
+        candidate_family_ids: plan.inferred_family_candidates.clone(),
+        helper_ids,
+        helper_primitive_ids,
+        helper_primitive_kinds,
+        bridge_capabilities,
+        operator_bundle_ids: plan.planner_operator_bundle_ids.clone(),
+        acceptance_recipe_ids: plan.planner_acceptance_recipe_ids.clone(),
+        selected_patch_kinds: selected_patch_kinds.to_vec(),
+        patch_primitive_classes,
+        family_build_primitive_classes,
+        composition_layers,
+        composition_work_order_kind: composition_work_order_kind(&selected_composition_layers),
+        selected_helper_ids,
+        selected_helper_primitive_ids,
+        selected_helper_primitive_kinds,
+        selected_bridge_capabilities,
+        selected_operator_bundle_ids,
+        selected_acceptance_recipe_ids,
+        selected_patch_primitive_classes,
+        selected_family_build_primitive_classes,
+        selected_composition_layers,
+        runtime_requirements: plan.constraints.clone(),
+        notes,
+        confidence_band: plan.confidence_band.clone(),
+        should_escalate: plan.needs_llm_review || !plan.escalation_reasons.is_empty(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn enrich_composable_route_plan(
+    route_plan: &mut ComposableRoutePlan,
+    selected_spec: &ProjectSpec,
+    selected_patch_kinds: &[String],
+) {
+    route_plan.selected_patch_kinds = selected_patch_kinds.to_vec();
+    route_plan.patch_primitive_classes = candidate_patch_primitive_classes_for_composition(
+        selected_spec.family_id.as_ref(),
+        selected_spec.tool_kind.as_deref(),
+        selected_patch_kinds,
+    );
+    route_plan.selected_helper_ids = selected_spec
+        .helper_services
+        .iter()
+        .map(|helper| helper.helper_id.clone())
+        .collect();
+    route_plan.selected_helper_primitive_ids = helper_primitive_ids_from_spec(selected_spec);
+    route_plan.selected_helper_primitive_kinds = helper_primitive_kinds_from_spec(selected_spec);
+    route_plan.selected_bridge_capabilities = selected_spec
+        .chattycog_bridge_capabilities
+        .as_ref()
+        .map(bridge_capability_ids)
+        .unwrap_or_default();
+    route_plan.selected_operator_bundle_ids = selected_spec
+        .operator_bundles
+        .iter()
+        .filter(|bundle| bundle.availability_status != "unavailable")
+        .map(|bundle| bundle.bundle_id.clone())
+        .collect();
+    route_plan.selected_patch_primitive_classes = candidate_patch_primitive_classes_for_composition(
+        selected_spec.family_id.as_ref(),
+        selected_spec.tool_kind.as_deref(),
+        selected_patch_kinds,
+    );
+    route_plan.selected_family_build_primitive_classes = selected_spec
+        .family_id
+        .as_ref()
+        .map(build_primitive_classes_for_family)
+        .unwrap_or_default();
+    route_plan.selected_composition_layers = derive_composition_layers(
+        &route_plan.selected_family_build_primitive_classes,
+        &route_plan.selected_patch_primitive_classes,
+        &route_plan.selected_helper_primitive_kinds,
+        &route_plan.selected_bridge_capabilities,
+    );
+    route_plan.composition_work_order_kind =
+        composition_work_order_kind(&route_plan.selected_composition_layers);
+    route_plan.selected_acceptance_recipe_ids = selected_spec
+        .acceptance_recipes
+        .iter()
+        .filter(|recipe| recipe.availability_status != "unavailable")
+        .map(|recipe| recipe.recipe_id.clone())
+        .collect();
+}
+
+fn helper_primitive_ids_from_spec(spec: &ProjectSpec) -> Vec<String> {
+    let mut primitive_ids = Vec::new();
+    for helper in &spec.helper_services {
+        for primitive in &helper.primitives {
+            if !primitive_ids.contains(&primitive.primitive_id) {
+                primitive_ids.push(primitive.primitive_id.clone());
+            }
+        }
+    }
+    primitive_ids
+}
+
+fn helper_primitive_kinds_from_spec(spec: &ProjectSpec) -> Vec<String> {
+    let mut primitive_kinds = Vec::new();
+    for helper in &spec.helper_services {
+        for primitive in &helper.primitives {
+            if !primitive_kinds.contains(&primitive.primitive_kind) {
+                primitive_kinds.push(primitive.primitive_kind.clone());
+            }
+        }
+    }
+    primitive_kinds
+}
+
+fn candidate_helper_primitive_ids_for_composition(
+    active_spec: Option<&ProjectSpec>,
+    selected_family_id: Option<&FamilyId>,
+    selected_patch_kinds: &[String],
+) -> Vec<String> {
+    let mut primitive_ids = active_spec
+        .map(helper_primitive_ids_from_spec)
+        .unwrap_or_default();
+
+    let helper_family = matches!(
+        selected_family_id,
+        Some(FamilyId::ChattycogWebviewModule | FamilyId::StaticWebDashboard)
+    );
+    if primitive_ids.is_empty() && helper_family && !selected_patch_kinds.is_empty() {
+        primitive_ids.extend([
+            "module_assets_inbox_lane".to_string(),
+            "local_inbox_processed_output".to_string(),
+            "local_inbox_summary_snapshot".to_string(),
+            "local_inbox_status_snapshot".to_string(),
+        ]);
+    }
+    if selected_patch_kinds
+        .iter()
+        .any(|patch_kind| patch_kind == "secondary_inbox_lane")
+        && !primitive_ids.iter().any(|id| id == "secondary_assets_inbox_lane")
+    {
+        primitive_ids.push("secondary_assets_inbox_lane".into());
+    }
+    if selected_patch_kinds
+        .iter()
+        .any(|patch_kind| patch_kind == "file_type_filter")
+        && !primitive_ids
+            .iter()
+            .any(|id| id == "module_assets_file_type_filter")
+    {
+        primitive_ids.push("module_assets_file_type_filter".into());
+    }
+    primitive_ids
+}
+
+fn candidate_patch_primitive_classes_for_composition(
+    family_id: Option<&FamilyId>,
+    tool_kind: Option<&str>,
+    selected_patch_kinds: &[String],
+) -> Vec<String> {
+    let registry_classes =
+        registry_patch_primitive_classes(family_id, tool_kind, selected_patch_kinds);
+    if !registry_classes.is_empty() {
+        return registry_classes;
+    }
+    patch_primitive_classes_for_kinds(selected_patch_kinds)
+}
+
+fn candidate_helper_primitive_kinds_for_composition(
+    active_spec: Option<&ProjectSpec>,
+    selected_family_id: Option<&FamilyId>,
+    selected_patch_kinds: &[String],
+) -> Vec<String> {
+    let mut primitive_kinds = active_spec
+        .map(helper_primitive_kinds_from_spec)
+        .unwrap_or_default();
+
+    let helper_family = matches!(
+        selected_family_id,
+        Some(FamilyId::ChattycogWebviewModule | FamilyId::StaticWebDashboard)
+    );
+    if primitive_kinds.is_empty() && helper_family && !selected_patch_kinds.is_empty() {
+        primitive_kinds.extend([
+            "inbox_lane".to_string(),
+            "processed_output".to_string(),
+            "summary_emitter".to_string(),
+            "status_reporter".to_string(),
+        ]);
+    }
+    if selected_patch_kinds
+        .iter()
+        .any(|patch_kind| patch_kind == "file_type_filter")
+        && !primitive_kinds.iter().any(|kind| kind == "file_filter")
+    {
+        primitive_kinds.push("file_filter".into());
+    }
+    primitive_kinds
+}
+
+fn desired_patch_primitive_classes_from_request(
+    request: &chatty_factory_core::RequestRecord,
+) -> Vec<String> {
+    let lower = request.raw_request.to_ascii_lowercase();
+    let mut classes = Vec::new();
+    if lower.contains("summary")
+        || lower.contains("dashboard")
+        || lower.contains("panel")
+        || lower.contains("banner")
+        || lower.contains("monitor")
+    {
+        classes.push("summary_surface".to_string());
+    }
+    if lower.contains("status chip") || lower.contains("status badge") {
+        classes.push("status_chip".to_string());
+    }
+    if lower.contains("metadata") {
+        classes.push("metadata_row".to_string());
+    }
+    if lower.contains("notice") || lower.contains("empty state") {
+        classes.push("notice_surface".to_string());
+    }
+    if lower.contains("filter") {
+        classes.push("filter_rule".to_string());
+    }
+    if lower.contains("secondary inbox") || lower.contains("second inbox") {
+        classes.push("inbox_lane_extension".to_string());
+    }
+    if lower.contains("select") || lower.contains("picker") || lower.contains("toggle") {
+        classes.push("selection_control".to_string());
+    }
+    if lower.contains("refresh") || lower.contains("poll") {
+        classes.push("refresh_behavior".to_string());
+    }
+    if lower.contains("last run") || lower.contains("updated at") {
+        classes.push("timestamp_row".to_string());
+    }
+    if lower.contains("badge") || lower.contains("badges") {
+        classes.push("badge_strip".to_string());
+    }
+    if lower.contains("json")
+        || lower.contains("email")
+        || lower.contains("export")
+        || lower.contains("file output")
+        || lower.contains("markdown")
+    {
+        classes.push("export_output".to_string());
+    }
+    dedup_strings(classes)
+}
+
+fn desired_helper_primitive_kinds_from_request(
+    request: &chatty_factory_core::RequestRecord,
+) -> Vec<String> {
+    let lower = request.raw_request.to_ascii_lowercase();
+    let mut kinds = Vec::new();
+    if lower.contains("inbox") || lower.contains("watch") || lower.contains("incoming file") {
+        kinds.push("inbox_lane".to_string());
+    }
+    if lower.contains("processed") || lower.contains("preview") {
+        kinds.push("processed_output".to_string());
+    }
+    if lower.contains("summary") || lower.contains("summar") || lower.contains("monitor") {
+        kinds.push("summary_emitter".to_string());
+    }
+    if lower.contains("status") {
+        kinds.push("status_reporter".to_string());
+    }
+    if lower.contains("filter") || lower.contains("txt only") || lower.contains("type filter") {
+        kinds.push("file_filter".to_string());
+    }
+    dedup_strings(kinds)
+}
+
+fn family_default_helper_primitive_kinds(family_id: Option<&FamilyId>) -> Vec<String> {
+    match family_id {
+        Some(FamilyId::ChattycogWebviewModule | FamilyId::StaticWebDashboard) => vec![
+            "inbox_lane".to_string(),
+            "processed_output".to_string(),
+            "summary_emitter".to_string(),
+            "status_reporter".to_string(),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+fn available_patch_primitive_classes_for_family(
+    family_id: Option<&FamilyId>,
+    tool_kind: Option<&str>,
+    project_features: &[String],
+) -> Vec<String> {
+    let Some(family_id) = family_id else {
+        return Vec::new();
+    };
+    let patch_kinds: Vec<String> = registry_patch_lane_statuses(
+        Some(family_id),
+        tool_kind,
+        project_features,
+    )
+    .into_iter()
+    .map(|lane| lane.patch_kind)
+    .collect();
+    registry_patch_primitive_classes(Some(family_id), tool_kind, &patch_kinds)
+}
+
+fn derive_missing_composition_layers(
+    request: &chatty_factory_core::RequestRecord,
+    suggested_family_id: Option<&FamilyId>,
+    suggested_tool_kind: Option<&str>,
+    active_spec: Option<&ProjectSpec>,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let desired_patch_classes = desired_patch_primitive_classes_from_request(request);
+    let desired_helper_kinds = desired_helper_primitive_kinds_from_request(request);
+    let family_build_classes = suggested_family_id
+        .map(build_primitive_classes_for_family)
+        .unwrap_or_default();
+    let patch_classes = available_patch_primitive_classes_for_family(
+        suggested_family_id,
+        suggested_tool_kind,
+        active_spec.map(|spec| spec.features.as_slice()).unwrap_or(&[]),
+    );
+    let helper_kinds = active_spec
+        .map(helper_primitive_kinds_from_spec)
+        .filter(|kinds| !kinds.is_empty())
+        .unwrap_or_else(|| family_default_helper_primitive_kinds(suggested_family_id));
+
+    let missing_family_build = desired_patch_classes
+        .iter()
+        .filter(|class| !family_build_classes.contains(*class))
+        .cloned()
+        .collect::<Vec<_>>();
+    let missing_patch = desired_patch_classes
+        .iter()
+        .filter(|class| {
+            !family_build_classes.contains(*class) && !patch_classes.contains(*class)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let missing_helper = desired_helper_kinds
+        .iter()
+        .filter(|kind| !helper_kinds.contains(*kind))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    (
+        dedup_strings(missing_family_build),
+        dedup_strings(missing_patch),
+        dedup_strings(missing_helper),
+    )
+}
+
+fn bridge_capability_ids(caps: &ChattyCogBridgeCapabilities) -> Vec<String> {
+    let mut out = Vec::new();
+    if caps.status_enabled {
+        out.push("status".into());
+    }
+    if caps.log_sources_enabled {
+        out.push("log_sources".into());
+    }
+    if caps.shared_room_state_enabled {
+        out.push("shared_room_state".into());
+    }
+    if caps.shared_room_events_enabled {
+        out.push("shared_room_events".into());
+    }
+    if caps.outgoing_room_events_enabled {
+        out.push("outgoing_room_events".into());
+    }
+    out.extend(caps.incoming_asset_lanes.iter().cloned());
+    out
+}
+
+fn primitive_execution_status_for_layer(layer: &str, route_plan: &ComposableRoutePlan) -> String {
+    match layer {
+        "family_build" => "satisfied_by_family".into(),
+        "helper" => {
+            if route_plan.selected_helper_ids.is_empty() {
+                "not_selected".into()
+            } else {
+                "satisfied_by_helper_bundle".into()
+            }
+        }
+        "bridge" => {
+            if route_plan.selected_bridge_capabilities.is_empty() {
+                "not_selected".into()
+            } else {
+                "satisfied_by_bridge_bundle".into()
+            }
+        }
+        "patch" => {
+            if route_plan.selected_patch_kinds.is_empty() {
+                "not_selected".into()
+            } else {
+                "planned_patch_execution".into()
+            }
+        }
+        _ => "planned".into(),
+    }
+}
+
+fn score_family_primitive_adapter(
+    adapter: &FamilyPrimitiveAdapter,
+    composition_layer: &str,
+    primitive_name: &str,
+    source_kind: &str,
+    source_value: &str,
+    interpreted_goal: &str,
+) -> usize {
+    let mut score = 0usize;
+    if adapter.composition_layer == composition_layer {
+        score += 20;
+    }
+    if adapter.primitive_name == primitive_name {
+        score += 20;
+    }
+    match adapter.support_level.as_str() {
+        "native" => score += 12,
+        "optional" => score += 6,
+        _ => score += 3,
+    }
+    if composition_layer == "patch" && adapter.adapter_kind.contains("patch") {
+        score += 6;
+    }
+    if composition_layer == "helper" && adapter.adapter_kind.contains("helper") {
+        score += 6;
+    }
+    if composition_layer == "family_build" && source_kind == "family_build_primitive_class" {
+        score += 4;
+    }
+
+    let haystack = format!(
+        "{} {} {} {}",
+        adapter.adapter_id,
+        adapter.adapter_kind,
+        adapter.primitive_name,
+        adapter.notes.join(" ")
+    )
+    .to_ascii_lowercase();
+    let source_text = format!("{source_value} {interpreted_goal}").to_ascii_lowercase();
+    for token in source_text
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
+        .filter(|token| token.len() >= 4)
+    {
+        if haystack.contains(token) {
+            score += 5;
+        }
+    }
+    score
+}
+
+fn select_family_primitive_adapter(
+    family_id: Option<&FamilyId>,
+    composition_layer: &str,
+    primitive_name: &str,
+    source_kind: &str,
+    source_value: &str,
+    interpreted_goal: &str,
+) -> Option<FamilyPrimitiveAdapter> {
+    let family_id = family_id?;
+    let mut candidates = primitive_adapters_for_family(family_id)
+        .into_iter()
+        .filter(|adapter| {
+            adapter.composition_layer == composition_layer
+                && adapter.primitive_name == primitive_name
+        })
+        .map(|adapter| {
+            let score = score_family_primitive_adapter(
+                &adapter,
+                composition_layer,
+                primitive_name,
+                source_kind,
+                source_value,
+                interpreted_goal,
+            );
+            (adapter, score)
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then_with(|| left.0.adapter_id.cmp(&right.0.adapter_id))
+    });
+    candidates.into_iter().next().map(|(adapter, _)| adapter)
+}
+
+fn primitive_plan_contains_primitive(
+    steps: &[PrimitiveExecutionStep],
+    primitive_name: &str,
+) -> bool {
+    steps.iter().any(|step| step.primitive_name == primitive_name)
+}
+
+fn adapter_missing_required_primitives(
+    steps: &[PrimitiveExecutionStep],
+    adapter: &FamilyPrimitiveAdapter,
+) -> Vec<String> {
+    adapter
+        .requires_primitives
+        .iter()
+        .filter(|primitive_name| !primitive_plan_contains_primitive(steps, primitive_name))
+        .cloned()
+        .collect()
+}
+
+fn adapter_present_companion_primitives(
+    steps: &[PrimitiveExecutionStep],
+    adapter: &FamilyPrimitiveAdapter,
+) -> Vec<String> {
+    adapter
+        .companion_primitives
+        .iter()
+        .filter(|primitive_name| primitive_plan_contains_primitive(steps, primitive_name))
+        .cloned()
+        .collect()
+}
+
+fn adapter_semantic_notes(
+    steps: &[PrimitiveExecutionStep],
+    adapter: &FamilyPrimitiveAdapter,
+) -> Vec<String> {
+    let mut notes = adapter.notes.clone();
+    if let Some(hint) = &adapter.execution_hint {
+        notes.push(format!("execution_hint: {hint}"));
+    }
+    let missing = adapter_missing_required_primitives(steps, adapter);
+    if !missing.is_empty() {
+        notes.push(format!(
+            "missing_required_primitives: {}",
+            missing.join(", ")
+        ));
+    }
+    let companions = adapter_present_companion_primitives(steps, adapter);
+    if !companions.is_empty() {
+        notes.push(format!(
+            "present_companion_primitives: {}",
+            companions.join(", ")
+        ));
+    }
+    notes
+}
+
+fn summarize_adapter_semantics(adapter: &FamilyPrimitiveAdapter) -> String {
+    let requires = if adapter.requires_primitives.is_empty() {
+        "none".to_string()
+    } else {
+        adapter.requires_primitives.join("|")
+    };
+    let companions = if adapter.companion_primitives.is_empty() {
+        "none".to_string()
+    } else {
+        adapter.companion_primitives.join("|")
+    };
+    let hint = adapter
+        .execution_hint
+        .clone()
+        .unwrap_or_else(|| "none".into());
+    format!(
+        "{}:{}:{} support={} requires={} companions={} hint={}",
+        adapter.composition_layer,
+        adapter.primitive_name,
+        adapter.adapter_id,
+        adapter.support_level,
+        requires,
+        companions,
+        hint
+    )
+}
+
+fn composition_adapter_semantics_for_review(
+    family_id: Option<&FamilyId>,
+    family_build_primitive_classes: &[String],
+    patch_primitive_classes: &[String],
+    helper_primitive_kinds: &[String],
+) -> Vec<String> {
+    let Some(family_id) = family_id else {
+        return Vec::new();
+    };
+    let mut semantics = Vec::new();
+    for primitive_name in family_build_primitive_classes {
+        if let Some(adapter) = select_family_primitive_adapter(
+            Some(family_id),
+            "family_build",
+            primitive_name,
+            "family_build_primitive_class",
+            primitive_name,
+            primitive_name,
+        ) {
+            semantics.push(summarize_adapter_semantics(&adapter));
+        }
+    }
+    for primitive_name in patch_primitive_classes {
+        if let Some(adapter) = select_family_primitive_adapter(
+            Some(family_id),
+            "patch",
+            primitive_name,
+            "patch_primitive_class",
+            primitive_name,
+            primitive_name,
+        ) {
+            semantics.push(summarize_adapter_semantics(&adapter));
+        }
+    }
+    for primitive_name in helper_primitive_kinds {
+        if let Some(adapter) = select_family_primitive_adapter(
+            Some(family_id),
+            "helper",
+            primitive_name,
+            "helper_primitive_kind",
+            primitive_name,
+            primitive_name,
+        ) {
+            semantics.push(summarize_adapter_semantics(&adapter));
+        }
+    }
+    dedup_strings(semantics)
+}
+
+fn candidate_patch_kind_for_primitive_class(
+    family_id: Option<&FamilyId>,
+    tool_kind: Option<&str>,
+    candidate_patch_kinds: &[String],
+    primitive_class: &str,
+) -> Option<String> {
+    candidate_patch_kinds.iter().find_map(|patch_kind| {
+        let classes = candidate_patch_primitive_classes_for_composition(
+            family_id,
+            tool_kind,
+            std::slice::from_ref(patch_kind),
+        );
+        if classes.iter().any(|class| class == primitive_class) {
+            Some(patch_kind.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn adapter_semantic_patch_restores(
+    family_id: Option<&FamilyId>,
+    tool_kind: Option<&str>,
+    candidate_patch_kinds: &[String],
+    selected_patch_kinds: &[String],
+) -> Vec<String> {
+    let selected_patch_primitive_classes = candidate_patch_primitive_classes_for_composition(
+        family_id,
+        tool_kind,
+        selected_patch_kinds,
+    );
+    let mut restores = Vec::new();
+
+    for primitive_class in &selected_patch_primitive_classes {
+        let Some(adapter) = select_family_primitive_adapter(
+            family_id,
+            "patch",
+            primitive_class,
+            "patch_primitive_class",
+            primitive_class,
+            primitive_class,
+        ) else {
+            continue;
+        };
+
+        for required in &adapter.requires_primitives {
+            if !selected_patch_primitive_classes.contains(required) {
+                if let Some(patch_kind) = candidate_patch_kind_for_primitive_class(
+                    family_id,
+                    tool_kind,
+                    candidate_patch_kinds,
+                    required,
+                ) {
+                    restores.push(patch_kind);
+                }
+            }
+        }
+
+        for companion in &adapter.companion_primitives {
+            if !selected_patch_primitive_classes.contains(companion) {
+                if let Some(patch_kind) = candidate_patch_kind_for_primitive_class(
+                    family_id,
+                    tool_kind,
+                    candidate_patch_kinds,
+                    companion,
+                ) {
+                    restores.push(patch_kind);
+                }
+            }
+        }
+    }
+
+    dedup_strings(restores)
+}
+
+fn derive_primitive_execution_plan(route_plan: &ComposableRoutePlan) -> PrimitiveExecutionPlan {
+    let mut steps = Vec::new();
+    let mut execution_order = 0usize;
+    let family_id = route_plan.target_family_id.as_ref();
+
+    for primitive_name in &route_plan.selected_family_build_primitive_classes {
+        execution_order += 1;
+        let source_kind = "family_build_primitive_class";
+        let source_value = primitive_name.clone();
+        let adapter = select_family_primitive_adapter(
+            family_id,
+            "family_build",
+            primitive_name,
+            source_kind,
+            &source_value,
+            &route_plan.interpreted_goal,
+        );
+        steps.push(PrimitiveExecutionStep {
+            step_id: format!("primitive-step-{:02}", execution_order),
+            composition_layer: "family_build".into(),
+            primitive_name: primitive_name.clone(),
+            adapter_id: adapter
+                .as_ref()
+                .map(|item| item.adapter_id.clone())
+                .unwrap_or_else(|| format!("{}_family_build", primitive_name)),
+            adapter_kind: adapter
+                .as_ref()
+                .map(|item| item.adapter_kind.clone())
+                .unwrap_or_else(|| "declared_family_surface".into()),
+            support_level: adapter
+                .as_ref()
+                .map(|item| item.support_level.clone())
+                .unwrap_or_else(|| "declared".into()),
+            source_kind: source_kind.into(),
+            source_value,
+            execution_order,
+            execution_status: primitive_execution_status_for_layer("family_build", route_plan),
+            notes: adapter.map(|item| item.notes).unwrap_or_default(),
+        });
+    }
+
+    for primitive_name in &route_plan.selected_patch_primitive_classes {
+        execution_order += 1;
+        let source_kind = "patch_primitive_class";
+        let source_value = route_plan.selected_patch_kinds.join(", ");
+        let adapter = select_family_primitive_adapter(
+            family_id,
+            "patch",
+            primitive_name,
+            source_kind,
+            &source_value,
+            &route_plan.interpreted_goal,
+        );
+        steps.push(PrimitiveExecutionStep {
+            step_id: format!("primitive-step-{:02}", execution_order),
+            composition_layer: "patch".into(),
+            primitive_name: primitive_name.clone(),
+            adapter_id: adapter
+                .as_ref()
+                .map(|item| item.adapter_id.clone())
+                .unwrap_or_else(|| format!("{}_patch_adapter", primitive_name)),
+            adapter_kind: adapter
+                .as_ref()
+                .map(|item| item.adapter_kind.clone())
+                .unwrap_or_else(|| "patch_lane_adapter".into()),
+            support_level: adapter
+                .as_ref()
+                .map(|item| item.support_level.clone())
+                .unwrap_or_else(|| "declared".into()),
+            source_kind: source_kind.into(),
+            source_value,
+            execution_order,
+            execution_status: primitive_execution_status_for_layer("patch", route_plan),
+            notes: adapter.map(|item| item.notes).unwrap_or_default(),
+        });
+    }
+
+    for primitive_name in &route_plan.selected_helper_primitive_kinds {
+        execution_order += 1;
+        let source_kind = "helper_primitive_kind";
+        let source_value = route_plan.selected_helper_ids.join(", ");
+        let adapter = select_family_primitive_adapter(
+            family_id,
+            "helper",
+            primitive_name,
+            source_kind,
+            &source_value,
+            &route_plan.interpreted_goal,
+        );
+        steps.push(PrimitiveExecutionStep {
+            step_id: format!("primitive-step-{:02}", execution_order),
+            composition_layer: "helper".into(),
+            primitive_name: primitive_name.clone(),
+            adapter_id: adapter
+                .as_ref()
+                .map(|item| item.adapter_id.clone())
+                .unwrap_or_else(|| format!("{}_helper_adapter", primitive_name)),
+            adapter_kind: adapter
+                .as_ref()
+                .map(|item| item.adapter_kind.clone())
+                .unwrap_or_else(|| "helper_bundle_adapter".into()),
+            support_level: adapter
+                .as_ref()
+                .map(|item| item.support_level.clone())
+                .unwrap_or_else(|| "declared".into()),
+            source_kind: source_kind.into(),
+            source_value,
+            execution_order,
+            execution_status: primitive_execution_status_for_layer("helper", route_plan),
+            notes: adapter.map(|item| item.notes).unwrap_or_default(),
+        });
+    }
+
+    for primitive_name in &route_plan.selected_bridge_capabilities {
+        execution_order += 1;
+        steps.push(PrimitiveExecutionStep {
+            step_id: format!("primitive-step-{:02}", execution_order),
+            composition_layer: "bridge".into(),
+            primitive_name: primitive_name.clone(),
+            adapter_id: format!("{}_bridge_adapter", primitive_name),
+            adapter_kind: "bridge_capability_adapter".into(),
+            support_level: "declared".into(),
+            source_kind: "bridge_capability".into(),
+            source_value: primitive_name.clone(),
+            execution_order,
+            execution_status: primitive_execution_status_for_layer("bridge", route_plan),
+            notes: Vec::new(),
+        });
+    }
+
+    let plan = PrimitiveExecutionPlan {
+        execution_plan_id: chatty_factory_core::timestamp_id("primitive-execution"),
+        composition_plan_id: route_plan.composition_plan_id.clone(),
+        request_id: route_plan.request_id.clone(),
+        target_family_id: route_plan.target_family_id.clone(),
+        target_tool_kind: route_plan.target_tool_kind.clone(),
+        composition_work_order_kind: route_plan.composition_work_order_kind.clone(),
+        composition_layers: route_plan.selected_composition_layers.clone(),
+        selected_patch_kinds: route_plan.selected_patch_kinds.clone(),
+        selected_helper_ids: route_plan.selected_helper_ids.clone(),
+        selected_acceptance_recipe_ids: route_plan.selected_acceptance_recipe_ids.clone(),
+        overall_status: if steps.is_empty() {
+            "empty".into()
+        } else {
+            "planned".into()
+        },
+        steps,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+
+    let annotated_steps = plan
+        .steps
+        .iter()
+        .cloned()
+        .map(|mut step| {
+            if let Some(adapter) = select_family_primitive_adapter(
+                plan.target_family_id.as_ref(),
+                &step.composition_layer,
+                &step.primitive_name,
+                &step.source_kind,
+                &step.source_value,
+                &route_plan.interpreted_goal,
+            ) {
+                step.notes = adapter_semantic_notes(&plan.steps, &adapter);
+            }
+            step
+        })
+        .collect::<Vec<_>>();
+
+    PrimitiveExecutionPlan {
+        steps: annotated_steps,
+        ..plan
+    }
+}
+
+fn persist_primitive_execution_plan(
+    runtime_root: &Path,
+    plan: &PrimitiveExecutionPlan,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("primitive_execution_plans")
+        .join(format!("{}.json", plan.execution_plan_id));
+    persist_json_pretty(&path, plan)?;
+    Ok(path)
+}
+
+fn proof_capability_classes(
+    spec: &ProjectSpec,
+    acceptance: &chatty_factory_core::AcceptancePlan,
+) -> Vec<String> {
+    let mut classes = Vec::new();
+
+    if !spec.helper_services.is_empty() {
+        classes.push("helper_bundle".to_string());
+    }
+    if acceptance
+        .checks
+        .iter()
+        .any(|check| check.kind == "helper_service_spec")
+    {
+        classes.push("helper_contract".to_string());
+    }
+    if acceptance
+        .checks
+        .iter()
+        .any(|check| check.kind == "helper_status_snapshot")
+    {
+        classes.push("helper_status".to_string());
+    }
+    if acceptance
+        .checks
+        .iter()
+        .any(|check| check.kind == "helper_summary_snapshot")
+    {
+        classes.push("helper_summary".to_string());
+    }
+    if acceptance.checks.iter().any(|check| {
+        matches!(
+            check.kind.as_str(),
+            "helper_summary_surface_contract"
+                | "static_dashboard_helper_monitoring_surface_contract"
+        )
+    }) {
+        classes.push("helper_monitoring_surface".to_string());
+    }
+    if acceptance
+        .checks
+        .iter()
+        .any(|check| check.kind == "helper_processed_output_contract")
+    {
+        classes.push("helper_processed_output".to_string());
+    }
+    if acceptance.checks.iter().any(|check| {
+        check.kind == "helper_processed_preview_surface_contract"
+            || (check.kind == "static_dashboard_helper_monitoring_surface_contract"
+                && check
+                    .expected
+                    .as_deref()
+                    .map(|value| value.contains("preview"))
+                    .unwrap_or(false))
+    }) {
+        classes.push("helper_preview_surface".to_string());
+    }
+    if acceptance
+        .checks
+        .iter()
+        .any(|check| check.kind == "helper_processed_files_surface_contract")
+    {
+        classes.push("helper_processed_files_surface".to_string());
+    }
+    if acceptance
+        .checks
+        .iter()
+        .any(|check| check.kind == "helper_processed_selection_surface_contract")
+    {
+        classes.push("helper_processed_selection_surface".to_string());
+    }
+    if acceptance
+        .checks
+        .iter()
+        .any(|check| check.kind == "helper_summary_observed_lanes")
+    {
+        classes.push("multi_lane_coverage".to_string());
+    }
+    if acceptance.checks.iter().any(|check| {
+        matches!(
+            check.kind.as_str(),
+            "helper_summary_lane_rules" | "helper_summary_filtered_files"
+        )
+    }) {
+        classes.push("lane_filter_rules".to_string());
+    }
+    if acceptance.checks.iter().any(|check| {
+        check.kind == "helper_processed_output_contract"
+            || (check.kind == "static_dashboard_helper_monitoring_surface_contract"
+                && check
+                    .expected
+                    .as_deref()
+                    .map(|value| value.contains("preview"))
+                    .unwrap_or(false))
+    }) || spec.features.iter().any(|feature| feature == "json_output")
+    {
+        classes.push("report_output".to_string());
+    }
+    if acceptance.checks.iter().any(|check| {
+        matches!(
+            check.kind.as_str(),
+            "helper_summary_surface_contract"
+                | "static_dashboard_helper_monitoring_surface_contract"
+        )
+    }) || spec.features.iter().any(|feature| feature == "progress_banner")
+        || (spec.family_id == Some(FamilyId::RustCliTool)
+            && spec.tool_kind.as_deref() == Some("log_summary"))
+    {
+        classes.push("status_surface".to_string());
+    }
+    if spec.features.iter().any(|feature| feature == "json_output") {
+        classes.push("export_surface".to_string());
+    }
+
+    dedup_strings(classes)
+}
+
+fn helper_monitoring_baseline_satisfied(capabilities: &[String]) -> bool {
+    [
+        "helper_bundle",
+        "helper_summary",
+        "helper_monitoring_surface",
+        "helper_preview_surface",
+    ]
+    .iter()
+    .all(|capability| capabilities.iter().any(|item| item == capability))
+}
+
+fn required_capability_bundle_satisfied(
+    shared_capabilities: &[String],
+    left_only_capabilities: &[String],
+    right_only_capabilities: &[String],
+    comparison_bundle: &chatty_factory_core::CapabilityComparisonBundle,
+) -> bool {
+    let required_shared_present = comparison_bundle
+        .required_shared_capability_classes
+        .iter()
+        .all(|capability| shared_capabilities.contains(capability));
+    let minimum_shared_satisfied =
+        shared_capabilities.len() >= comparison_bundle.minimum_shared_capability_count;
+    let left_only_tolerated = left_only_capabilities.iter().all(|capability| {
+        comparison_bundle
+            .tolerated_left_only_capability_classes
+            .contains(capability)
+            || comparison_bundle
+                .optional_shared_capability_classes
+                .contains(capability)
+    });
+    let right_only_tolerated = right_only_capabilities.iter().all(|capability| {
+        comparison_bundle
+            .tolerated_right_only_capability_classes
+            .contains(capability)
+            || comparison_bundle
+                .optional_shared_capability_classes
+                .contains(capability)
+    });
+    required_shared_present
+        && minimum_shared_satisfied
+        && left_only_tolerated
+        && right_only_tolerated
+}
+
+fn intersect_sorted_strings(left: &[String], right: &[String]) -> Vec<String> {
+    left.iter()
+        .filter(|value| right.contains(value))
+        .cloned()
+        .collect::<Vec<_>>()
+}
+
+fn subtract_sorted_strings(left: &[String], right: &[String]) -> Vec<String> {
+    left.iter()
+        .filter(|value| !right.contains(value))
+        .cloned()
+        .collect::<Vec<_>>()
+}
+
+fn find_counterpart_monitoring_project(
+    output_root: &Path,
+    current_project_name: &str,
+    current_family_id: Option<&FamilyId>,
+) -> Result<Option<String>> {
+    let desired_family = match current_family_id {
+        Some(FamilyId::StaticWebDashboard) => Some(FamilyId::ChattycogWebviewModule),
+        Some(FamilyId::ChattycogWebviewModule) => Some(FamilyId::StaticWebDashboard),
+        _ => None,
+    };
+    let Some(desired_family) = desired_family else {
+        return Ok(None);
+    };
+
+    let mut candidates = discover_projects(output_root, None)?
+        .into_iter()
+        .filter(|project| project.project_name != current_project_name)
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| right.project_name.cmp(&left.project_name));
+
+    for candidate in candidates {
+        if candidate.family_id.as_ref() != Some(&desired_family) {
+            continue;
+        }
+        let candidate_dir = output_root.join(&candidate.project_name);
+        let spec_path = candidate_dir.join("ProjectSpec.json");
+        let acceptance_path = candidate_dir.join("AcceptancePlan.json");
+        if !spec_path.exists() || !acceptance_path.exists() {
+            continue;
+        }
+        let spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(spec_path)?)?;
+        let acceptance: chatty_factory_core::AcceptancePlan =
+            serde_json::from_str(&fs::read_to_string(acceptance_path)?)?;
+        let capabilities = proof_capability_classes(&spec, &acceptance);
+        if helper_monitoring_baseline_satisfied(&capabilities) {
+            return Ok(Some(candidate.project_name));
+        }
+    }
+
+    Ok(None)
+}
+
+fn build_cross_family_capability_comparison_receipt(
+    left_project_name: &str,
+    left_spec: &ProjectSpec,
+    left_acceptance: &chatty_factory_core::AcceptancePlan,
+    right_project_name: &str,
+    right_spec: &ProjectSpec,
+    right_acceptance: &chatty_factory_core::AcceptancePlan,
+    comparison_bundle: &chatty_factory_core::CapabilityComparisonBundle,
+) -> CrossFamilyMonitoringComparisonReceipt {
+    let policy = &comparison_bundle.policy;
+    let comparison_label = if policy.comparison_label.is_empty() {
+        "capability comparison"
+    } else {
+        policy.comparison_label.as_str()
+    };
+    let left_capabilities = proof_capability_classes(left_spec, left_acceptance);
+    let right_capabilities = proof_capability_classes(right_spec, right_acceptance);
+    let shared_capabilities = intersect_sorted_strings(&left_capabilities, &right_capabilities);
+    let left_only_capabilities = subtract_sorted_strings(&left_capabilities, &shared_capabilities);
+    let right_only_capabilities =
+        subtract_sorted_strings(&right_capabilities, &shared_capabilities);
+    let equivalent_capability_fulfillment = required_capability_bundle_satisfied(
+        &shared_capabilities,
+        &left_only_capabilities,
+        &right_only_capabilities,
+        comparison_bundle,
+    );
+
+    let mut notes = vec![
+        format!(
+            "{}: {}",
+            if policy.shared_note_label.is_empty() {
+                "shared capabilities"
+            } else {
+                policy.shared_note_label.as_str()
+            },
+            shared_capabilities.join(", ")
+        ),
+        format!(
+            "{}: {}",
+            if policy.left_only_note_label.is_empty() {
+                "left-only capabilities"
+            } else {
+                policy.left_only_note_label.as_str()
+            },
+            if left_only_capabilities.is_empty() {
+                "none".into()
+            } else {
+                left_only_capabilities.join(", ")
+            }
+        ),
+        format!(
+            "{}: {}",
+            if policy.right_only_note_label.is_empty() {
+                "right-only capabilities"
+            } else {
+                policy.right_only_note_label.as_str()
+            },
+            if right_only_capabilities.is_empty() {
+                "none".into()
+            } else {
+                right_only_capabilities.join(", ")
+            }
+        ),
+        format!(
+            "{}: {}",
+            if policy.required_bundle_note_label.is_empty() {
+                "required shared bundle"
+            } else {
+                policy.required_bundle_note_label.as_str()
+            },
+            comparison_bundle.required_shared_capability_classes.join(", ")
+        ),
+    ];
+    if equivalent_capability_fulfillment {
+        let template = if policy.success_note_template.is_empty() {
+            "both projects satisfy the shared {comparison_label} capability bundle"
+        } else {
+            policy.success_note_template.as_str()
+        };
+        notes.push(template.replace("{comparison_label}", comparison_label));
+    } else {
+        let template = if policy.failure_note_template.is_empty() {
+            "shared {comparison_label} capability bundle is incomplete across the compared projects"
+        } else {
+            policy.failure_note_template.as_str()
+        };
+        notes.push(template.replace("{comparison_label}", comparison_label));
+    }
+
+    CrossFamilyMonitoringComparisonReceipt {
+        receipt_id: chatty_factory_core::timestamp_id(if policy.comparison_receipt_prefix.is_empty() {
+            "cross-family-capability-comparison"
+        } else {
+            policy.comparison_receipt_prefix.as_str()
+        }),
+        left_project_name: left_project_name.to_string(),
+        left_family_id: left_spec.family_id.as_ref().map(|id| id.as_str().to_string()),
+        right_project_name: right_project_name.to_string(),
+        right_family_id: right_spec.family_id.as_ref().map(|id| id.as_str().to_string()),
+        left_capability_classes: left_capabilities,
+        right_capability_classes: right_capabilities,
+        shared_capability_classes: shared_capabilities,
+        left_only_capability_classes: left_only_capabilities,
+        right_only_capability_classes: right_only_capabilities,
+        equivalent_capability_fulfillment,
+        notes,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn persist_composition_step_receipt(
+    runtime_root: &Path,
+    composition_plan_id: &str,
+    step_index: usize,
+    step_kind: &str,
+    primitive_id: &str,
+    payload: &serde_json::Value,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("composition_step_receipts")
+        .join(format!(
+            "{}-{:02}-{}-{}.json",
+            composition_plan_id, step_index, step_kind, primitive_id
+        ));
+    persist_json_pretty(&path, payload)?;
+    Ok(path)
+}
+
+fn persist_composition_review_receipt(
+    runtime_root: &Path,
+    request_id: &str,
+    handoff_id: Option<&str>,
+    response_id: Option<&str>,
+    approved: bool,
+    candidate_composition_layers: &[String],
+    reviewed_composition_layers: &[String],
+    final_composition_layers: &[String],
+    candidate_patch_kinds: &[String],
+    reviewed_patch_kinds: &[String],
+    final_patch_kinds: &[String],
+    candidate_family_build_primitive_classes: &[String],
+    reviewed_family_build_primitive_classes: &[String],
+    final_family_build_primitive_classes: &[String],
+    candidate_patch_primitive_classes: &[String],
+    reviewed_patch_primitive_classes: &[String],
+    final_patch_primitive_classes: &[String],
+    candidate_helper_primitive_ids: &[String],
+    reviewed_helper_primitive_ids: &[String],
+    final_helper_primitive_ids: &[String],
+    candidate_helper_primitive_kinds: &[String],
+    reviewed_helper_primitive_kinds: &[String],
+    final_helper_primitive_kinds: &[String],
+    candidate_composition_adapter_semantics: &[String],
+    final_composition_adapter_semantics: &[String],
+    rationale: &[String],
+) -> Result<PathBuf> {
+    let review_id = chatty_factory_core::timestamp_id("composition-review");
+    let path = runtime_root
+        .join("composition_review_receipts")
+        .join(format!("{review_id}.json"));
+    let payload = serde_json::json!({
+        "review_id": review_id,
+        "request_id": request_id,
+        "handoff_id": handoff_id,
+        "planner_response_id": response_id,
+        "approved": approved,
+        "candidate_composition_layers": candidate_composition_layers,
+        "reviewed_composition_layers": reviewed_composition_layers,
+        "final_composition_layers": final_composition_layers,
+        "composition_work_order_kind": composition_work_order_kind(final_composition_layers),
+        "candidate_patch_kinds": candidate_patch_kinds,
+        "reviewed_patch_kinds": reviewed_patch_kinds,
+        "final_patch_kinds": final_patch_kinds,
+        "candidate_family_build_primitive_classes": candidate_family_build_primitive_classes,
+        "reviewed_family_build_primitive_classes": reviewed_family_build_primitive_classes,
+        "final_family_build_primitive_classes": final_family_build_primitive_classes,
+        "candidate_patch_primitive_classes": candidate_patch_primitive_classes,
+        "reviewed_patch_primitive_classes": reviewed_patch_primitive_classes,
+        "final_patch_primitive_classes": final_patch_primitive_classes,
+        "candidate_helper_primitive_ids": candidate_helper_primitive_ids,
+        "reviewed_helper_primitive_ids": reviewed_helper_primitive_ids,
+        "final_helper_primitive_ids": final_helper_primitive_ids,
+        "candidate_helper_primitive_kinds": candidate_helper_primitive_kinds,
+        "reviewed_helper_primitive_kinds": reviewed_helper_primitive_kinds,
+        "final_helper_primitive_kinds": final_helper_primitive_kinds,
+        "candidate_composition_adapter_semantics": candidate_composition_adapter_semantics,
+        "final_composition_adapter_semantics": final_composition_adapter_semantics,
+        "rationale": rationale,
+        "created_at": chatty_factory_core::timestamp_id("created"),
+    });
+    persist_json_pretty(&path, &payload)?;
+    Ok(path)
+}
+
+fn persist_cross_family_capability_comparison_receipt(
+    runtime_root: &Path,
+    receipt: &CrossFamilyMonitoringComparisonReceipt,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("cross_family_monitoring_receipts")
+        .join(format!("{}.json", receipt.receipt_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_cross_family_paired_proof_receipt(
+    runtime_root: &Path,
+    receipt: &PrimitiveProofHarnessReceipt,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("cross_family_paired_proof_receipts")
+        .join(format!("{}.json", receipt.receipt_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn parse_family_id_label(value: &str) -> Option<FamilyId> {
+    match value {
+        "static_web_dashboard" => Some(FamilyId::StaticWebDashboard),
+        "chattycog_webview_module" => Some(FamilyId::ChattycogWebviewModule),
+        "chattycog_native_window_module" => Some(FamilyId::ChattycogNativeWindowModule),
+        "chattycog_workspace_module" => Some(FamilyId::ChattycogWorkspaceModule),
+        "python_cli_tool" => Some(FamilyId::PythonCliTool),
+        "rust_cli_tool" => Some(FamilyId::RustCliTool),
+        _ => None,
+    }
+}
+
+fn proof_request_for_family(
+    shared_request: &str,
+    family_id: &FamilyId,
+    execution_recipe: &chatty_factory_core::PrimitiveProofExecutionRecipe,
+) -> String {
+    let request_tail = strip_leading_build_phrase(shared_request);
+    if let Some(binding) = execution_recipe
+        .family_request_bindings
+        .iter()
+        .find(|binding| &binding.family_id == family_id)
+    {
+        if request_tail.is_empty() {
+            if let Some(fallback) = binding.empty_request_fallback.as_deref() {
+                return fallback.to_string();
+            }
+        }
+
+        return binding
+            .request_template
+            .replace("{shared_request}", shared_request.trim())
+            .replace("{request_tail}", &request_tail)
+            .replace("{family_label}", &binding.family_label)
+            .replace("{family_id}", family_id.as_str())
+            .trim()
+            .to_string();
+    }
+
+    match execution_recipe.request_generation_kind.as_str() {
+        "helper_monitoring" => helper_monitoring_request_for_family(shared_request, family_id),
+        "summary_reporting" => summary_reporting_request_for_family(shared_request, family_id),
+        _ => {
+            if request_tail.is_empty() {
+                format!("build me a {}", family_id.as_str().replace('_', " "))
+            } else {
+                format!(
+                    "build me a {} that {}",
+                    family_id.as_str().replace('_', " "),
+                    request_tail
+                )
+            }
+        }
+    }
+}
+
+fn helper_monitoring_request_for_family(shared_request: &str, family_id: &FamilyId) -> String {
+    match family_id {
+        FamilyId::ChattycogWebviewModule => {
+            family_specific_monitoring_request(shared_request, "ChattyCog webview module")
+        }
+        FamilyId::StaticWebDashboard => {
+            family_specific_monitoring_request(shared_request, "static web dashboard")
+        }
+        other => {
+            let request_tail = strip_leading_build_phrase(shared_request);
+            if request_tail.is_empty() {
+                format!("build me a {}", other.as_str().replace('_', " "))
+            } else {
+                format!(
+                    "build me a {} that {}",
+                    other.as_str().replace('_', " "),
+                    request_tail
+                )
+            }
+        }
+    }
+}
+
+fn summary_reporting_request_for_family(shared_request: &str, family_id: &FamilyId) -> String {
+    match family_id {
+        FamilyId::StaticWebDashboard => {
+            let request_tail = strip_leading_build_phrase(shared_request);
+            if request_tail.is_empty() {
+                "build me a static web dashboard with a local inbox helper that exposes status plus report output".into()
+            } else {
+                format!(
+                    "build me a static web dashboard with a local inbox helper that {}",
+                    request_tail
+                )
+            }
+        }
+        FamilyId::RustCliTool => {
+            let request_tail = strip_leading_build_phrase(shared_request);
+            if request_tail.is_empty() {
+                "build me a rust cli log summary tool with a local inbox helper that filters inputs and exposes status plus report output".into()
+            } else {
+                format!(
+                    "build me a rust cli log summary tool with a local inbox helper that {}",
+                    request_tail
+                )
+            }
+        }
+        other => {
+            let request_tail = strip_leading_build_phrase(shared_request);
+            if request_tail.is_empty() {
+                format!("build me a {}", other.as_str().replace('_', " "))
+            } else {
+                format!(
+                    "build me a {} that {}",
+                    other.as_str().replace('_', " "),
+                    request_tail
+                )
+            }
+        }
+    }
+}
+
+fn family_specific_monitoring_request(shared_request: &str, family_label: &str) -> String {
+    let trimmed = shared_request.trim();
+    let normalized_family = family_label.to_ascii_lowercase();
+    let normalized_request = trimmed.to_ascii_lowercase();
+    if normalized_request.contains(&normalized_family) {
+        return trimmed.to_string();
+    }
+    let request_tail = strip_leading_build_phrase(trimmed);
+    if request_tail.is_empty() {
+        format!("build me a {family_label}")
+    } else if request_tail.starts_with("with ")
+        || request_tail.starts_with("that ")
+        || request_tail.starts_with("which ")
+    {
+        format!("build me a {family_label} {request_tail}")
+    } else {
+        format!("build me a {family_label} that {request_tail}")
+    }
+}
+
+fn strip_leading_build_phrase(request: &str) -> String {
+    let trimmed = request.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    for prefix in [
+        "build me an ",
+        "build me a ",
+        "build me ",
+        "make me an ",
+        "make me a ",
+        "make me ",
+        "create an ",
+        "create a ",
+        "create ",
+    ] {
+        if lower.starts_with(prefix) {
+            return trimmed[prefix.len()..].trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn first_matching_runtime_artifact_path(paths: &[String], needle: &str) -> Option<String> {
+    paths.iter()
+        .find(|path| path.contains(needle))
+        .cloned()
+}
+
+fn merge_execution_artifacts(
+    mut base: HostExecutionResult,
+    updated: HostExecutionResult,
+) -> HostExecutionResult {
+    if !updated.request_id.is_empty() {
+        base.request_id = updated.request_id;
+    }
+    if let Some(path) = updated.composable_route_plan_path {
+        base.composable_route_plan_path = Some(path);
+    }
+    if let Some(path) = updated.composition_review_receipt_path {
+        base.composition_review_receipt_path = Some(path);
+    }
+    if !updated.file_paths.is_empty() {
+        for path in updated.file_paths {
+            if !base.file_paths.iter().any(|existing| existing == &path) {
+                base.file_paths.push(path);
+            }
+        }
+    }
+    if let Some(status) = updated.acceptance_status {
+        base.acceptance_status = Some(status);
+    }
+    base.route_notes.extend(updated.route_notes);
+    base
+}
+
+fn execute_composable_route_plan(
+    runtime_root: &Path,
+    primitive_plan: &mut PrimitiveExecutionPlan,
+    request_id: &str,
+    project_name: &str,
+    raw_request: &str,
+    project_dir: &Path,
+) -> Result<CompositionExecutionOutcome> {
+    let mut outcome = CompositionExecutionOutcome::default();
+    let mut current_spec: ProjectSpec =
+        serde_json::from_str(&fs::read_to_string(project_dir.join("ProjectSpec.json"))?)?;
+    if primitive_plan.selected_helper_ids.is_empty() {
+        primitive_plan.selected_helper_ids = current_spec
+            .helper_services
+            .iter()
+            .map(|helper| helper.helper_id.clone())
+            .collect();
+        for step in &mut primitive_plan.steps {
+            if step.composition_layer == "helper" && step.source_value.is_empty() {
+                step.source_value = primitive_plan.selected_helper_ids.join(", ");
+            }
+        }
+    }
+
+    let mut patch_kinds = primitive_plan.selected_patch_kinds.clone().into_iter();
+    let mut helper_runtime_executed = false;
+
+    for (index, step) in primitive_plan.steps.iter_mut().enumerate() {
+        let missing_required_primitives = step
+            .notes
+            .iter()
+            .find_map(|note| note.strip_prefix("missing_required_primitives: "))
+            .map(|value| value.to_string());
+        let present_companion_primitives = step
+            .notes
+            .iter()
+            .find_map(|note| note.strip_prefix("present_companion_primitives: "))
+            .map(|value| value.to_string());
+        let execution_hint = step
+            .notes
+            .iter()
+            .find_map(|note| note.strip_prefix("execution_hint: "))
+            .map(|value| value.to_string());
+
+        if let Some(missing) = missing_required_primitives.clone() {
+            step.execution_status = "blocked_missing_required_primitive".into();
+            persist_composition_step_receipt(
+                runtime_root,
+                &primitive_plan.composition_plan_id,
+                index + 1,
+                &step.composition_layer,
+                &step.primitive_name,
+                &serde_json::json!({
+                    "composition_plan_id": primitive_plan.composition_plan_id,
+                    "request_id": request_id,
+                    "step_index": index + 1,
+                    "step_kind": step.composition_layer,
+                    "primitive_id": step.primitive_name,
+                    "status": step.execution_status,
+                    "adapter_id": step.adapter_id,
+                    "adapter_kind": step.adapter_kind,
+                    "execution_hint": execution_hint,
+                    "missing_required_primitives": missing,
+                }),
+            )?;
+            continue;
+        }
+
+        match step.composition_layer.as_str() {
+            "family_build" => {
+                step.execution_status = "satisfied_by_family_adapter".into();
+                persist_composition_step_receipt(
+                    runtime_root,
+                    &primitive_plan.composition_plan_id,
+                    index + 1,
+                    "family_build",
+                    &step.primitive_name,
+                    &serde_json::json!({
+                        "composition_plan_id": primitive_plan.composition_plan_id,
+                        "request_id": request_id,
+                        "step_index": index + 1,
+                        "step_kind": "family_build",
+                        "primitive_id": step.primitive_name,
+                        "status": step.execution_status,
+                        "adapter_id": step.adapter_id,
+                        "adapter_kind": step.adapter_kind,
+                        "execution_hint": execution_hint,
+                        "present_companion_primitives": present_companion_primitives,
+                    }),
+                )?;
+            }
+            "patch" => {
+                let Some(patch_kind) = patch_kinds.next() else {
+                    step.execution_status = "missing_patch_binding".into();
+                    continue;
+                };
+                step.source_value = patch_kind.clone();
+                let out = dispatch_patch_request(
+                    project_dir,
+                    project_name,
+                    request_id,
+                    raw_request,
+                    &current_spec,
+                    &[],
+                    Some(patch_kind.as_str()),
+                )?;
+                let Some((artifacts, receipt)) = out else {
+                    anyhow::bail!(
+                        "bounded composition could not apply deterministic patch kind `{}`",
+                        patch_kind
+                    );
+                };
+                persist_json_pretty(
+                    &runtime_root
+                        .join("composition_patch_receipts")
+                        .join(format!("{}-{}.json", request_id, receipt.patch_kind)),
+                    &receipt,
+                )?;
+                current_spec = serde_json::from_str(&fs::read_to_string(
+                    artifacts.project_dir.join("ProjectSpec.json"),
+                )?)?;
+                step.execution_status = "applied".into();
+                persist_composition_step_receipt(
+                    runtime_root,
+                    &primitive_plan.composition_plan_id,
+                    index + 1,
+                    "patch",
+                    &receipt.patch_kind,
+                    &serde_json::json!({
+                        "composition_plan_id": primitive_plan.composition_plan_id,
+                        "request_id": request_id,
+                        "step_index": index + 1,
+                        "step_kind": "patch",
+                        "primitive_id": receipt.patch_kind,
+                        "status": step.execution_status,
+                        "project_name": receipt.project_name,
+                        "adapter_id": step.adapter_id,
+                        "adapter_kind": step.adapter_kind,
+                        "modified_files": receipt.modified_files,
+                        "execution_hint": execution_hint,
+                        "present_companion_primitives": present_companion_primitives,
+                    }),
+                )?;
+                outcome
+                    .modified_files
+                    .extend(receipt.modified_files.iter().cloned());
+                outcome.applied_patch_kinds.push(receipt.patch_kind.clone());
+                outcome.final_artifacts = Some(artifacts);
+                outcome.final_receipt = Some(receipt);
+            }
+            "helper" => {
+                if !helper_runtime_executed && !primitive_plan.selected_helper_ids.is_empty() {
+                    execute_and_persist_helper_runtime_state(
+                        runtime_root,
+                        request_id,
+                        project_dir,
+                        &current_spec,
+                    )?;
+                    helper_runtime_executed = true;
+                }
+                step.execution_status = if primitive_plan.selected_helper_ids.is_empty() {
+                    "missing_helper_bundle".into()
+                } else {
+                    "satisfied_by_helper_bundle".into()
+                };
+                persist_composition_step_receipt(
+                    runtime_root,
+                    &primitive_plan.composition_plan_id,
+                    index + 1,
+                    "helper",
+                    &step.primitive_name,
+                    &serde_json::json!({
+                        "composition_plan_id": primitive_plan.composition_plan_id,
+                        "request_id": request_id,
+                        "step_index": index + 1,
+                        "step_kind": "helper",
+                        "primitive_id": step.primitive_name,
+                        "status": step.execution_status,
+                        "adapter_id": step.adapter_id,
+                        "adapter_kind": step.adapter_kind,
+                        "helper_ids": primitive_plan.selected_helper_ids,
+                        "execution_hint": execution_hint,
+                        "present_companion_primitives": present_companion_primitives,
+                    }),
+                )?;
+            }
+            "bridge" => {
+                step.execution_status = "satisfied_by_bridge_bundle".into();
+                persist_composition_step_receipt(
+                    runtime_root,
+                    &primitive_plan.composition_plan_id,
+                    index + 1,
+                    "bridge",
+                    &step.primitive_name,
+                    &serde_json::json!({
+                        "composition_plan_id": primitive_plan.composition_plan_id,
+                        "request_id": request_id,
+                        "step_index": index + 1,
+                        "step_kind": "bridge",
+                        "primitive_id": step.primitive_name,
+                        "status": step.execution_status,
+                        "adapter_id": step.adapter_id,
+                        "adapter_kind": step.adapter_kind,
+                        "execution_hint": execution_hint,
+                    }),
+                )?;
+            }
+            _ => {}
+        }
+    }
+    primitive_plan.overall_status = if outcome.final_receipt.is_some() || !primitive_plan.steps.is_empty() {
+        "executed".into()
+    } else {
+        "empty".into()
+    };
+    outcome.modified_files.sort();
+    outcome.modified_files.dedup();
+    Ok(outcome)
+}
+
+fn persist_composable_route_plan(
+    runtime_root: &Path,
+    route_plan: &ComposableRoutePlan,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("composable_route_plans")
+        .join(format!("{}.json", route_plan.composition_plan_id));
+    persist_json_pretty(&path, route_plan)?;
+    Ok(path)
+}
+
+fn emit_fallback_result(
+    runtime_root: &Path,
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    active_spec: Option<&ProjectSpec>,
+    summary: &str,
+) -> Result<HostActionResult> {
+    let fallback_shape = derive_chattycog_fallback_shape(request, plan);
+    let composition_route_class =
+        derive_composition_route_class(request, plan, active_spec, Some(&fallback_shape), false);
+    let composable_route_plan =
+        derive_composable_route_plan(
+            request,
+            plan,
+            active_spec,
+            None,
+            composition_route_class.clone(),
+            &[],
+        );
+    let composable_route_plan_path =
+        persist_composable_route_plan(runtime_root, &composable_route_plan)?;
+    let mut reasons = dedup_strings(plan.escalation_reasons.clone());
+    let constraints = dedup_strings(plan.constraints.clone());
+    let extension_shape =
+        derive_fallback_extension_shape(request, plan, active_spec, &fallback_shape);
+    let proof_seed_recommendation = if extension_shape.extension_kind == "proof_harness_bundle" {
+        closest_built_in_proof_seed(&FallbackBuildSpec {
+            fallback_spec_id: String::new(),
+            request_id: request.request_id.clone(),
+            mode: request.mode.clone(),
+            composition_route_class: Some(composition_route_class.clone()),
+            interpreted_goal: plan.interpreted_goal.clone(),
+            candidate_family_ids: plan.inferred_family_candidates.clone(),
+            suggested_extension_kind: extension_shape.extension_kind.clone(),
+            suggested_family_id: extension_shape.suggested_family_id.clone(),
+            suggested_tool_kind: extension_shape.suggested_tool_kind.clone(),
+            suggested_patch_kind: extension_shape.suggested_patch_kind.clone(),
+            suggested_bridge_capabilities: extension_shape
+                .suggested_bridge_capabilities
+                .clone(),
+            suggested_hosting_mode: extension_shape.suggested_hosting_mode.clone(),
+            requested_capabilities: request.requested_capabilities.clone(),
+            constraints: constraints.clone(),
+            missing_family_build_primitive_classes: extension_shape
+                .missing_family_build_primitive_classes
+                .clone(),
+            missing_patch_primitive_classes: extension_shape
+                .missing_patch_primitive_classes
+                .clone(),
+            missing_helper_primitive_kinds: extension_shape
+                .missing_helper_primitive_kinds
+                .clone(),
+            suggested_artifacts: extension_shape.suggested_artifacts.clone(),
+            acceptance_targets: extension_shape.acceptance_targets.clone(),
+            implementation_notes: extension_shape.implementation_notes.clone(),
+            suggested_proof_seed_template_id: None,
+            suggested_proof_seed_bundle_id: None,
+            stub_bundle_path: None,
+            recommended_next_step: String::new(),
+            created_at: None,
+        }, &plan.inferred_family_candidates)
+        .map(|(template, bundle)| (template.template_id, bundle.bundle_id))
+    } else {
+        None
+    };
+    let clarification = ClarificationRequest {
+        clarification_id: chatty_factory_core::timestamp_id("clarification"),
+        request_id: request.request_id.clone(),
+        mode: request.mode.clone(),
+        question: fallback_question(request, plan, active_spec, &fallback_shape),
+        reasons: reasons.clone(),
+        candidate_family_ids: plan.inferred_family_candidates.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let clarification_path = runtime_root
+        .join("clarifications")
+        .join(format!("{}-clarification.json", request.request_id));
+    persist_json_pretty(&clarification_path, &clarification)?;
+
+    let build_spec = FallbackBuildSpec {
+        fallback_spec_id: chatty_factory_core::timestamp_id("fallback-build-spec"),
+        request_id: request.request_id.clone(),
+        mode: request.mode.clone(),
+        composition_route_class: Some(composition_route_class.clone()),
+        interpreted_goal: plan.interpreted_goal.clone(),
+        candidate_family_ids: plan.inferred_family_candidates.clone(),
+        suggested_extension_kind: extension_shape.extension_kind.clone(),
+        suggested_family_id: extension_shape.suggested_family_id.clone(),
+        suggested_tool_kind: extension_shape.suggested_tool_kind.clone(),
+        suggested_patch_kind: extension_shape.suggested_patch_kind.clone(),
+        suggested_bridge_capabilities: extension_shape.suggested_bridge_capabilities.clone(),
+        suggested_hosting_mode: extension_shape.suggested_hosting_mode.clone(),
+        requested_capabilities: request.requested_capabilities.clone(),
+        constraints: constraints.clone(),
+        missing_family_build_primitive_classes: extension_shape
+            .missing_family_build_primitive_classes
+            .clone(),
+        missing_patch_primitive_classes: extension_shape
+            .missing_patch_primitive_classes
+            .clone(),
+        missing_helper_primitive_kinds: extension_shape
+            .missing_helper_primitive_kinds
+            .clone(),
+        suggested_artifacts: extension_shape.suggested_artifacts.clone(),
+        acceptance_targets: extension_shape.acceptance_targets.clone(),
+        implementation_notes: extension_shape.implementation_notes.clone(),
+        suggested_proof_seed_template_id: proof_seed_recommendation
+            .as_ref()
+            .map(|(template_id, _)| template_id.clone()),
+        suggested_proof_seed_bundle_id: proof_seed_recommendation
+            .as_ref()
+            .map(|(_, bundle_id)| bundle_id.clone()),
+        stub_bundle_path: None,
+        recommended_next_step: fallback_recommended_next_step(request, &fallback_shape),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let pending_registry_path = runtime_root
+        .parent()
+        .map(|root| root.join("operator_registry").join("pending_lanes.json"))
+        .unwrap_or_else(|| PathBuf::from("operator_registry").join("pending_lanes.json"));
+    let pending_matches = match_pending_extensions(
+        &load_pending_extension_registry(&pending_registry_path)?,
+        &build_spec,
+    );
+    if !pending_matches.is_empty() {
+        reasons.push("matching pending deterministic lane already exists with the same unresolved layer profile".into());
+        reasons = dedup_strings(reasons);
+    }
+    let stub_bundle_path =
+        persist_extension_stub_bundle(runtime_root, request, plan, active_spec, &build_spec)?;
+    let mut build_spec = build_spec;
+    build_spec.stub_bundle_path = Some(stub_bundle_path.display().to_string());
+    if !pending_matches.is_empty() {
+        build_spec.recommended_next_step =
+            "continue implementing the matching pending deterministic lane with the same unresolved family/patch/helper profile, or promote it from pending to executable registry code".into();
+    }
+    let build_spec_path = runtime_root
+        .join("fallback_build_specs")
+        .join(format!("{}-fallback-build-spec.json", request.request_id));
+    persist_json_pretty(&build_spec_path, &build_spec)?;
+
+    let planner_handoff = derive_planner_handoff(request, plan, active_spec);
+    let planner_handoff_path = runtime_root
+        .join("planner_handoffs")
+        .join(format!("{}.json", planner_handoff.handoff_id));
+    persist_json_pretty(&planner_handoff_path, &planner_handoff)?;
+
+    let receipt = FallbackPlanReceipt {
+        fallback_receipt_id: chatty_factory_core::timestamp_id("fallback-plan"),
+        request_id: request.request_id.clone(),
+        mode: request.mode.clone(),
+        status: "fallback_required".into(),
+        reasons: reasons.clone(),
+        clarification_path: Some(clarification_path.display().to_string()),
+        build_spec_path: Some(build_spec_path.display().to_string()),
+        planner_handoff_path: Some(planner_handoff_path.display().to_string()),
+        stub_bundle_path: Some(stub_bundle_path.display().to_string()),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let receipt_path = runtime_root
+        .join("fallback_plan_receipts")
+        .join(format!("{}-fallback.json", request.request_id));
+    persist_json_pretty(&receipt_path, &receipt)?;
+
+    Ok(HostActionResult {
+        summary: summary.into(),
+        details: vec![
+            format!("clarification={}", clarification_path.display()),
+            format!("fallback_build_spec={}", build_spec_path.display()),
+            format!("planner_handoff={}", planner_handoff_path.display()),
+            format!("composable_route_plan={}", composable_route_plan_path.display()),
+            format!("fallback_receipt={}", receipt_path.display()),
+        ],
+        browser_state: None,
+        runtime_refresh: None,
+        execution_result: None,
+        fallback_result: Some(HostFallbackResult {
+            request_id: request.request_id.clone(),
+            mode: request.mode.as_ref().map(|mode| match mode {
+                chatty_factory_core::RequestMode::NewBuild => "new_build".to_string(),
+                chatty_factory_core::RequestMode::Patch => "patch".to_string(),
+            }),
+            composition_route_class: Some(composition_route_class_label(&composition_route_class)),
+            composable_route_plan_path: Some(composable_route_plan_path.display().to_string()),
+            composition_review_receipt_path: None,
+            question: clarification.question,
+            interpreted_goal: plan.interpreted_goal.clone(),
+            reasons,
+            candidate_family_ids: plan
+                .inferred_family_candidates
+                .iter()
+                .map(|id| id.as_str().to_string())
+                .collect(),
+            requested_capabilities: request.requested_capabilities.clone(),
+            constraints,
+            suggested_extension_kind: build_spec.suggested_extension_kind.clone(),
+            suggested_family_id: build_spec
+                .suggested_family_id
+                .as_ref()
+                .map(|id| id.as_str().to_string()),
+            suggested_tool_kind: build_spec.suggested_tool_kind.clone(),
+            suggested_patch_kind: build_spec.suggested_patch_kind.clone(),
+            suggested_bridge_capabilities: build_spec.suggested_bridge_capabilities.clone(),
+            suggested_hosting_mode: build_spec.suggested_hosting_mode.clone(),
+            suggested_artifacts: build_spec.suggested_artifacts.clone(),
+            missing_family_build_primitive_classes: build_spec
+                .missing_family_build_primitive_classes
+                .clone(),
+            missing_patch_primitive_classes: build_spec
+                .missing_patch_primitive_classes
+                .clone(),
+            missing_helper_primitive_kinds: build_spec
+                .missing_helper_primitive_kinds
+                .clone(),
+            acceptance_targets: build_spec.acceptance_targets.clone(),
+            implementation_notes: build_spec.implementation_notes.clone(),
+            suggested_proof_seed_template_id: build_spec
+                .suggested_proof_seed_template_id
+                .clone(),
+            suggested_proof_seed_bundle_id: build_spec
+                .suggested_proof_seed_bundle_id
+                .clone(),
+            recommended_next_step: build_spec.recommended_next_step,
+            pending_extension_ids: pending_matches
+                .iter()
+                .map(|entry| entry.entry_id.clone())
+                .collect(),
+            pending_extension_scaffold_roots: pending_matches
+                .iter()
+                .map(|entry| entry.scaffold_root.clone())
+                .collect(),
+            chattycog_requested_hosting_mode: fallback_shape.requested_hosting_mode,
+            chattycog_valid_hosting_modes: fallback_shape.valid_hosting_modes,
+            chattycog_requested_bridge_capabilities: fallback_shape.requested_bridge_capabilities,
+            chattycog_supported_bridge_capabilities: fallback_shape.supported_bridge_capabilities,
+            clarification_path: Some(clarification_path.display().to_string()),
+            build_spec_path: Some(build_spec_path.display().to_string()),
+            planner_handoff_path: Some(planner_handoff_path.display().to_string()),
+            stub_bundle_path: Some(stub_bundle_path.display().to_string()),
+            receipt_path: Some(receipt_path.display().to_string()),
+        }),
+        followup_route: None,
+        extension_registry: None,
+    })
+}
+
+#[derive(Debug, Clone, Default)]
+struct FallbackExtensionShape {
+    extension_kind: String,
+    suggested_family_id: Option<FamilyId>,
+    suggested_tool_kind: Option<String>,
+    suggested_patch_kind: Option<String>,
+    suggested_bridge_capabilities: Vec<String>,
+    suggested_hosting_mode: Option<String>,
+    missing_family_build_primitive_classes: Vec<String>,
+    missing_patch_primitive_classes: Vec<String>,
+    missing_helper_primitive_kinds: Vec<String>,
+    suggested_artifacts: Vec<String>,
+    acceptance_targets: Vec<String>,
+    implementation_notes: Vec<String>,
+}
+
+fn derive_fallback_extension_shape(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    active_spec: Option<&ProjectSpec>,
+    chattycog_shape: &ChattyCogFallbackShape,
+) -> FallbackExtensionShape {
+    let requested_hosting_mode = chattycog_shape.requested_hosting_mode.clone();
+    let suggested_family_id = if let Some(spec) = active_spec {
+        spec.family_id.clone()
+    } else if let Some(mode) = requested_hosting_mode.as_deref() {
+        match mode {
+            "hosted_webview" => Some(FamilyId::ChattycogWebviewModule),
+            "hosted_native_window" => Some(FamilyId::ChattycogNativeWindowModule),
+            "workspace_surface" => Some(FamilyId::ChattycogWorkspaceModule),
+            _ => plan.inferred_family_candidates.first().cloned(),
+        }
+    } else {
+        plan.inferred_family_candidates.first().cloned()
+    };
+
+    let suggested_tool_kind = active_spec
+        .and_then(|spec| spec.tool_kind.clone())
+        .or_else(|| plan.inferred_tool_kind.clone());
+    let (missing_family_build_primitive_classes, missing_patch_primitive_classes, missing_helper_primitive_kinds) =
+        derive_missing_composition_layers(
+            request,
+            suggested_family_id.as_ref(),
+            suggested_tool_kind.as_deref(),
+            active_spec,
+        );
+    let suggested_patch_kind = if matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch))
+    {
+        plan.intended_patch_kind
+            .clone()
+            .or_else(|| Some("new_patch_lane".to_string()))
+    } else {
+        None
+    };
+
+    if matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch)) {
+        let extension_kind = classify_extension_kind(
+            request.mode.as_ref(),
+            &[],
+            &missing_family_build_primitive_classes,
+            &missing_patch_primitive_classes,
+            &missing_helper_primitive_kinds,
+            false,
+            false,
+        );
+        return FallbackExtensionShape {
+            extension_kind,
+            suggested_family_id,
+            suggested_tool_kind,
+            suggested_patch_kind,
+            suggested_bridge_capabilities: Vec::new(),
+            suggested_hosting_mode: requested_hosting_mode,
+            missing_family_build_primitive_classes,
+            missing_patch_primitive_classes,
+            missing_helper_primitive_kinds,
+            suggested_artifacts: vec![
+                "PATCH_RECIPE_STUB.json".into(),
+                "ACCEPTANCE_STUB.json".into(),
+                "README.md".into(),
+            ],
+            acceptance_targets: vec![
+                "patch_acceptance_passes".into(),
+                "project_contract_refreshes".into(),
+            ],
+            implementation_notes: vec![
+                "Implement a deterministic patch lane instead of routing this request through freeform planner output.".into(),
+                "Prefer a registry-backed patch recipe keyed by family and tool kind.".into(),
+                "Record missing primitive coverage in terms of base-family classes, patch classes, and helper kinds.".into(),
+            ],
+        };
+    }
+
+    if !chattycog_shape.unsupported_bridge_capabilities.is_empty() {
+        let extension_kind = classify_extension_kind(
+            request.mode.as_ref(),
+            &chattycog_shape.unsupported_bridge_capabilities,
+            &missing_family_build_primitive_classes,
+            &missing_patch_primitive_classes,
+            &missing_helper_primitive_kinds,
+            true,
+            false,
+        );
+        return FallbackExtensionShape {
+            extension_kind,
+            suggested_family_id,
+            suggested_tool_kind,
+            suggested_patch_kind,
+            suggested_bridge_capabilities: chattycog_shape
+                .unsupported_bridge_capabilities
+                .clone(),
+            suggested_hosting_mode: requested_hosting_mode,
+            missing_family_build_primitive_classes,
+            missing_patch_primitive_classes,
+            missing_helper_primitive_kinds,
+            suggested_artifacts: vec![
+                "BRIDGE_LANE_STUB.json".into(),
+                "ACCEPTANCE_STUB.json".into(),
+                "README.md".into(),
+            ],
+            acceptance_targets: vec![
+                "chattycog_bridge_contract".into(),
+                "chattycog_module_contract".into(),
+            ],
+            implementation_notes: vec![
+                "Add the requested bridge capability as a deterministic emitted artifact plus validator coverage.".into(),
+                "Keep the module standalone-first and expose the bridge lane through typed contract flags.".into(),
+                "Document which primitive layers remain unresolved while the bridge lane is missing.".into(),
+            ],
+        };
+    }
+
+    if chattycog_shape.exceeds_current_contract {
+        let extension_kind = classify_extension_kind(
+            request.mode.as_ref(),
+            &[],
+            &missing_family_build_primitive_classes,
+            &missing_patch_primitive_classes,
+            &missing_helper_primitive_kinds,
+            false,
+            true,
+        );
+        return FallbackExtensionShape {
+            extension_kind,
+            suggested_family_id,
+            suggested_tool_kind,
+            suggested_patch_kind,
+            suggested_bridge_capabilities: Vec::new(),
+            suggested_hosting_mode: requested_hosting_mode,
+            missing_family_build_primitive_classes,
+            missing_patch_primitive_classes,
+            missing_helper_primitive_kinds,
+            suggested_artifacts: vec![
+                "HELPER_LANE_STUB.json".into(),
+                "ACCEPTANCE_STUB.json".into(),
+                "README.md".into(),
+            ],
+            acceptance_targets: vec![
+                "hosted_module_contract_preserved".into(),
+                "helper_boundary_documented".into(),
+            ],
+            implementation_notes: vec![
+                "Split hosted ChattyCog UI concerns from helper or service concerns.".into(),
+                "Model helper/runtime work as a new deterministic lane rather than stretching the hosting family.".into(),
+                "Document which helper primitive kinds are still missing from the current substrate.".into(),
+            ],
+        };
+    }
+
+    FallbackExtensionShape {
+        extension_kind: classify_extension_kind(
+            request.mode.as_ref(),
+            &[],
+            &missing_family_build_primitive_classes,
+            &missing_patch_primitive_classes,
+            &missing_helper_primitive_kinds,
+            false,
+            false,
+        ),
+        suggested_family_id,
+        suggested_tool_kind,
+        suggested_patch_kind,
+        suggested_bridge_capabilities: Vec::new(),
+        suggested_hosting_mode: requested_hosting_mode,
+        missing_family_build_primitive_classes,
+        missing_patch_primitive_classes,
+        missing_helper_primitive_kinds,
+        suggested_artifacts: vec![
+            "FAMILY_MANIFEST_STUB.json".into(),
+            "ACCEPTANCE_STUB.json".into(),
+            "README.md".into(),
+        ],
+        acceptance_targets: vec![
+            "family_acceptance_passes".into(),
+            "project_contract_emitted".into(),
+        ],
+        implementation_notes: vec![
+            "Define a deterministic family instead of falling back to prompt-shaped code generation.".into(),
+            "Anchor the new lane in manifest data, emitted templates, and host-owned acceptance.".into(),
+            "Use the missing primitive layers to decide whether this should land as family surface, patch surface, helper substrate, or a combination.".into(),
+        ],
+    }
+}
+
+fn persist_extension_stub_bundle(
+    runtime_root: &Path,
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    active_spec: Option<&ProjectSpec>,
+    build_spec: &FallbackBuildSpec,
+) -> Result<PathBuf> {
+    let stub_root = runtime_root
+        .join("extension_stubs")
+        .join(request.request_id.as_str());
+    fs::create_dir_all(&stub_root)?;
+
+    persist_json_pretty(&stub_root.join("EXTENSION_SPEC.json"), build_spec)?;
+
+    let readme = format!(
+        "# Extension Stub\n\nRequest: `{}`\n\nInterpreted goal: {}\n\nExtension kind: `{}`\n\nRecommended next step: {}\n\nSuggested family: `{}`\nSuggested tool kind: `{}`\nSuggested patch kind: `{}`\nSuggested hosting mode: `{}`\nSuggested proof seed template: `{}`\nSuggested proof seed bundle: `{}`\n\nMissing base family build classes:\n{}\n\nMissing patch primitive classes:\n{}\n\nMissing helper primitive kinds:\n{}\n\nAcceptance targets:\n{}\n\nImplementation notes:\n{}\n",
+        request.raw_request.trim(),
+        build_spec.interpreted_goal,
+        build_spec.suggested_extension_kind,
+        build_spec.recommended_next_step,
+        build_spec
+            .suggested_family_id
+            .as_ref()
+            .map(|id| id.as_str())
+            .unwrap_or("none"),
+        build_spec.suggested_tool_kind.as_deref().unwrap_or("none"),
+        build_spec.suggested_patch_kind.as_deref().unwrap_or("none"),
+        build_spec.suggested_hosting_mode.as_deref().unwrap_or("none"),
+        build_spec
+            .suggested_proof_seed_template_id
+            .as_deref()
+            .unwrap_or("none"),
+        build_spec
+            .suggested_proof_seed_bundle_id
+            .as_deref()
+            .unwrap_or("none"),
+        if build_spec.missing_family_build_primitive_classes.is_empty() {
+            "- none".to_string()
+        } else {
+            build_spec
+                .missing_family_build_primitive_classes
+                .iter()
+                .map(|item| format!("- {item}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        },
+        if build_spec.missing_patch_primitive_classes.is_empty() {
+            "- none".to_string()
+        } else {
+            build_spec
+                .missing_patch_primitive_classes
+                .iter()
+                .map(|item| format!("- {item}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        },
+        if build_spec.missing_helper_primitive_kinds.is_empty() {
+            "- none".to_string()
+        } else {
+            build_spec
+                .missing_helper_primitive_kinds
+                .iter()
+                .map(|item| format!("- {item}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        },
+        build_spec
+            .acceptance_targets
+            .iter()
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        build_spec
+            .implementation_notes
+            .iter()
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    fs::write(stub_root.join("README.md"), readme)?;
+
+    let stub_payload = serde_json::json!({
+        "request_id": request.request_id,
+        "raw_request": request.raw_request,
+        "interpreted_goal": plan.interpreted_goal,
+        "active_project": request.active_project,
+        "active_project_family_id": active_spec.and_then(|spec| spec.family_id.as_ref().map(|id| id.as_str().to_string())),
+        "active_project_tool_kind": active_spec.and_then(|spec| spec.tool_kind.clone()),
+        "candidate_family_ids": build_spec.candidate_family_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        "requested_capabilities": build_spec.requested_capabilities,
+        "constraints": build_spec.constraints,
+        "acceptance_targets": build_spec.acceptance_targets,
+        "implementation_notes": build_spec.implementation_notes,
+        "suggested_proof_seed_template_id": build_spec.suggested_proof_seed_template_id,
+        "suggested_proof_seed_bundle_id": build_spec.suggested_proof_seed_bundle_id,
+    });
+
+    for artifact in &build_spec.suggested_artifacts {
+        let artifact_path = stub_root.join(artifact);
+        if artifact.ends_with(".json") {
+            persist_json_pretty(&artifact_path, &stub_payload)?;
+        } else if !artifact_path.exists() {
+            fs::write(
+                artifact_path,
+                "Fill this stub in as the deterministic extension lane is implemented.\n",
+            )?;
+        }
+    }
+
+    Ok(stub_root)
+}
+
+fn unresolved_scaffold_layers(build_spec: &FallbackBuildSpec) -> Vec<&'static str> {
+    if build_spec.suggested_extension_kind == "proof_harness_bundle" {
+        return vec!["proof_harness"];
+    }
+    let mut layers = Vec::new();
+    if !build_spec.missing_family_build_primitive_classes.is_empty() {
+        layers.push("family_build");
+    }
+    if !build_spec.missing_patch_primitive_classes.is_empty()
+        || build_spec.suggested_extension_kind == "patch_recipe"
+    {
+        layers.push("patch");
+    }
+    if !build_spec.missing_helper_primitive_kinds.is_empty()
+        || build_spec.suggested_extension_kind == "helper_lane"
+    {
+        layers.push("helper");
+    }
+    if !build_spec.suggested_bridge_capabilities.is_empty()
+        || build_spec.suggested_extension_kind == "chattycog_bridge_lane"
+    {
+        layers.push("bridge");
+    }
+    if layers.is_empty() {
+        layers.push("family_build");
+    }
+    layers
+}
+
+fn scaffold_primary_file(build_spec: &FallbackBuildSpec) -> &'static str {
+    let layers = unresolved_scaffold_layers(build_spec);
+    if layers.len() > 1 {
+        return "composition_bundle.json";
+    }
+    match layers[0] {
+        "proof_harness" => "proof_template_manifest.json",
+        "patch" => "patch_recipe.json",
+        "helper" => "helper_lane.json",
+        "bridge" => "bridge_lane.json",
+        _ => "family_manifest.json",
+    }
+}
+
+fn fallback_question(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    active_spec: Option<&ProjectSpec>,
+    chattycog_shape: &ChattyCogFallbackShape,
+) -> String {
+    if matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch)) {
+        let project_name = request
+            .active_project
+            .as_deref()
+            .or_else(|| active_spec.map(|spec| spec.project_name.as_str()))
+            .unwrap_or("the active project");
+        format!(
+            "What concrete capability or output should the patch add to {}?",
+            project_name
+        )
+    } else if chattycog_shape.is_chattycog_request && chattycog_shape.has_hosting_conflict {
+        format!(
+            "Should this ChattyCog module be hosted as a webview, a native window, or a ChattyCog workspace surface? Valid modes: {}.",
+            chattycog_shape.valid_hosting_modes.join(", ")
+        )
+    } else if chattycog_shape.is_chattycog_request
+        && chattycog_shape.requested_hosting_mode.is_none()
+        && plan.inferred_family_candidates.is_empty()
+    {
+        format!(
+            "Which ChattyCog hosting mode should this module use: {}?",
+            chattycog_shape.valid_hosting_modes.join(", ")
+        )
+    } else if chattycog_shape.is_chattycog_request
+        && chattycog_shape.exceeds_current_contract
+    {
+        format!(
+            "Which ChattyCog hosting mode should this module use, and which unsupported capability should be deferred or moved into a new deterministic lane? Valid modes: {}.",
+            chattycog_shape.valid_hosting_modes.join(", ")
+        )
+    } else if chattycog_shape.is_chattycog_request
+        && !chattycog_shape.unsupported_bridge_capabilities.is_empty()
+    {
+        format!(
+            "Which ChattyCog bridge capabilities are actually required here? Requested unsupported lanes: {}. Currently supported lanes: {}.",
+            chattycog_shape.unsupported_bridge_capabilities.join(", "),
+            chattycog_shape.supported_bridge_capabilities.join(", ")
+        )
+    } else if plan.inferred_family_candidates.is_empty() {
+        "What concrete substrate or stack should this build target?".into()
+    } else {
+        "What concrete project shape should the host use for this request?".into()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct ChattyCogFallbackShape {
+    is_chattycog_request: bool,
+    requested_hosting_mode: Option<String>,
+    valid_hosting_modes: Vec<String>,
+    requested_bridge_capabilities: Vec<String>,
+    supported_bridge_capabilities: Vec<String>,
+    unsupported_bridge_capabilities: Vec<String>,
+    has_hosting_conflict: bool,
+    exceeds_current_contract: bool,
+}
+
+fn derive_chattycog_fallback_shape(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+) -> ChattyCogFallbackShape {
+    let lower = request.raw_request.to_ascii_lowercase();
+    let requested_modes = infer_chattycog_hosting_modes_from_text(&lower);
+    let requested_hosting_mode =
+        infer_chattycog_hosting_mode_from_text(&lower).map(str::to_string);
+    let requested_bridge_capabilities = infer_chattycog_bridge_capabilities_from_text(&lower);
+    let supported_bridge_capabilities = supported_chattycog_bridge_capabilities();
+    let unsupported_bridge_capabilities = requested_bridge_capabilities
+        .iter()
+        .filter(|cap| !supported_bridge_capabilities.iter().any(|item| item == *cap))
+        .cloned()
+        .collect::<Vec<_>>();
+    let is_chattycog_request =
+        matches!(request.exoskeleton_target, Some(chatty_factory_core::ExoskeletonTarget::ChattyCog))
+            || request_mentions_chattycog(&lower);
+    let has_hosting_conflict = requested_modes.len() > 1
+        || plan
+            .constraints
+            .iter()
+            .any(|item| item.contains("multiple ChattyCog hosting modes"));
+    let exceeds_current_contract = plan.constraints.iter().any(|item| {
+        item.contains("requested ChattyCog module shape exceeds the current deterministic hosting contract")
+    });
+
+    ChattyCogFallbackShape {
+        is_chattycog_request,
+        requested_hosting_mode,
+        valid_hosting_modes: chattycog_valid_hosting_modes(),
+        requested_bridge_capabilities,
+        supported_bridge_capabilities,
+        unsupported_bridge_capabilities,
+        has_hosting_conflict,
+        exceeds_current_contract,
+    }
+}
+
+fn fallback_recommended_next_step(
+    request: &chatty_factory_core::RequestRecord,
+    chattycog_shape: &ChattyCogFallbackShape,
+) -> String {
+    if matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch)) {
+        "clarify the follow-up capability or add a new deterministic patch lane".into()
+    } else if chattycog_shape.is_chattycog_request && chattycog_shape.has_hosting_conflict {
+        "pick one ChattyCog hosting mode and rerun the request, or add a new hosted-module lane if the module must span multiple hosting contracts".into()
+    } else if chattycog_shape.is_chattycog_request && chattycog_shape.exceeds_current_contract {
+        "pick one supported ChattyCog hosting mode first, then move the unsupported helper/service capability into a new deterministic family or helper lane".into()
+    } else if chattycog_shape.is_chattycog_request
+        && !chattycog_shape.unsupported_bridge_capabilities.is_empty()
+    {
+        "drop the unsupported bridge lanes from the request, or add a new deterministic ChattyCog bridge implementation lane before building this module".into()
+    } else if chattycog_shape.is_chattycog_request && chattycog_shape.requested_hosting_mode.is_none()
+    {
+        "clarify whether the module should be hosted as a webview, a native window, or a ChattyCog workspace surface".into()
+    } else {
+        "clarify the target substrate or add a new deterministic family".into()
+    }
+}
+
+fn dedup_strings(mut items: Vec<String>) -> Vec<String> {
+    items.sort();
+    items.dedup();
+    items
+}
+
+fn classify_extension_kind(
+    request_mode: Option<&chatty_factory_core::RequestMode>,
+    bridge_capabilities: &[String],
+    missing_family_build_primitive_classes: &[String],
+    missing_patch_primitive_classes: &[String],
+    missing_helper_primitive_kinds: &[String],
+    chattycog_bridge_only: bool,
+    helper_only: bool,
+) -> String {
+    let has_family = !missing_family_build_primitive_classes.is_empty();
+    let has_patch = !missing_patch_primitive_classes.is_empty()
+        || matches!(request_mode, Some(chatty_factory_core::RequestMode::Patch));
+    let has_helper = !missing_helper_primitive_kinds.is_empty();
+    let has_bridge = !bridge_capabilities.is_empty() || chattycog_bridge_only;
+    let layer_count = [has_family, has_patch, has_helper, has_bridge]
+        .into_iter()
+        .filter(|flag| *flag)
+        .count();
+
+    if layer_count > 1 {
+        return "composition_bundle".into();
+    }
+    if has_bridge {
+        return "chattycog_bridge_lane".into();
+    }
+    if helper_only || has_helper {
+        return "helper_lane".into();
+    }
+    if has_patch {
+        return "patch_recipe".into();
+    }
+    "family".into()
+}
+
+fn extension_slug(build_spec: &FallbackBuildSpec, bundle_name: &str) -> String {
+    match build_spec.suggested_extension_kind.as_str() {
+        "proof_harness_bundle" => build_spec
+            .suggested_patch_kind
+            .clone()
+            .unwrap_or_else(|| format!("proof_manifest_{bundle_name}")),
+        "composition_bundle" => {
+            let family = build_spec
+                .suggested_family_id
+                .as_ref()
+                .map(|id| id.as_str().to_string())
+                .unwrap_or_else(|| "unknown_family".to_string());
+            let tool = build_spec
+                .suggested_tool_kind
+                .clone()
+                .unwrap_or_else(|| "unknown_tool".to_string());
+            format!("{family}_{tool}_composition_bundle")
+        }
+        "patch_recipe" => {
+            let family = build_spec
+                .suggested_family_id
+                .as_ref()
+                .map(|id| id.as_str().to_string())
+                .unwrap_or_else(|| "unknown_family".to_string());
+            let tool = build_spec
+                .suggested_tool_kind
+                .clone()
+                .unwrap_or_else(|| "unknown_tool".to_string());
+            let patch = build_spec
+                .suggested_patch_kind
+                .clone()
+                .unwrap_or_else(|| "new_patch_lane".to_string());
+            format!("{family}_{tool}_{patch}")
+        }
+        "chattycog_bridge_lane" => {
+            let bridge = if build_spec.suggested_bridge_capabilities.is_empty() {
+                "bridge_lane".to_string()
+            } else {
+                build_spec.suggested_bridge_capabilities.join("_")
+            };
+            format!("chattycog_{bridge}")
+        }
+        "helper_lane" => format!("{bundle_name}_helper_lane"),
+        _ => build_spec
+            .suggested_family_id
+            .as_ref()
+            .map(|id| id.as_str().to_string())
+            .unwrap_or_else(|| format!("{bundle_name}_family")),
+    }
+}
+
+fn build_proof_harness_starter_manifests(
+    build_spec: &FallbackBuildSpec,
+    bundle_name: &str,
+) -> (PrimitiveProofTemplate, CapabilityComparisonBundle) {
+    let template_id = build_spec
+        .suggested_patch_kind
+        .clone()
+        .unwrap_or_else(|| format!("proof_manifest_{bundle_name}"));
+    let bundle_id = format!("{template_id}_equivalence");
+    let target_family_ids = if !build_spec.candidate_family_ids.is_empty() {
+        build_spec.candidate_family_ids.clone()
+    } else {
+        build_spec
+            .suggested_family_id
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>()
+    };
+    let seeded = closest_built_in_proof_seed(build_spec, &target_family_ids);
+    let (mut template, mut bundle) = if let Some((base_template, base_bundle)) = seeded {
+        (base_template, base_bundle)
+    } else {
+        (
+            PrimitiveProofTemplate {
+                template_id: String::new(),
+                template_kind: "cross_family_proof_manifest".into(),
+                display_label: String::new(),
+                description: String::new(),
+                shared_request_seed: String::new(),
+                target_family_ids: Vec::new(),
+                required_composition_layers: vec![
+                    "family_build".into(),
+                    "patch".into(),
+                    "helper".into(),
+                ],
+                required_family_build_primitive_classes: build_spec
+                    .missing_family_build_primitive_classes
+                    .clone(),
+                required_patch_primitive_classes: build_spec
+                    .missing_patch_primitive_classes
+                    .clone(),
+                required_helper_primitive_kinds: build_spec
+                    .missing_helper_primitive_kinds
+                    .clone(),
+                required_capability_classes: build_spec.requested_capabilities.clone(),
+                optional_capability_classes: Vec::new(),
+                optional_enrichment_steps: Vec::new(),
+                execution_recipe: chatty_factory_core::PrimitiveProofExecutionRecipe::default(),
+                created_at: None,
+            },
+            CapabilityComparisonBundle {
+                bundle_id: String::new(),
+                bundle_kind: "cross_surface_equivalence".into(),
+                required_shared_capability_classes: build_spec.requested_capabilities.clone(),
+                optional_shared_capability_classes: Vec::new(),
+                tolerated_left_only_capability_classes: Vec::new(),
+                tolerated_right_only_capability_classes: Vec::new(),
+                minimum_shared_capability_count: build_spec.requested_capabilities.len(),
+                equivalence_mode: "required_shared_bundle".into(),
+                policy: chatty_factory_core::CapabilityComparisonPolicy::default(),
+                created_at: None,
+            },
+        )
+    };
+
+    let family_request_bindings = if target_family_ids.is_empty() {
+        template.execution_recipe.family_request_bindings.clone()
+    } else if same_family_set(
+        &template.target_family_ids,
+        &target_family_ids,
+    ) {
+        template.execution_recipe.family_request_bindings.clone()
+    } else {
+        target_family_ids
+            .iter()
+            .map(|family_id| proof_family_request_binding_for(family_id, build_spec))
+            .collect::<Vec<_>>()
+    };
+    let enrichment_bindings = if target_family_ids.is_empty() {
+        template.execution_recipe.enrichment_bindings.clone()
+    } else {
+        let filtered = template
+            .execution_recipe
+            .enrichment_bindings
+            .iter()
+            .filter(|binding| target_family_ids.contains(&binding.family_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if filtered.is_empty() {
+            default_proof_enrichment_bindings(&target_family_ids)
+        } else {
+            filtered
+        }
+    };
+
+    template.template_id = template_id.clone();
+    template.template_kind = build_spec
+        .suggested_tool_kind
+        .clone()
+        .unwrap_or_else(|| template.template_kind.clone());
+    template.display_label = template_id.replace('_', " ");
+    template.description = format!(
+        "Starter proof template scaffolded from fallback request `{}`.",
+        build_spec.request_id
+    );
+    template.shared_request_seed = proof_shared_request_seed(build_spec);
+    if !target_family_ids.is_empty() {
+        template.target_family_ids = target_family_ids.clone();
+    }
+    merge_missing_strings(
+        &mut template.required_family_build_primitive_classes,
+        &build_spec.missing_family_build_primitive_classes,
+    );
+    merge_missing_strings(
+        &mut template.required_patch_primitive_classes,
+        &build_spec.missing_patch_primitive_classes,
+    );
+    merge_missing_strings(
+        &mut template.required_helper_primitive_kinds,
+        &build_spec.missing_helper_primitive_kinds,
+    );
+    merge_missing_strings(
+        &mut template.required_capability_classes,
+        &build_spec.requested_capabilities,
+    );
+    template.execution_recipe.comparison_bundle_id = bundle_id.clone();
+    template.execution_recipe.family_request_bindings = family_request_bindings;
+    template.execution_recipe.enrichment_bindings = enrichment_bindings;
+    template.created_at = None;
+
+    bundle.bundle_id = bundle_id;
+    merge_missing_strings(
+        &mut bundle.required_shared_capability_classes,
+        &build_spec.requested_capabilities,
+    );
+    bundle.minimum_shared_capability_count = bundle
+        .minimum_shared_capability_count
+        .max(bundle.required_shared_capability_classes.len());
+    bundle.policy.comparison_receipt_prefix = format!("cross-family-{template_id}");
+    bundle.policy.comparison_label = template_id.replace('_', " ");
+    if bundle.policy.shared_note_label.is_empty() {
+        bundle.policy.shared_note_label = "shared proof capabilities".into();
+    }
+    if bundle.policy.left_only_note_label.is_empty() {
+        bundle.policy.left_only_note_label = "left-only capabilities".into();
+    }
+    if bundle.policy.right_only_note_label.is_empty() {
+        bundle.policy.right_only_note_label = "right-only capabilities".into();
+    }
+    if bundle.policy.required_bundle_note_label.is_empty() {
+        bundle.policy.required_bundle_note_label = "required shared bundle".into();
+    }
+    if bundle.policy.success_note_template.is_empty() {
+        bundle.policy.success_note_template =
+            "both projects satisfy the shared {comparison_label} capability bundle".into();
+    }
+    if bundle.policy.failure_note_template.is_empty() {
+        bundle.policy.failure_note_template =
+            "shared {comparison_label} capability bundle is incomplete across the compared projects"
+                .into();
+    }
+    bundle.created_at = None;
+    (template, bundle)
+}
+
+fn closest_built_in_proof_seed(
+    build_spec: &FallbackBuildSpec,
+    target_family_ids: &[FamilyId],
+) -> Option<(PrimitiveProofTemplate, CapabilityComparisonBundle)> {
+    let mut best: Option<(i32, PrimitiveProofTemplate, CapabilityComparisonBundle)> = None;
+    for template in built_in_proof_templates() {
+        let Some(bundle) = built_in_capability_comparison_bundles()
+            .into_iter()
+            .find(|bundle| bundle.bundle_id == template.execution_recipe.comparison_bundle_id)
+        else {
+            continue;
+        };
+        let mut score = 0;
+        for family_id in target_family_ids {
+            if template.target_family_ids.contains(family_id) {
+                score += 5;
+            }
+        }
+        for capability in &build_spec.requested_capabilities {
+            if template.required_capability_classes.contains(capability) {
+                score += 4;
+            } else if template.optional_capability_classes.contains(capability) {
+                score += 2;
+            }
+            if bundle.required_shared_capability_classes.contains(capability) {
+                score += 4;
+            } else if bundle.optional_shared_capability_classes.contains(capability) {
+                score += 2;
+            }
+        }
+        if build_spec
+            .interpreted_goal
+            .to_lowercase()
+            .contains("filtered reporting")
+            && template.template_id.contains("filtered_reporting")
+        {
+            score += 6;
+        }
+        if build_spec
+            .interpreted_goal
+            .to_lowercase()
+            .contains("status reporting")
+            && template.template_id.contains("status_reporting")
+        {
+            score += 6;
+        }
+        if build_spec
+            .interpreted_goal
+            .to_lowercase()
+            .contains("summary reporting")
+            && template.template_id.contains("summary_reporting")
+        {
+            score += 6;
+        }
+        if build_spec
+            .interpreted_goal
+            .to_lowercase()
+            .contains("monitor")
+            && template.template_id.contains("helper_monitoring")
+        {
+            score += 6;
+        }
+        if best.as_ref().map(|(best_score, _, _)| score > *best_score).unwrap_or(true) {
+            best = Some((score, template, bundle));
+        }
+    }
+    best.map(|(_, template, bundle)| (template, bundle))
+}
+
+fn suggested_proof_seed_for_build_spec(
+    build_spec: &FallbackBuildSpec,
+) -> Option<(String, String)> {
+    closest_built_in_proof_seed(build_spec, &build_spec.candidate_family_ids)
+        .map(|(template, bundle)| (template.template_id, bundle.bundle_id))
+}
+
+fn default_proof_enrichment_bindings(
+    target_family_ids: &[FamilyId],
+) -> Vec<PrimitiveProofEnrichmentBinding> {
+    let mut bindings = Vec::new();
+    if target_family_ids.contains(&FamilyId::RustCliTool) {
+        bindings.push(PrimitiveProofEnrichmentBinding {
+            family_id: FamilyId::RustCliTool,
+            missing_capability_classes: vec!["export_surface".into()],
+            patch_requests: vec!["add json output".into()],
+        });
+    }
+    if target_family_ids.contains(&FamilyId::StaticWebDashboard) {
+        bindings.push(PrimitiveProofEnrichmentBinding {
+            family_id: FamilyId::StaticWebDashboard,
+            missing_capability_classes: vec!["status_surface".into()],
+            patch_requests: vec!["add progress banner".into()],
+        });
+    }
+    bindings
+}
+
+fn merge_missing_strings(target: &mut Vec<String>, extras: &[String]) {
+    for item in extras {
+        if !target.contains(item) {
+            target.push(item.clone());
+        }
+    }
+}
+
+fn same_family_set(left: &[FamilyId], right: &[FamilyId]) -> bool {
+    left.len() == right.len() && left.iter().all(|family_id| right.contains(family_id))
+}
+
+fn proof_family_label(family_id: &FamilyId) -> String {
+    match family_id {
+        FamilyId::StaticWebDashboard => "static web dashboard".into(),
+        FamilyId::ChattycogWebviewModule => "ChattyCog webview module".into(),
+        FamilyId::ChattycogNativeWindowModule => "ChattyCog native window module".into(),
+        FamilyId::ChattycogWorkspaceModule => "ChattyCog workspace module".into(),
+        FamilyId::PythonCliTool => "python cli tool".into(),
+        FamilyId::RustCliTool => "rust cli tool".into(),
+    }
+}
+
+fn proof_family_request_binding_for(
+    family_id: &FamilyId,
+    build_spec: &FallbackBuildSpec,
+) -> PrimitiveProofFamilyRequestBinding {
+    let goal = build_spec.interpreted_goal.to_lowercase();
+    match family_id {
+        FamilyId::StaticWebDashboard => PrimitiveProofFamilyRequestBinding {
+            family_id: family_id.clone(),
+            family_label: "static web dashboard".into(),
+            request_template:
+                "build me a {family_label} with a local inbox helper that {request_tail}".into(),
+            empty_request_fallback: Some(format!(
+                "build me a static web dashboard with a local inbox helper that {}",
+                goal
+            )),
+        },
+        FamilyId::RustCliTool => PrimitiveProofFamilyRequestBinding {
+            family_id: family_id.clone(),
+            family_label: "rust cli log summary tool".into(),
+            request_template:
+                "build me a {family_label} with a local inbox helper that {request_tail}".into(),
+            empty_request_fallback: Some(format!(
+                "build me a rust cli log summary tool with a local inbox helper that {}",
+                goal
+            )),
+        },
+        FamilyId::PythonCliTool => PrimitiveProofFamilyRequestBinding {
+            family_id: family_id.clone(),
+            family_label: "python cli reporting tool".into(),
+            request_template:
+                "build me a {family_label} with a local inbox helper that {request_tail}".into(),
+            empty_request_fallback: Some(format!(
+                "build me a python cli reporting tool with a local inbox helper that {}",
+                goal
+            )),
+        },
+        _ => PrimitiveProofFamilyRequestBinding {
+            family_id: family_id.clone(),
+            family_label: proof_family_label(family_id),
+            request_template: "build me a {family_label} that {request_tail}".into(),
+            empty_request_fallback: Some(format!(
+                "build me a {} that {}",
+                proof_family_label(family_id),
+                goal
+            )),
+        },
+    }
+}
+
+fn proof_shared_request_seed(build_spec: &FallbackBuildSpec) -> String {
+    let requested = &build_spec.requested_capabilities;
+    if requested.iter().any(|item| item == "helper_monitoring_surface")
+        || requested.iter().any(|item| item == "helper_preview_surface")
+    {
+        return "build me a helper-backed monitoring surface that watches two inbox lanes, filters module assets to txt, and surfaces processed file status and preview".into();
+    }
+    if requested.iter().any(|item| item == "report_output")
+        && requested.iter().any(|item| item == "lane_filter_rules")
+    {
+        return "build me a helper-backed filtered reporting surface that filters inputs and emits report output".into();
+    }
+    if requested.iter().any(|item| item == "report_output") {
+        return "build me a helper-backed summary reporting surface that exposes status plus report output".into();
+    }
+    build_spec.interpreted_goal.clone()
+}
+
+fn load_pending_extension_registry(path: &Path) -> Result<PendingExtensionRegistry> {
+    if !path.exists() {
+        return Ok(PendingExtensionRegistry {
+            updated_at: chatty_factory_core::timestamp_id("updated"),
+            entries: Vec::new(),
+        });
+    }
+    let mut registry: PendingExtensionRegistry = serde_json::from_str(&fs::read_to_string(path)?)?;
+    let mut deduped_entries: Vec<PendingExtensionEntry> = Vec::new();
+    for mut entry in registry.entries.drain(..) {
+        normalize_pending_extension_entry(&mut entry);
+        if entry.status == "pending_implementation" {
+            if let Some(existing) = deduped_entries.iter_mut().find(|existing| {
+                existing.status == "pending_implementation"
+                    && pending_extension_profile_matches(existing, &entry)
+            }) {
+                existing.extension_kind = entry.extension_kind.clone();
+                existing.source_stub_path = entry.source_stub_path.clone();
+                existing.scaffold_root = entry.scaffold_root.clone();
+                existing.integrated_paths = entry.integrated_paths.clone();
+                existing.requested_capabilities = entry.requested_capabilities.clone();
+                existing.bridge_capabilities = entry.bridge_capabilities.clone();
+                continue;
+            }
+        }
+        deduped_entries.push(entry);
+    }
+    registry.entries = deduped_entries;
+    Ok(registry)
+}
+
+fn normalize_pending_extension_entry(entry: &mut PendingExtensionEntry) {
+    if entry.unresolved_layers.len() > 1 && entry.extension_kind != "composition_bundle" {
+        entry.extension_kind = "composition_bundle".into();
+    }
+}
+
+fn pending_extension_profile_matches(
+    left: &PendingExtensionEntry,
+    right: &PendingExtensionEntry,
+) -> bool {
+    left.family_id == right.family_id
+        && left.tool_kind == right.tool_kind
+        && left.patch_kind == right.patch_kind
+        && left.unresolved_layers == right.unresolved_layers
+        && left.missing_family_build_primitive_classes
+            == right.missing_family_build_primitive_classes
+        && left.missing_patch_primitive_classes == right.missing_patch_primitive_classes
+        && left.missing_helper_primitive_kinds == right.missing_helper_primitive_kinds
+}
+
+fn validate_composition_bundle_artifacts(entry: &PendingExtensionEntry) -> Result<Vec<String>> {
+    let mut blockers = Vec::new();
+    let has_patch_layer = entry.unresolved_layers.iter().any(|layer| layer == "patch");
+    let has_family_layer = entry
+        .unresolved_layers
+        .iter()
+        .any(|layer| layer == "family_build");
+    let has_helper_layer = entry.unresolved_layers.iter().any(|layer| layer == "helper");
+    let has_bridge_layer = entry.unresolved_layers.iter().any(|layer| layer == "bridge");
+
+    let patch_recipe_path = entry
+        .integrated_paths
+        .iter()
+        .find(|path| path.contains("operator_registry") && path.contains("patch_recipes"))
+        .map(PathBuf::from);
+    let acceptance_path = entry
+        .integrated_paths
+        .iter()
+        .find(|path| path.contains("operator_registry") && path.contains("acceptance_recipes"))
+        .map(PathBuf::from);
+    let family_manifest_path = entry
+        .integrated_paths
+        .iter()
+        .find(|path| path.contains("families\\manifests") || path.contains("families/manifests"))
+        .map(PathBuf::from);
+    let helper_lane_path = entry
+        .integrated_paths
+        .iter()
+        .find(|path| path.contains("helper_lanes"))
+        .map(PathBuf::from);
+    let bridge_lane_path = entry
+        .integrated_paths
+        .iter()
+        .find(|path| path.contains("bridge_lanes"))
+        .map(PathBuf::from);
+
+    if has_patch_layer {
+        match patch_recipe_path {
+            Some(ref path) if path.exists() => {
+                let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+                if value
+                    .get("recipe_id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .is_empty()
+                {
+                    blockers.push("patch recipe starter is missing recipe_id".into());
+                }
+            }
+            _ => blockers.push("missing integrated patch recipe starter".into()),
+        }
+        match acceptance_path {
+            Some(ref path) if path.exists() => {}
+            _ => blockers.push("missing integrated acceptance recipe starter".into()),
+        }
+    }
+
+    if has_family_layer {
+        match family_manifest_path {
+            Some(ref path) if path.exists() => {
+                let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+                let provided = value
+                    .get("provided_build_primitive_classes")
+                    .and_then(serde_json::Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if provided.is_empty() {
+                    blockers.push("family manifest starter is missing provided_build_primitive_classes".into());
+                }
+            }
+            _ => blockers.push("missing integrated family manifest starter".into()),
+        }
+    }
+
+    if has_helper_layer {
+        match helper_lane_path {
+            Some(ref path) if path.exists() => {}
+            _ => blockers.push("missing integrated helper lane starter".into()),
+        }
+    }
+
+    if has_bridge_layer {
+        match bridge_lane_path {
+            Some(ref path) if path.exists() => {}
+            _ => blockers.push("missing integrated bridge lane starter".into()),
+        }
+    }
+
+    Ok(blockers)
+}
+
+fn validate_proof_harness_bundle_artifacts(entry: &PendingExtensionEntry) -> Result<Vec<String>> {
+    let mut blockers = Vec::new();
+    let template_path = entry
+        .integrated_paths
+        .iter()
+        .find(|path| path.contains("proof_harness") && path.contains("templates"))
+        .map(PathBuf::from);
+    let bundle_path = entry
+        .integrated_paths
+        .iter()
+        .find(|path| path.contains("proof_harness") && path.contains("bundles"))
+        .map(PathBuf::from);
+
+    let template: Option<PrimitiveProofTemplate> = match template_path {
+        Some(ref path) if path.exists() => {
+            Some(serde_json::from_str(&fs::read_to_string(path)?)?)
+        }
+        _ => {
+            blockers.push("missing proof template manifest".into());
+            None
+        }
+    };
+    let bundle: Option<CapabilityComparisonBundle> = match bundle_path {
+        Some(ref path) if path.exists() => {
+            Some(serde_json::from_str(&fs::read_to_string(path)?)?)
+        }
+        _ => {
+            blockers.push("missing capability comparison bundle manifest".into());
+            None
+        }
+    };
+
+    if let (Some(template), Some(bundle)) = (template.as_ref(), bundle.as_ref()) {
+        if template.template_id.is_empty() {
+            blockers.push("proof template manifest is missing template_id".into());
+        }
+        if bundle.bundle_id.is_empty() {
+            blockers.push("comparison bundle manifest is missing bundle_id".into());
+        }
+        if template.execution_recipe.comparison_bundle_id != bundle.bundle_id {
+            blockers.push(format!(
+                "proof template comparison bundle mismatch: expected `{}` but found `{}`",
+                template.execution_recipe.comparison_bundle_id,
+                bundle.bundle_id
+            ));
+        }
+        blockers.extend(validate_proof_harness_contract(template, bundle));
+    }
+
+    Ok(blockers)
+}
+
+fn load_proof_harness_bundle_manifests(
+    entry: &PendingExtensionEntry,
+) -> Result<(PrimitiveProofTemplate, CapabilityComparisonBundle)> {
+    let template_path = entry
+        .integrated_paths
+        .iter()
+        .find(|path| path.contains("proof_harness") && path.contains("templates"))
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("missing proof template manifest path"))?;
+    let bundle_path = entry
+        .integrated_paths
+        .iter()
+        .find(|path| path.contains("proof_harness") && path.contains("bundles"))
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("missing capability comparison bundle manifest path"))?;
+    let template = serde_json::from_str(&fs::read_to_string(&template_path)?)?;
+    let bundle = serde_json::from_str(&fs::read_to_string(&bundle_path)?)?;
+    Ok((template, bundle))
+}
+
+fn validate_proof_harness_contract(
+    template: &PrimitiveProofTemplate,
+    bundle: &CapabilityComparisonBundle,
+) -> Vec<String> {
+    let mut blockers = Vec::new();
+    if template.target_family_ids.is_empty() {
+        blockers.push("proof template must target at least one family".into());
+    }
+    if template.required_capability_classes.is_empty() {
+        blockers.push("proof template must require at least one capability class".into());
+    }
+    if template.execution_recipe.comparison_bundle_id.is_empty() {
+        blockers.push("proof template execution recipe is missing comparison_bundle_id".into());
+    }
+    let mut covered_families = Vec::new();
+    for binding in &template.execution_recipe.family_request_bindings {
+        if covered_families.contains(&binding.family_id) {
+            blockers.push(format!(
+                "duplicate family request binding for `{}`",
+                binding.family_id.as_str()
+            ));
+        } else {
+            covered_families.push(binding.family_id.clone());
+        }
+    }
+    for family_id in &template.target_family_ids {
+        if !covered_families.contains(family_id) {
+            blockers.push(format!(
+                "missing family request binding for target family `{}`",
+                family_id.as_str()
+            ));
+        }
+    }
+    for binding in &template.execution_recipe.enrichment_bindings {
+        if !template.target_family_ids.contains(&binding.family_id) {
+            blockers.push(format!(
+                "enrichment binding references non-target family `{}`",
+                binding.family_id.as_str()
+            ));
+        }
+    }
+    if bundle.required_shared_capability_classes.is_empty() {
+        blockers.push("comparison bundle must require at least one shared capability class".into());
+    }
+    if bundle.minimum_shared_capability_count == 0 {
+        blockers.push("comparison bundle minimum_shared_capability_count must be greater than zero".into());
+    }
+    if bundle.minimum_shared_capability_count > bundle.required_shared_capability_classes.len() + bundle.optional_shared_capability_classes.len() {
+        blockers.push("comparison bundle minimum_shared_capability_count exceeds declared shared capability classes".into());
+    }
+    if bundle.policy.comparison_receipt_prefix.is_empty() {
+        blockers.push("comparison bundle policy is missing comparison_receipt_prefix".into());
+    }
+    if bundle.policy.comparison_label.is_empty() {
+        blockers.push("comparison bundle policy is missing comparison_label".into());
+    }
+    blockers
+}
+
+fn evaluate_proof_harness_quality(
+    workspace_root: &Path,
+    template: &PrimitiveProofTemplate,
+    bundle: &CapabilityComparisonBundle,
+    seed_template_id: Option<&str>,
+    seed_bundle_id: Option<&str>,
+) -> (String, Vec<String>) {
+    let mut notes = Vec::new();
+    let blockers = validate_proof_harness_contract(template, bundle);
+    if blockers.is_empty() {
+        notes.push("structurally valid proof manifest contract".into());
+    } else {
+        notes.extend(blockers);
+        return ("needs_contract_fix".into(), notes);
+    }
+
+    let template_resolved =
+        proof_template_by_id_from_root(workspace_root, &template.template_id, None).is_some();
+    let bundle_resolved =
+        capability_comparison_bundle_by_id_from_root(workspace_root, &bundle.bundle_id).is_some();
+    if template_resolved && bundle_resolved {
+        notes.push("workspace proof catalog resolves template and bundle ids".into());
+    } else {
+        if !template_resolved {
+            notes.push(format!(
+                "workspace proof catalog does not resolve template `{}`",
+                template.template_id
+            ));
+        }
+        if !bundle_resolved {
+            notes.push(format!(
+                "workspace proof catalog does not resolve comparison bundle `{}`",
+                bundle.bundle_id
+            ));
+        }
+        return ("catalog_unresolved".into(), notes);
+    }
+
+    if let Some(seed_template_id) = seed_template_id {
+        notes.push(format!("seeded from built-in template `{seed_template_id}`"));
+    }
+    if let Some(seed_bundle_id) = seed_bundle_id {
+        notes.push(format!("seeded from built-in comparison bundle `{seed_bundle_id}`"));
+    }
+
+    if let Some(receipt) = latest_proof_harness_receipt_for_template(workspace_root, &template.template_id) {
+        notes.push(format!("latest paired proof receipt: {}", receipt.receipt_id));
+        if receipt.equivalent_capability_fulfillment {
+            notes.push("latest proof run passed equivalence".into());
+            ("passing".into(), notes)
+        } else {
+            notes.push("latest proof run is runnable but not yet equivalent".into());
+            ("runnable_diverged".into(), notes)
+        }
+    } else {
+        notes.push("no paired proof receipt found yet for this template".into());
+        ("catalog_resolved".into(), notes)
+    }
+}
+
+fn latest_proof_harness_receipt_for_template(
+    workspace_root: &Path,
+    template_id: &str,
+) -> Option<PrimitiveProofHarnessReceipt> {
+    let root = workspace_root
+        .join("runtime")
+        .join("cross_family_paired_proof_receipts");
+    let entries = fs::read_dir(root).ok()?;
+    let mut receipts = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("json"))
+                .unwrap_or(false)
+        })
+        .filter_map(|path| {
+            let contents = fs::read_to_string(&path).ok()?;
+            let receipt = serde_json::from_str::<PrimitiveProofHarnessReceipt>(&contents).ok()?;
+            if receipt.proof_template_id == template_id {
+                Some(receipt)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    receipts.sort_by(|a, b| a.receipt_id.cmp(&b.receipt_id));
+    receipts.pop()
+}
+
+fn latest_passing_proof_harness_receipt_for_template(
+    workspace_root: &Path,
+    template_id: &str,
+) -> Option<PrimitiveProofHarnessReceipt> {
+    let root = workspace_root
+        .join("runtime")
+        .join("cross_family_paired_proof_receipts");
+    let entries = fs::read_dir(root).ok()?;
+    let mut receipts = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("json"))
+                .unwrap_or(false)
+        })
+        .filter_map(|path| {
+            let contents = fs::read_to_string(&path).ok()?;
+            let receipt = serde_json::from_str::<PrimitiveProofHarnessReceipt>(&contents).ok()?;
+            if receipt.proof_template_id == template_id && receipt.equivalent_capability_fulfillment
+            {
+                Some(receipt)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    receipts.sort_by(|a, b| a.receipt_id.cmp(&b.receipt_id));
+    receipts.pop()
+}
+
+fn load_existing_proof_lineage_receipt(
+    runtime_root: &Path,
+    template_id: &str,
+) -> Option<ProofLineageReceipt> {
+    let path = runtime_root
+        .join("proof_lineage_receipts")
+        .join(format!("{template_id}.json"));
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<ProofLineageReceipt>(&contents).ok()
+}
+
+fn normalize_json_value_for_seed_diff(
+    value: &mut serde_json::Value,
+    fields_to_remove: &[&str],
+) {
+    if let serde_json::Value::Object(map) = value {
+        for field in fields_to_remove {
+            map.remove(*field);
+        }
+    }
+}
+
+fn normalized_template_seed_value(
+    template: &PrimitiveProofTemplate,
+    include_bindings: bool,
+) -> serde_json::Value {
+    let mut value = serde_json::to_value(template).unwrap_or(serde_json::Value::Null);
+    normalize_json_value_for_seed_diff(
+        &mut value,
+        &["template_id", "display_label", "description", "shared_request_seed", "created_at"],
+    );
+    if let serde_json::Value::Object(map) = &mut value {
+        if let Some(serde_json::Value::Object(recipe)) = map.get_mut("execution_recipe") {
+            recipe.remove("comparison_bundle_id");
+            if !include_bindings {
+                recipe.remove("family_request_bindings");
+                recipe.remove("enrichment_bindings");
+            }
+        }
+    }
+    value
+}
+
+fn normalized_bundle_seed_value(
+    bundle: &CapabilityComparisonBundle,
+    include_policy: bool,
+) -> serde_json::Value {
+    let mut value = serde_json::to_value(bundle).unwrap_or(serde_json::Value::Null);
+    normalize_json_value_for_seed_diff(&mut value, &["bundle_id", "created_at"]);
+    if let serde_json::Value::Object(map) = &mut value {
+        if let Some(policy) = map.get_mut("policy") {
+            if !include_policy {
+                *policy = serde_json::json!({});
+            } else if let serde_json::Value::Object(policy_map) = policy {
+                policy_map.remove("comparison_receipt_prefix");
+                policy_map.remove("comparison_label");
+                policy_map.remove("success_note_template");
+                policy_map.remove("failure_note_template");
+            }
+        }
+    }
+    value
+}
+
+fn stable_json_content_hash<T: Serialize>(value: &T) -> String {
+    let serialized = serde_json::to_vec(value).unwrap_or_default();
+    let mut hasher = DefaultHasher::new();
+    hasher.write(&serialized);
+    format!("{:016x}", hasher.finish())
+}
+
+fn sorted_string_values(values: &[String]) -> Vec<String> {
+    let mut sorted = values.to_vec();
+    sorted.sort();
+    sorted
+}
+
+fn infer_closest_proof_seed_ids(
+    template: &PrimitiveProofTemplate,
+    bundle: &CapabilityComparisonBundle,
+) -> Option<(String, String)> {
+    let current_target_families = template
+        .target_family_ids
+        .iter()
+        .map(|family| family.as_str().to_string())
+        .collect::<Vec<_>>();
+    let current_required_caps = template.required_capability_classes.clone();
+    let current_required_shared = bundle.required_shared_capability_classes.clone();
+
+    let mut best: Option<(usize, String, String)> = None;
+    for candidate_template in built_in_proof_templates() {
+        let Some(candidate_bundle) = built_in_capability_comparison_bundles()
+            .into_iter()
+            .find(|candidate| {
+                candidate.bundle_id == candidate_template.execution_recipe.comparison_bundle_id
+            })
+        else {
+            continue;
+        };
+
+        let candidate_target_families = candidate_template
+            .target_family_ids
+            .iter()
+            .map(|family| family.as_str().to_string())
+            .collect::<Vec<_>>();
+        let target_family_score = current_target_families
+            .iter()
+            .filter(|family| candidate_target_families.contains(*family))
+            .count();
+        let capability_score = current_required_caps
+            .iter()
+            .filter(|cap| candidate_template.required_capability_classes.contains(*cap))
+            .count();
+        let shared_score = current_required_shared
+            .iter()
+            .filter(|cap| candidate_bundle.required_shared_capability_classes.contains(*cap))
+            .count();
+        let score = target_family_score * 4 + capability_score * 3 + shared_score * 3;
+        if score == 0 {
+            continue;
+        }
+        match &best {
+            Some((best_score, _, _)) if *best_score >= score => {}
+            _ => {
+                best = Some((
+                    score,
+                    candidate_template.template_id.clone(),
+                    candidate_bundle.bundle_id.clone(),
+                ));
+            }
+        }
+    }
+    best.map(|(_, template_id, bundle_id)| (template_id, bundle_id))
+}
+
+fn classify_proof_harness_drift(
+    template: &PrimitiveProofTemplate,
+    bundle: &CapabilityComparisonBundle,
+    seed_template_id: Option<&str>,
+    seed_bundle_id: Option<&str>,
+) -> (String, Vec<String>) {
+    let mut notes = Vec::new();
+    let Some(seed_template_id) = seed_template_id else {
+        notes.push("no seed template id recorded for this proof".into());
+        return ("unseeded".into(), notes);
+    };
+    let Some(seed_bundle_id) = seed_bundle_id else {
+        notes.push("no seed comparison bundle id recorded for this proof".into());
+        return ("unseeded".into(), notes);
+    };
+    let Some(seed_template) = proof_template_by_id(seed_template_id, None) else {
+        notes.push(format!(
+            "built-in seed template `{seed_template_id}` could not be resolved"
+        ));
+        return ("drifted_risky".into(), notes);
+    };
+    let Some(seed_bundle) = capability_comparison_bundle_by_id(seed_bundle_id) else {
+        notes.push(format!(
+            "built-in seed comparison bundle `{seed_bundle_id}` could not be resolved"
+        ));
+        return ("drifted_risky".into(), notes);
+    };
+
+    if normalized_template_seed_value(template, true)
+        == normalized_template_seed_value(&seed_template, true)
+        && normalized_bundle_seed_value(bundle, true)
+            == normalized_bundle_seed_value(&seed_bundle, true)
+    {
+        notes.push("current proof manifest matches its recorded seed after id/label normalization".into());
+        return ("seed_aligned".into(), notes);
+    }
+
+    if normalized_template_seed_value(template, false)
+        == normalized_template_seed_value(&seed_template, false)
+        && normalized_bundle_seed_value(bundle, false)
+            == normalized_bundle_seed_value(&seed_bundle, false)
+    {
+        notes.push("proof changed request bindings or comparison wording while preserving seed structure".into());
+        return ("lightly_customized".into(), notes);
+    }
+
+    let current_target_families = template
+        .target_family_ids
+        .iter()
+        .map(|family| family.as_str().to_string())
+        .collect::<Vec<_>>();
+    let seed_target_families = seed_template
+        .target_family_ids
+        .iter()
+        .map(|family| family.as_str().to_string())
+        .collect::<Vec<_>>();
+    let current_required_caps = sorted_string_values(&template.required_capability_classes);
+    let seed_required_caps = sorted_string_values(&seed_template.required_capability_classes);
+    let current_required_shared =
+        sorted_string_values(&bundle.required_shared_capability_classes);
+    let seed_required_shared =
+        sorted_string_values(&seed_bundle.required_shared_capability_classes);
+    let current_layers = sorted_string_values(&template.required_composition_layers);
+    let seed_layers = sorted_string_values(&seed_template.required_composition_layers);
+
+    let mut risky = false;
+    if current_target_families != seed_target_families {
+        risky = true;
+        notes.push(format!(
+            "target families changed from [{}] to [{}]",
+            seed_target_families.join(", "),
+            current_target_families.join(", ")
+        ));
+    }
+
+    let missing_seed_caps = seed_required_caps
+        .iter()
+        .filter(|cap| !current_required_caps.contains(*cap))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing_seed_caps.is_empty() {
+        risky = true;
+        notes.push(format!(
+            "current proof removed seed-required capability classes: {}",
+            missing_seed_caps.join(", ")
+        ));
+    }
+
+    let missing_seed_shared = seed_required_shared
+        .iter()
+        .filter(|cap| !current_required_shared.contains(*cap))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing_seed_shared.is_empty() {
+        risky = true;
+        notes.push(format!(
+            "current comparison bundle removed seed-required shared capabilities: {}",
+            missing_seed_shared.join(", ")
+        ));
+    }
+
+    if bundle.minimum_shared_capability_count < seed_bundle.minimum_shared_capability_count {
+        risky = true;
+        notes.push(format!(
+            "minimum shared capability count dropped from {} to {}",
+            seed_bundle.minimum_shared_capability_count,
+            bundle.minimum_shared_capability_count
+        ));
+    }
+    if bundle.equivalence_mode != seed_bundle.equivalence_mode {
+        risky = true;
+        notes.push(format!(
+            "equivalence mode changed from `{}` to `{}`",
+            seed_bundle.equivalence_mode, bundle.equivalence_mode
+        ));
+    }
+    if current_layers != seed_layers {
+        risky = true;
+        notes.push(format!(
+            "required composition layers changed from [{}] to [{}]",
+            seed_layers.join(", "),
+            current_layers.join(", ")
+        ));
+    }
+
+    if risky {
+        return ("drifted_risky".into(), notes);
+    }
+
+    notes.push("proof diverged from its seed in structural details without shrinking required coverage".into());
+    ("structurally_customized".into(), notes)
+}
+
+fn persist_proof_lineage_receipt(
+    runtime_root: &Path,
+    receipt: &ProofLineageReceipt,
+) -> Result<PathBuf> {
+    let dir = runtime_root.join("proof_lineage_receipts");
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.json", receipt.proof_template_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_proof_governance_refresh_status(
+    runtime_root: &Path,
+    status: &ProofGovernanceRefreshStatus,
+) -> Result<PathBuf> {
+    let path = runtime_root.join("proof_governance_refresh_status.json");
+    persist_json_pretty(&path, status)?;
+    Ok(path)
+}
+
+fn persist_composition_governance_receipt(
+    runtime_root: &Path,
+    receipt: &CompositionGovernanceReceipt,
+) -> Result<PathBuf> {
+    let dir = runtime_root.join("composition_governance_receipts");
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.json", receipt.entry_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_composition_governance_refresh_status(
+    runtime_root: &Path,
+    status: &CompositionGovernanceRefreshStatus,
+) -> Result<PathBuf> {
+    let path = runtime_root.join("composition_governance_refresh_status.json");
+    persist_json_pretty(&path, status)?;
+    Ok(path)
+}
+
+fn persist_patch_governance_receipt(
+    runtime_root: &Path,
+    receipt: &PatchGovernanceReceipt,
+) -> Result<PathBuf> {
+    let dir = runtime_root.join("patch_governance_receipts");
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.json", receipt.entry_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_patch_governance_refresh_status(
+    runtime_root: &Path,
+    status: &PatchGovernanceRefreshStatus,
+) -> Result<PathBuf> {
+    let path = runtime_root.join("patch_governance_refresh_status.json");
+    persist_json_pretty(&path, status)?;
+    Ok(path)
+}
+
+fn persist_project_patch_readiness_receipt(
+    runtime_root: &Path,
+    receipt: &ProjectPatchReadinessReceipt,
+) -> Result<PathBuf> {
+    let dir = runtime_root.join("project_patch_readiness_receipts");
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.json", receipt.project_name));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_project_patch_readiness_refresh_status(
+    runtime_root: &Path,
+    status: &ProjectPatchReadinessRefreshStatus,
+) -> Result<PathBuf> {
+    let path = runtime_root.join("project_patch_readiness_refresh_status.json");
+    persist_json_pretty(&path, status)?;
+    Ok(path)
+}
+
+fn persist_helper_governance_receipt(
+    runtime_root: &Path,
+    receipt: &HelperGovernanceReceipt,
+) -> Result<PathBuf> {
+    let dir = runtime_root.join("helper_governance_receipts");
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.json", receipt.entry_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_helper_governance_refresh_status(
+    runtime_root: &Path,
+    status: &HelperGovernanceRefreshStatus,
+) -> Result<PathBuf> {
+    let path = runtime_root.join("helper_governance_refresh_status.json");
+    persist_json_pretty(&path, status)?;
+    Ok(path)
+}
+
+fn persist_bridge_governance_receipt(
+    runtime_root: &Path,
+    receipt: &BridgeGovernanceReceipt,
+) -> Result<PathBuf> {
+    let dir = runtime_root.join("bridge_governance_receipts");
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.json", receipt.entry_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_bridge_governance_refresh_status(
+    runtime_root: &Path,
+    status: &BridgeGovernanceRefreshStatus,
+) -> Result<PathBuf> {
+    let path = runtime_root.join("bridge_governance_refresh_status.json");
+    persist_json_pretty(&path, status)?;
+    Ok(path)
+}
+
+fn persist_family_governance_receipt(
+    runtime_root: &Path,
+    receipt: &FamilyGovernanceReceipt,
+) -> Result<PathBuf> {
+    let dir = runtime_root.join("family_governance_receipts");
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.json", receipt.family_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_family_governance_refresh_status(
+    runtime_root: &Path,
+    status: &FamilyGovernanceRefreshStatus,
+) -> Result<PathBuf> {
+    let path = runtime_root.join("family_governance_refresh_status.json");
+    persist_json_pretty(&path, status)?;
+    Ok(path)
+}
+
+fn persist_template_governance_receipt(
+    runtime_root: &Path,
+    receipt: &TemplateGovernanceReceipt,
+) -> Result<PathBuf> {
+    let dir = runtime_root.join("template_governance_receipts");
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.json", receipt.template_bundle_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_template_governance_refresh_status(
+    runtime_root: &Path,
+    status: &TemplateGovernanceRefreshStatus,
+) -> Result<PathBuf> {
+    let path = runtime_root.join("template_governance_refresh_status.json");
+    persist_json_pretty(&path, status)?;
+    Ok(path)
+}
+
+fn discover_template_governance_bundles(
+    workspace_root: &Path,
+) -> Result<Vec<TemplateGovernanceBundle>> {
+    let mut bundles = Vec::new();
+    let templates_root = workspace_root.join("templates");
+    for category in ["families", "patches", "helpers", "wrappers"] {
+        let category_root = templates_root.join(category);
+        if !category_root.exists() {
+            continue;
+        }
+        for entry in fs::read_dir(&category_root)? {
+            let entry = entry?;
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(dir_name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            let mut artifact_paths = Vec::new();
+            collect_template_artifacts(&path, &mut artifact_paths)?;
+            artifact_paths.sort();
+            let template_bundle_id = format!("{category}_{dir_name}");
+            bundles.push(TemplateGovernanceBundle {
+                template_bundle_id,
+                template_category: category.to_string(),
+                template_root: path,
+                artifact_paths,
+            });
+        }
+    }
+    bundles.sort_by(|left, right| left.template_bundle_id.cmp(&right.template_bundle_id));
+    Ok(bundles)
+}
+
+fn collect_template_artifacts(root: &Path, artifacts: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_template_artifacts(&path, artifacts)?;
+        } else if path.is_file() {
+            artifacts.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn validate_template_governance_bundle(bundle: &TemplateGovernanceBundle) -> Result<Vec<String>> {
+    let mut blockers = Vec::new();
+    if !bundle.template_root.exists() {
+        blockers.push("missing template root".into());
+        return Ok(blockers);
+    }
+    if bundle.artifact_paths.is_empty() {
+        blockers.push("template bundle has no artifact files".into());
+    }
+    if !bundle.artifact_paths.iter().all(|path| path.exists()) {
+        blockers.push("template bundle is missing one or more artifact files".into());
+    }
+    Ok(blockers)
+}
+
+fn template_artifact_hashes(bundle: &TemplateGovernanceBundle) -> BTreeMap<String, String> {
+    let mut hashes = BTreeMap::new();
+    for path in &bundle.artifact_paths {
+        if let Ok(bytes) = fs::read(path) {
+            let mut hasher = DefaultHasher::new();
+            hasher.write(&bytes);
+            hashes.insert(path.display().to_string(), format!("{:016x}", hasher.finish()));
+        }
+    }
+    hashes
+}
+
+fn load_existing_template_governance_receipt(
+    runtime_root: &Path,
+    template_bundle_id: &str,
+) -> Option<TemplateGovernanceReceipt> {
+    let path = runtime_root
+        .join("template_governance_receipts")
+        .join(format!("{template_bundle_id}.json"));
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<TemplateGovernanceReceipt>(&contents).ok()
+}
+
+fn classify_template_bundle_drift(
+    bundle: &TemplateGovernanceBundle,
+    artifact_hashes: &BTreeMap<String, String>,
+) -> (String, Vec<String>) {
+    let mut notes = Vec::new();
+    if artifact_hashes.is_empty() {
+        notes.push("no template artifact hashes could be computed".into());
+        return ("drifted_risky".into(), notes);
+    }
+    let file_count = bundle.artifact_paths.len();
+    if file_count == 0 {
+        notes.push("template bundle has no artifact files".into());
+        return ("unseeded".into(), notes);
+    }
+    if file_count <= 3 {
+        notes.push("template bundle matches the current governed starter archetype".into());
+        return ("seed_aligned".into(), notes);
+    }
+    if file_count <= 6 {
+        notes.push("template bundle carries a broader multi-file surface than the narrow starter archetype".into());
+        return ("lightly_customized".into(), notes);
+    }
+    notes.push("template bundle carries a broad multi-file surface that exceeds the narrow starter archetype".into());
+    ("structurally_customized".into(), notes)
+}
+
+fn classify_template_change_since_last_live(
+    previous_receipt: Option<&TemplateGovernanceReceipt>,
+    current_hashes: &BTreeMap<String, String>,
+) -> (String, Vec<String>, BTreeMap<String, String>) {
+    let mut notes = Vec::new();
+    if let Some(previous) = previous_receipt {
+        let baseline = if !previous.baseline_artifact_hashes.is_empty() {
+            previous.baseline_artifact_hashes.clone()
+        } else if previous.change_since_last_live_status == "baseline_recorded"
+            || previous.change_since_last_live_status == "stable_since_last_live"
+        {
+            previous.artifact_hashes.clone()
+        } else {
+            BTreeMap::new()
+        };
+        if !baseline.is_empty() {
+            if &baseline == current_hashes {
+                notes.push("current template artifacts match the last known-good live baseline".into());
+                return ("stable_since_last_live".into(), notes, baseline);
+            }
+            notes.push("template artifacts changed since the last known-good live baseline".into());
+            return ("changed_since_last_live".into(), notes, baseline);
+        }
+    }
+    notes.push("current template bundle establishes the first live baseline".into());
+    ("baseline_recorded".into(), notes, current_hashes.clone())
+}
+
+fn refresh_template_bundle_governance(
+    workspace_root: &Path,
+    runtime_root: &Path,
+    bundle: &TemplateGovernanceBundle,
+) -> Result<()> {
+    let artifact_hashes = template_artifact_hashes(bundle);
+    let drift = classify_template_bundle_drift(bundle, &artifact_hashes);
+    let previous_receipt =
+        load_existing_template_governance_receipt(runtime_root, &bundle.template_bundle_id);
+    let baseline =
+        classify_template_change_since_last_live(previous_receipt.as_ref(), &artifact_hashes);
+    let receipt = TemplateGovernanceReceipt {
+        receipt_id: chatty_factory_core::timestamp_id("template-governance"),
+        template_bundle_id: bundle.template_bundle_id.clone(),
+        template_category: bundle.template_category.clone(),
+        template_root: Some(bundle.template_root.display().to_string()),
+        artifact_paths: bundle
+            .artifact_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+        artifact_hashes: artifact_hashes.clone(),
+        drift_status: drift.0,
+        drift_notes: drift.1,
+        change_since_last_live_status: baseline.0,
+        change_since_last_live_notes: baseline.1,
+        baseline_artifact_hashes: baseline.2,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let _ = workspace_root;
+    persist_template_governance_receipt(runtime_root, &receipt)?;
+    Ok(())
+}
+
+fn family_manifest_path_for(workspace_root: &Path, family_id: &FamilyId) -> PathBuf {
+    workspace_root
+        .join("families")
+        .join("manifests")
+        .join(format!("{}.json", family_id.as_str()))
+}
+
+fn family_artifact_hashes(
+    workspace_root: &Path,
+    family_id: &FamilyId,
+) -> BTreeMap<String, String> {
+    let mut hashes = BTreeMap::new();
+    let path = family_manifest_path_for(workspace_root, family_id);
+    if path.exists() {
+        if let Ok(bytes) = fs::read(&path) {
+            let mut hasher = DefaultHasher::new();
+            hasher.write(&bytes);
+            hashes.insert(path.display().to_string(), format!("{:016x}", hasher.finish()));
+        }
+    }
+    hashes
+}
+
+fn validate_family_governance_artifacts(
+    workspace_root: &Path,
+    manifest: &chatty_factory_core::FamilyCapabilityManifest,
+) -> Result<Vec<String>> {
+    let mut blockers = Vec::new();
+    let path = family_manifest_path_for(workspace_root, &manifest.family_id);
+    if !path.exists() {
+        blockers.push("missing family manifest".into());
+        return Ok(blockers);
+    }
+    let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
+    if value
+        .get("family_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        blockers.push("family manifest is missing family_id".into());
+    }
+    let classes = value
+        .get("provided_build_primitive_classes")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if classes.is_empty() {
+        blockers.push("family manifest is missing provided_build_primitive_classes".into());
+    }
+    let adapters = value
+        .get("primitive_adapters")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if adapters.is_empty() {
+        blockers.push("family manifest is missing primitive_adapters".into());
+    }
+    Ok(blockers)
+}
+
+fn load_existing_family_governance_receipt(
+    runtime_root: &Path,
+    family_id: &str,
+) -> Option<FamilyGovernanceReceipt> {
+    let path = runtime_root
+        .join("family_governance_receipts")
+        .join(format!("{family_id}.json"));
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<FamilyGovernanceReceipt>(&contents).ok()
+}
+
+fn classify_family_manifest_drift(
+    manifest: &chatty_factory_core::FamilyCapabilityManifest,
+    artifact_hashes: &BTreeMap<String, String>,
+) -> (String, Vec<String>) {
+    let mut notes = Vec::new();
+    if artifact_hashes.is_empty() {
+        notes.push("no family-manifest artifact hashes could be computed".into());
+        return ("drifted_risky".into(), notes);
+    }
+    if manifest.provided_build_primitive_classes.is_empty() {
+        notes.push("family manifest has no provided build primitive classes".into());
+        return ("unseeded".into(), notes);
+    }
+    if manifest.primitive_adapters.is_empty() {
+        notes.push("family manifest has no primitive adapters".into());
+        return ("drifted_risky".into(), notes);
+    }
+    if manifest.provided_build_primitive_classes.len() > 2 || manifest.primitive_adapters.len() > 6
+    {
+        notes.push("family manifest carries a broader primitive class or adapter surface than the narrow seed archetype".into());
+        return ("structurally_customized".into(), notes);
+    }
+    notes.push("family manifest matches the current governed family-manifest archetype".into());
+    ("seed_aligned".into(), notes)
+}
+
+fn classify_family_change_since_last_live(
+    previous_receipt: Option<&FamilyGovernanceReceipt>,
+    current_hashes: &BTreeMap<String, String>,
+) -> (String, Vec<String>, BTreeMap<String, String>) {
+    let mut notes = Vec::new();
+    if let Some(previous) = previous_receipt {
+        let baseline = if !previous.baseline_artifact_hashes.is_empty() {
+            previous.baseline_artifact_hashes.clone()
+        } else if previous.change_since_last_live_status == "baseline_recorded"
+            || previous.change_since_last_live_status == "stable_since_last_live"
+        {
+            previous.artifact_hashes.clone()
+        } else {
+            BTreeMap::new()
+        };
+        if !baseline.is_empty() {
+            if &baseline == current_hashes {
+                notes.push("current family-manifest artifacts match the last known-good live baseline".into());
+                return ("stable_since_last_live".into(), notes, baseline);
+            }
+            notes.push("family-manifest artifacts changed since the last known-good live baseline".into());
+            return ("changed_since_last_live".into(), notes, baseline);
+        }
+    }
+    notes.push("current family manifest establishes the first live baseline".into());
+    ("baseline_recorded".into(), notes, current_hashes.clone())
+}
+
+fn refresh_family_manifest_governance(
+    workspace_root: &Path,
+    runtime_root: &Path,
+    manifest: &chatty_factory_core::FamilyCapabilityManifest,
+) -> Result<()> {
+    let artifact_hashes = family_artifact_hashes(workspace_root, &manifest.family_id);
+    let drift = classify_family_manifest_drift(manifest, &artifact_hashes);
+    let previous_receipt =
+        load_existing_family_governance_receipt(runtime_root, manifest.family_id.as_str());
+    let baseline =
+        classify_family_change_since_last_live(previous_receipt.as_ref(), &artifact_hashes);
+    let receipt = FamilyGovernanceReceipt {
+        receipt_id: chatty_factory_core::timestamp_id("family-governance"),
+        family_id: manifest.family_id.as_str().to_string(),
+        manifest_path: Some(
+            family_manifest_path_for(workspace_root, &manifest.family_id)
+                .display()
+                .to_string(),
+        ),
+        primary_substrate: manifest.primary_substrate.clone(),
+        supported_tool_kinds: manifest.supported_tool_kinds.clone(),
+        provided_build_primitive_classes: manifest.provided_build_primitive_classes.clone(),
+        primitive_adapter_ids: manifest
+            .primitive_adapters
+            .iter()
+            .map(|adapter| adapter.adapter_id.clone())
+            .collect(),
+        artifact_hashes: artifact_hashes.clone(),
+        drift_status: drift.0.clone(),
+        drift_notes: drift.1.clone(),
+        change_since_last_live_status: baseline.0.clone(),
+        change_since_last_live_notes: baseline.1.clone(),
+        baseline_artifact_hashes: baseline.2.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    persist_family_governance_receipt(runtime_root, &receipt)?;
+    Ok(())
+}
+
+fn composition_artifact_hashes(entry: &PendingExtensionEntry) -> BTreeMap<String, String> {
+    let mut hashes = BTreeMap::new();
+    for path in &entry.integrated_paths {
+        let path_buf = PathBuf::from(path);
+        if path_buf.exists() {
+            if let Ok(bytes) = fs::read(&path_buf) {
+                let mut hasher = DefaultHasher::new();
+                hasher.write(&bytes);
+                hashes.insert(path.clone(), format!("{:016x}", hasher.finish()));
+            }
+        }
+    }
+    hashes
+}
+
+fn composition_acceptance_recipe_paths(entry: &PendingExtensionEntry) -> Vec<String> {
+    let mut paths = entry
+        .integrated_paths
+        .iter()
+        .filter(|path| path.contains("operator_registry") && path.contains("acceptance_recipes"))
+        .cloned()
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
+
+fn patch_recipe_governance_artifacts(
+    entry: &PendingExtensionEntry,
+) -> (Option<PathBuf>, Option<PathBuf>) {
+    let patch_recipe_path = entry
+        .integrated_paths
+        .iter()
+        .find(|path| path.contains("operator_registry") && path.contains("patch_recipes"))
+        .map(PathBuf::from);
+    let acceptance_recipe_path = entry
+        .integrated_paths
+        .iter()
+        .find(|path| path.contains("operator_registry") && path.contains("acceptance_recipes"))
+        .map(PathBuf::from);
+    (patch_recipe_path, acceptance_recipe_path)
+}
+
+fn patch_acceptance_contract_note(acceptance_recipe_path: Option<&Path>) -> Option<String> {
+    acceptance_recipe_path.map(|path| {
+        format!(
+            "paired acceptance contract is governed with this patch lane: {}",
+            path.display()
+        )
+    })
+}
+
+fn composition_acceptance_contract_note(acceptance_recipe_paths: &[String]) -> Option<String> {
+    if acceptance_recipe_paths.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "patch-side acceptance contracts are governed inside this composition bundle: {} artifact(s)",
+            acceptance_recipe_paths.len()
+        ))
+    }
+}
+
+fn patch_artifact_hashes(entry: &PendingExtensionEntry) -> BTreeMap<String, String> {
+    let mut hashes = BTreeMap::new();
+    let (patch_recipe_path, acceptance_recipe_path) = patch_recipe_governance_artifacts(entry);
+    for path in [patch_recipe_path, acceptance_recipe_path].into_iter().flatten() {
+        if path.exists() {
+            if let Ok(bytes) = fs::read(&path) {
+                let mut hasher = DefaultHasher::new();
+                hasher.write(&bytes);
+                hashes.insert(path.display().to_string(), format!("{:016x}", hasher.finish()));
+            }
+        }
+    }
+    hashes
+}
+
+fn helper_lane_governance_artifacts(entry: &PendingExtensionEntry) -> Option<PathBuf> {
+    entry.integrated_paths
+        .iter()
+        .find(|path| path.contains("helper_lanes"))
+        .map(PathBuf::from)
+}
+
+fn helper_artifact_hashes(entry: &PendingExtensionEntry) -> BTreeMap<String, String> {
+    let mut hashes = BTreeMap::new();
+    if let Some(path) = helper_lane_governance_artifacts(entry) {
+        if path.exists() {
+            if let Ok(bytes) = fs::read(&path) {
+                let mut hasher = DefaultHasher::new();
+                hasher.write(&bytes);
+                hashes.insert(path.display().to_string(), format!("{:016x}", hasher.finish()));
+            }
+        }
+    }
+    hashes
+}
+
+fn bridge_lane_governance_artifacts(entry: &PendingExtensionEntry) -> Option<PathBuf> {
+    entry.integrated_paths
+        .iter()
+        .find(|path| path.contains("bridge_lanes"))
+        .map(PathBuf::from)
+}
+
+fn bridge_artifact_hashes(entry: &PendingExtensionEntry) -> BTreeMap<String, String> {
+    let mut hashes = BTreeMap::new();
+    if let Some(path) = bridge_lane_governance_artifacts(entry) {
+        if path.exists() {
+            if let Ok(bytes) = fs::read(&path) {
+                let mut hasher = DefaultHasher::new();
+                hasher.write(&bytes);
+                hashes.insert(path.display().to_string(), format!("{:016x}", hasher.finish()));
+            }
+        }
+    }
+    hashes
+}
+
+fn validate_helper_lane_governance_artifacts(
+    entry: &PendingExtensionEntry,
+) -> Result<Vec<String>> {
+    let mut blockers = Vec::new();
+    let helper_lane_path = helper_lane_governance_artifacts(entry);
+    match helper_lane_path {
+        Some(ref path) if path.exists() => {
+            let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+            if value
+                .get("helper_lane_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .is_empty()
+            {
+                blockers.push("helper lane is missing helper_lane_id".into());
+            }
+            let primitive_kinds = value
+                .get("missing_helper_primitive_kinds")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if primitive_kinds.is_empty() {
+                blockers.push("helper lane is missing missing_helper_primitive_kinds".into());
+            }
+        }
+        _ => blockers.push("missing integrated helper lane".into()),
+    }
+    Ok(blockers)
+}
+
+fn validate_bridge_lane_governance_artifacts(
+    entry: &PendingExtensionEntry,
+) -> Result<Vec<String>> {
+    let mut blockers = Vec::new();
+    let bridge_lane_path = bridge_lane_governance_artifacts(entry);
+    match bridge_lane_path {
+        Some(ref path) if path.exists() => {
+            let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+            if value
+                .get("bridge_lane_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .is_empty()
+            {
+                blockers.push("bridge lane is missing bridge_lane_id".into());
+            }
+            let capabilities = value
+                .get("bridge_capabilities")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if capabilities.is_empty() {
+                blockers.push("bridge lane is missing bridge_capabilities".into());
+            }
+        }
+        _ => blockers.push("missing integrated bridge lane".into()),
+    }
+    Ok(blockers)
+}
+
+fn validate_patch_recipe_governance_artifacts(
+    entry: &PendingExtensionEntry,
+) -> Result<Vec<String>> {
+    let mut blockers = Vec::new();
+    let (patch_recipe_path, acceptance_recipe_path) = patch_recipe_governance_artifacts(entry);
+
+    match patch_recipe_path {
+        Some(ref path) if path.exists() => {
+            let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+            if value
+                .get("recipe_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .is_empty()
+            {
+                blockers.push("patch recipe is missing recipe_id".into());
+            }
+            if value
+                .get("patch_kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .is_empty()
+            {
+                blockers.push("patch recipe is missing patch_kind".into());
+            }
+        }
+        _ => blockers.push("missing integrated patch recipe".into()),
+    }
+
+    match acceptance_recipe_path {
+        Some(ref path) if path.exists() => {}
+        _ => blockers.push("missing integrated acceptance recipe".into()),
+    }
+
+    Ok(blockers)
+}
+
+fn classify_composition_bundle_drift(
+    entry: &PendingExtensionEntry,
+    artifact_hashes: &BTreeMap<String, String>,
+) -> (String, Vec<String>) {
+    let mut notes = Vec::new();
+    if entry.unresolved_layers.is_empty() {
+        notes.push("composition bundle has no unresolved layer profile recorded".into());
+        return ("unseeded".into(), notes);
+    }
+    if artifact_hashes.is_empty() {
+        notes.push("no integrated artifact hashes could be computed".into());
+        return ("drifted_risky".into(), notes);
+    }
+    if entry.unresolved_layers.len() > 2
+        || !entry.missing_helper_primitive_kinds.is_empty()
+        || !entry.bridge_capabilities.is_empty()
+    {
+        notes.push("composition bundle spans a broader mixed-layer shape than the current baseline archetype".into());
+        return ("structurally_customized".into(), notes);
+    }
+    if entry
+        .unresolved_layers
+        .iter()
+        .any(|layer| layer == "family_build")
+        && entry.unresolved_layers.iter().any(|layer| layer == "patch")
+    {
+        notes.push("composition bundle matches the current family_build + patch mixed-layer archetype".into());
+        return ("seed_aligned".into(), notes);
+    }
+    notes.push("composition bundle does not match a known mixed-layer archetype yet".into());
+    ("unseeded".into(), notes)
+}
+
+fn load_existing_composition_governance_receipt(
+    runtime_root: &Path,
+    entry_id: &str,
+) -> Option<CompositionGovernanceReceipt> {
+    let path = runtime_root
+        .join("composition_governance_receipts")
+        .join(format!("{entry_id}.json"));
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<CompositionGovernanceReceipt>(&contents).ok()
+}
+
+fn classify_composition_change_since_last_live(
+    previous_receipt: Option<&CompositionGovernanceReceipt>,
+    current_hashes: &BTreeMap<String, String>,
+    entry_status: &str,
+) -> (
+    String,
+    Vec<String>,
+    BTreeMap<String, String>,
+) {
+    let mut notes = Vec::new();
+    if let Some(previous) = previous_receipt {
+        let baseline = if !previous.baseline_artifact_hashes.is_empty() {
+            previous.baseline_artifact_hashes.clone()
+        } else if previous.change_since_last_live_status == "baseline_recorded"
+            || previous.change_since_last_live_status == "stable_since_last_live"
+        {
+            previous.artifact_hashes.clone()
+        } else {
+            BTreeMap::new()
+        };
+        if !baseline.is_empty() {
+            if &baseline == current_hashes {
+                notes.push("current integrated artifacts match the last known-good live baseline".into());
+                return ("stable_since_last_live".into(), notes, baseline);
+            }
+            notes.push("integrated artifacts changed since the last known-good live baseline".into());
+            return (
+                if entry_status == "fully_live" {
+                    "changed_since_last_live".into()
+                } else {
+                    "regressed_since_last_live".into()
+                },
+                notes,
+                baseline,
+            );
+        }
+    }
+    if entry_status == "fully_live" {
+        notes.push("current fully live composition bundle establishes the first live baseline".into());
+        return (
+            "baseline_recorded".into(),
+            notes,
+            current_hashes.clone(),
+        );
+    }
+    notes.push("no fully live baseline has been recorded yet for this composition bundle".into());
+    (
+        "no_live_baseline".into(),
+        notes,
+        BTreeMap::new(),
+    )
+}
+
+fn refresh_composition_bundle_governance(
+    runtime_root: &Path,
+    entry: &mut PendingExtensionEntry,
+) -> Result<()> {
+    let artifact_hashes = composition_artifact_hashes(entry);
+    let acceptance_recipe_paths = composition_acceptance_recipe_paths(entry);
+    let drift = classify_composition_bundle_drift(entry, &artifact_hashes);
+    let previous_receipt =
+        load_existing_composition_governance_receipt(runtime_root, &entry.entry_id);
+    let baseline =
+        classify_composition_change_since_last_live(previous_receipt.as_ref(), &artifact_hashes, &entry.status);
+    let receipt = CompositionGovernanceReceipt {
+        receipt_id: chatty_factory_core::timestamp_id("composition-governance"),
+        entry_id: entry.entry_id.clone(),
+        family_id: entry.family_id.clone(),
+        tool_kind: entry.tool_kind.clone(),
+        patch_kind: entry.patch_kind.clone(),
+        unresolved_layers: entry.unresolved_layers.clone(),
+        requested_capabilities: entry.requested_capabilities.clone(),
+        source_stub_path: if entry.source_stub_path.trim().is_empty() {
+            None
+        } else {
+            Some(entry.source_stub_path.clone())
+        },
+        scaffold_root: if entry.scaffold_root.trim().is_empty() {
+            None
+        } else {
+            Some(entry.scaffold_root.clone())
+        },
+        acceptance_recipe_paths: acceptance_recipe_paths.clone(),
+        acceptance_contract_note: composition_acceptance_contract_note(&acceptance_recipe_paths),
+        artifact_hashes: artifact_hashes.clone(),
+        drift_status: drift.0.clone(),
+        drift_notes: drift.1.clone(),
+        change_since_last_live_status: baseline.0.clone(),
+        change_since_last_live_notes: baseline.1.clone(),
+        baseline_artifact_hashes: baseline.2.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let receipt_path = persist_composition_governance_receipt(runtime_root, &receipt)?;
+    entry.composition_lineage_receipt_path = Some(receipt_path.display().to_string());
+    entry.composition_drift_status = Some(drift.0);
+    entry.composition_drift_notes = drift.1;
+    entry.composition_change_since_last_live_status = Some(baseline.0);
+    entry.composition_change_since_last_live_notes = baseline.1;
+    Ok(())
+}
+
+fn load_existing_patch_governance_receipt(
+    runtime_root: &Path,
+    entry_id: &str,
+) -> Option<PatchGovernanceReceipt> {
+    let path = runtime_root
+        .join("patch_governance_receipts")
+        .join(format!("{entry_id}.json"));
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<PatchGovernanceReceipt>(&contents).ok()
+}
+
+fn load_existing_project_patch_readiness_receipt(
+    runtime_root: &Path,
+    project_name: &str,
+) -> Option<ProjectPatchReadinessReceipt> {
+    let path = runtime_root
+        .join("project_patch_readiness_receipts")
+        .join(format!("{project_name}.json"));
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<ProjectPatchReadinessReceipt>(&contents).ok()
+}
+
+fn project_patch_readiness_counts(spec: &ProjectSpec) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for lane in &spec.patch_lanes {
+        let key = if lane.effective_preflight_readiness.trim().is_empty() {
+            "unknown".to_string()
+        } else {
+            lane.effective_preflight_readiness.clone()
+        };
+        *counts.entry(key).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn project_patch_surgical_maturity_counts(spec: &ProjectSpec) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for lane in &spec.patch_lanes {
+        let key = if lane.surgical_maturity.trim().is_empty() {
+            "uncontracted".to_string()
+        } else {
+            lane.surgical_maturity.clone()
+        };
+        *counts.entry(key).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn project_patch_blocked_lane_reasons(spec: &ProjectSpec) -> BTreeMap<String, String> {
+    let mut reasons = BTreeMap::new();
+    for lane in &spec.patch_lanes {
+        match lane.effective_preflight_readiness.as_str() {
+            "dependency_blocked" | "structurally_blocked" | "surface_mismatch" => {
+                let reason = lane.preflight_readiness_reason.trim();
+                if !reason.is_empty() {
+                    reasons.insert(lane.patch_kind.clone(), reason.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    reasons
+}
+
+fn project_patch_superseded_blocked_lane_replacements(
+    spec: &ProjectSpec,
+) -> BTreeMap<String, Vec<String>> {
+    let mut replacements = BTreeMap::new();
+    for lane in &spec.patch_lanes {
+        match lane.effective_preflight_readiness.as_str() {
+            "dependency_blocked" | "structurally_blocked" | "surface_mismatch" => {
+                if !lane.superseded_by_patch_kinds.is_empty() {
+                    replacements.insert(
+                        lane.patch_kind.clone(),
+                        lane.superseded_by_patch_kinds.clone(),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    replacements
+}
+
+fn project_patch_blocker_type_counts(
+    spec: &ProjectSpec,
+) -> (usize, usize) {
+    let mut risky = 0usize;
+    let mut historical = 0usize;
+    for lane in &spec.patch_lanes {
+        match lane.effective_preflight_readiness.as_str() {
+            "dependency_blocked" | "structurally_blocked" | "surface_mismatch" => {
+                if lane.superseded_by_patch_kinds.is_empty() {
+                    risky += 1;
+                } else {
+                    historical += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    (risky, historical)
+}
+
+fn blocked_patch_lane_total(counts: &BTreeMap<String, usize>) -> usize {
+    counts.get("dependency_blocked").copied().unwrap_or_default()
+        + counts.get("structurally_blocked").copied().unwrap_or_default()
+        + counts.get("surface_mismatch").copied().unwrap_or_default()
+}
+
+fn count_projects_with_risky_or_historical_blockers(
+    runtime_root: &Path,
+) -> (usize, usize) {
+    let receipts_dir = runtime_root.join("project_patch_readiness_receipts");
+    let Ok(entries) = fs::read_dir(receipts_dir) else {
+        return (0, 0);
+    };
+    let mut risky_projects = 0usize;
+    let mut historical_projects = 0usize;
+    for entry in entries.flatten() {
+        let Ok(contents) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let Ok(receipt) = serde_json::from_str::<ProjectPatchReadinessReceipt>(&contents) else {
+            continue;
+        };
+        if receipt.risky_blocked_lane_count > 0 {
+            risky_projects += 1;
+        }
+        if receipt.historical_blocked_lane_count > 0 {
+            historical_projects += 1;
+        }
+    }
+    (risky_projects, historical_projects)
+}
+
+fn classify_project_patchability_change(
+    previous_receipt: Option<&ProjectPatchReadinessReceipt>,
+    current_counts: &BTreeMap<String, usize>,
+    current_signature: &str,
+) -> (String, Vec<String>, String, BTreeMap<String, usize>) {
+    let mut notes = Vec::new();
+    let current_blocked = blocked_patch_lane_total(current_counts);
+    let current_ready = current_counts.get("ready").copied().unwrap_or_default();
+
+    if let Some(previous) = previous_receipt {
+        let baseline_counts = if !previous.baseline_readiness_counts.is_empty() {
+            previous.baseline_readiness_counts.clone()
+        } else {
+            previous.readiness_counts.clone()
+        };
+        let baseline_signature = if !previous.baseline_readiness_signature_hash.is_empty() {
+            previous.baseline_readiness_signature_hash.clone()
+        } else {
+            previous.readiness_signature_hash.clone()
+        };
+        let baseline_blocked = blocked_patch_lane_total(&baseline_counts);
+        let baseline_ready = baseline_counts.get("ready").copied().unwrap_or_default();
+
+        if baseline_signature == current_signature {
+            notes.push("project patch readiness matches the recorded patchability baseline".into());
+            return (
+                "stable_since_patchability_baseline".into(),
+                notes,
+                baseline_signature,
+                baseline_counts,
+            );
+        }
+
+        if current_blocked > baseline_blocked || current_ready < baseline_ready {
+            notes.push(
+                "project patch readiness regressed: more lanes are blocked or fewer lanes are immediately ready".into(),
+            );
+            return (
+                "regressed_since_patchability_baseline".into(),
+                notes,
+                baseline_signature,
+                baseline_counts,
+            );
+        }
+
+        if current_blocked < baseline_blocked || current_ready > baseline_ready {
+            notes.push(
+                "project patch readiness improved: fewer lanes are blocked or more lanes are immediately ready".into(),
+            );
+            return (
+                "improved_since_patchability_baseline".into(),
+                notes,
+                current_signature.to_string(),
+                current_counts.clone(),
+            );
+        }
+
+        notes.push(
+            "project patch readiness changed without a simple blocked-lane regression or improvement".into(),
+        );
+        return (
+            "changed_since_patchability_baseline".into(),
+            notes,
+            baseline_signature,
+            baseline_counts,
+        );
+    }
+
+    notes.push("current project patch readiness establishes the first patchability baseline".into());
+    (
+        "baseline_recorded".into(),
+        notes,
+        current_signature.to_string(),
+        current_counts.clone(),
+    )
+}
+
+fn refresh_project_patch_readiness_receipt_for_project(
+    runtime_root: &Path,
+    project_dir: &Path,
+    project_name: &str,
+) -> Result<ProjectPatchReadinessReceipt> {
+    let spec = load_project_spec_with_contract_refresh(project_dir)?;
+    let readiness_counts = project_patch_readiness_counts(&spec);
+    let maturity_counts = project_patch_surgical_maturity_counts(&spec);
+    let blocked_lane_reasons = project_patch_blocked_lane_reasons(&spec);
+    let superseded_blocked_lane_replacements =
+        project_patch_superseded_blocked_lane_replacements(&spec);
+    let blocker_type_counts = project_patch_blocker_type_counts(&spec);
+    let project_spec_path = project_dir.join("ProjectSpec.json");
+    let project_spec_hash = stable_json_content_hash(&spec);
+    let readiness_signature_hash = stable_json_content_hash(&(
+        &readiness_counts,
+        &maturity_counts,
+        &blocked_lane_reasons,
+        &superseded_blocked_lane_replacements,
+    ));
+    let previous_receipt = load_existing_project_patch_readiness_receipt(runtime_root, project_name);
+    let baseline = classify_project_patchability_change(
+        previous_receipt.as_ref(),
+        &readiness_counts,
+        &readiness_signature_hash,
+    );
+
+    let receipt = ProjectPatchReadinessReceipt {
+        receipt_id: chatty_factory_core::timestamp_id("project-patch-readiness"),
+        project_name: project_name.to_string(),
+        family_id: spec.family_id.as_ref().map(|id| id.as_str().to_string()),
+        tool_kind: spec.tool_kind.clone(),
+        request_summary: spec.request_summary.clone(),
+        project_spec_path: project_spec_path.display().to_string(),
+        project_spec_hash,
+        readiness_signature_hash: readiness_signature_hash.clone(),
+        total_patch_lanes: spec.patch_lanes.len(),
+        readiness_counts,
+        patch_surgical_maturity_counts: maturity_counts,
+        blocked_lane_reasons,
+        superseded_blocked_lane_replacements,
+        risky_blocked_lane_count: blocker_type_counts.0,
+        historical_blocked_lane_count: blocker_type_counts.1,
+        change_since_patchability_baseline_status: baseline.0,
+        change_since_patchability_baseline_notes: baseline.1,
+        baseline_readiness_signature_hash: baseline.2,
+        baseline_readiness_counts: baseline.3,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    persist_project_patch_readiness_receipt(runtime_root, &receipt)?;
+    Ok(receipt)
+}
+
+fn classify_patch_recipe_drift(
+    entry: &PendingExtensionEntry,
+    artifact_hashes: &BTreeMap<String, String>,
+    patch_recipe_path: Option<&Path>,
+    acceptance_recipe_path: Option<&Path>,
+) -> (String, Vec<String>) {
+    let mut notes = Vec::new();
+    if entry.patch_kind.as_deref().unwrap_or_default().is_empty()
+        || entry.family_id.as_deref().unwrap_or_default().is_empty()
+    {
+        notes.push("patch recipe entry is missing family or patch identity".into());
+        return ("unseeded".into(), notes);
+    }
+    if artifact_hashes.is_empty() {
+        notes.push("no patch governance artifact hashes could be computed".into());
+        return ("drifted_risky".into(), notes);
+    }
+    if acceptance_recipe_path.is_none() {
+        notes.push("patch recipe has no paired acceptance artifact recorded".into());
+        return ("drifted_risky".into(), notes);
+    }
+    if !entry.requested_capabilities.is_empty() && entry.requested_capabilities.len() > 3 {
+        notes.push("patch recipe carries a broader requested-capability shape than a narrow single-lane baseline".into());
+        return ("structurally_customized".into(), notes);
+    }
+    if patch_recipe_path.is_some() && acceptance_recipe_path.is_some() {
+        notes.push("patch recipe and paired acceptance artifacts are both present".into());
+        if !entry.source_stub_path.trim().is_empty() {
+            notes.push("patch recipe still carries scaffold lineage metadata".into());
+            return ("lightly_customized".into(), notes);
+        }
+        return ("seed_aligned".into(), notes);
+    }
+    notes.push("patch recipe does not match a known governed baseline yet".into());
+    ("unseeded".into(), notes)
+}
+
+fn classify_patch_change_since_last_live(
+    previous_receipt: Option<&PatchGovernanceReceipt>,
+    current_hashes: &BTreeMap<String, String>,
+    entry_status: &str,
+) -> (String, Vec<String>, BTreeMap<String, String>) {
+    let mut notes = Vec::new();
+    if let Some(previous) = previous_receipt {
+        let baseline = if !previous.baseline_artifact_hashes.is_empty() {
+            previous.baseline_artifact_hashes.clone()
+        } else if previous.change_since_last_live_status == "baseline_recorded"
+            || previous.change_since_last_live_status == "stable_since_last_live"
+        {
+            previous.artifact_hashes.clone()
+        } else {
+            BTreeMap::new()
+        };
+        if !baseline.is_empty() {
+            if &baseline == current_hashes {
+                notes.push("current patch artifacts match the last known-good live baseline".into());
+                return ("stable_since_last_live".into(), notes, baseline);
+            }
+            notes.push("patch artifacts changed since the last known-good live baseline".into());
+            return (
+                if entry_status == "fully_live" {
+                    "changed_since_last_live".into()
+                } else {
+                    "regressed_since_last_live".into()
+                },
+                notes,
+                baseline,
+            );
+        }
+    }
+    if entry_status == "fully_live" {
+        notes.push("current fully live patch recipe establishes the first live baseline".into());
+        return ("baseline_recorded".into(), notes, current_hashes.clone());
+    }
+    notes.push("no fully live baseline has been recorded yet for this patch recipe".into());
+    ("no_live_baseline".into(), notes, BTreeMap::new())
+}
+
+fn refresh_patch_recipe_governance(
+    runtime_root: &Path,
+    entry: &mut PendingExtensionEntry,
+) -> Result<()> {
+    let (patch_recipe_path, acceptance_recipe_path) = patch_recipe_governance_artifacts(entry);
+    let artifact_hashes = patch_artifact_hashes(entry);
+    let drift = classify_patch_recipe_drift(
+        entry,
+        &artifact_hashes,
+        patch_recipe_path.as_deref(),
+        acceptance_recipe_path.as_deref(),
+    );
+    let previous_receipt = load_existing_patch_governance_receipt(runtime_root, &entry.entry_id);
+    let baseline = classify_patch_change_since_last_live(
+        previous_receipt.as_ref(),
+        &artifact_hashes,
+        &entry.status,
+    );
+    let acceptance_contract_note =
+        patch_acceptance_contract_note(acceptance_recipe_path.as_deref());
+    let receipt = PatchGovernanceReceipt {
+        receipt_id: chatty_factory_core::timestamp_id("patch-governance"),
+        entry_id: entry.entry_id.clone(),
+        family_id: entry.family_id.clone(),
+        tool_kind: entry.tool_kind.clone(),
+        patch_kind: entry.patch_kind.clone(),
+        requested_capabilities: entry.requested_capabilities.clone(),
+        source_stub_path: if entry.source_stub_path.trim().is_empty() {
+            None
+        } else {
+            Some(entry.source_stub_path.clone())
+        },
+        scaffold_root: if entry.scaffold_root.trim().is_empty() {
+            None
+        } else {
+            Some(entry.scaffold_root.clone())
+        },
+        patch_recipe_path: patch_recipe_path.map(|path| path.display().to_string()),
+        acceptance_recipe_path: acceptance_recipe_path.map(|path| path.display().to_string()),
+        acceptance_contract_note,
+        artifact_hashes: artifact_hashes.clone(),
+        drift_status: drift.0.clone(),
+        drift_notes: drift.1.clone(),
+        change_since_last_live_status: baseline.0.clone(),
+        change_since_last_live_notes: baseline.1.clone(),
+        baseline_artifact_hashes: baseline.2.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let receipt_path = persist_patch_governance_receipt(runtime_root, &receipt)?;
+    entry.patch_lineage_receipt_path = Some(receipt_path.display().to_string());
+    entry.patch_drift_status = Some(drift.0);
+    entry.patch_drift_notes = drift.1;
+    entry.patch_change_since_last_live_status = Some(baseline.0);
+    entry.patch_change_since_last_live_notes = baseline.1;
+    Ok(())
+}
+
+fn load_existing_helper_governance_receipt(
+    runtime_root: &Path,
+    entry_id: &str,
+) -> Option<HelperGovernanceReceipt> {
+    let path = runtime_root
+        .join("helper_governance_receipts")
+        .join(format!("{entry_id}.json"));
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<HelperGovernanceReceipt>(&contents).ok()
+}
+
+fn classify_helper_lane_drift(
+    entry: &PendingExtensionEntry,
+    artifact_hashes: &BTreeMap<String, String>,
+    helper_lane_path: Option<&Path>,
+) -> (String, Vec<String>) {
+    let mut notes = Vec::new();
+    if artifact_hashes.is_empty() {
+        notes.push("no helper-lane artifact hashes could be computed".into());
+        return ("drifted_risky".into(), notes);
+    }
+    if helper_lane_path.is_none() {
+        notes.push("helper governance entry has no integrated helper lane artifact".into());
+        return ("drifted_risky".into(), notes);
+    }
+    if entry.missing_helper_primitive_kinds.is_empty() {
+        notes.push("helper lane has no recorded helper primitive kinds".into());
+        return ("unseeded".into(), notes);
+    }
+    if entry.missing_helper_primitive_kinds.len() > 2 || !entry.requested_capabilities.is_empty() {
+        notes.push("helper lane carries a broader helper-primitive or requested-capability shape than the narrow seed archetype".into());
+        return ("structurally_customized".into(), notes);
+    }
+    if !entry.source_stub_path.trim().is_empty() {
+        notes.push("helper lane still carries scaffold lineage metadata".into());
+        return ("lightly_customized".into(), notes);
+    }
+    notes.push("helper lane matches the current governed helper-lane archetype".into());
+    ("seed_aligned".into(), notes)
+}
+
+fn classify_helper_change_since_last_live(
+    previous_receipt: Option<&HelperGovernanceReceipt>,
+    current_hashes: &BTreeMap<String, String>,
+    entry_status: &str,
+) -> (String, Vec<String>, BTreeMap<String, String>) {
+    let mut notes = Vec::new();
+    if let Some(previous) = previous_receipt {
+        let baseline = if !previous.baseline_artifact_hashes.is_empty() {
+            previous.baseline_artifact_hashes.clone()
+        } else if previous.change_since_last_live_status == "baseline_recorded"
+            || previous.change_since_last_live_status == "stable_since_last_live"
+        {
+            previous.artifact_hashes.clone()
+        } else {
+            BTreeMap::new()
+        };
+        if !baseline.is_empty() {
+            if &baseline == current_hashes {
+                notes.push("current helper-lane artifacts match the last known-good live baseline".into());
+                return ("stable_since_last_live".into(), notes, baseline);
+            }
+            notes.push("helper-lane artifacts changed since the last known-good live baseline".into());
+            return (
+                if entry_status == "fully_live" {
+                    "changed_since_last_live".into()
+                } else {
+                    "regressed_since_last_live".into()
+                },
+                notes,
+                baseline,
+            );
+        }
+    }
+    if entry_status == "fully_live" {
+        notes.push("current fully live helper lane establishes the first live baseline".into());
+        return ("baseline_recorded".into(), notes, current_hashes.clone());
+    }
+    notes.push("no fully live baseline has been recorded yet for this helper lane".into());
+    ("no_live_baseline".into(), notes, BTreeMap::new())
+}
+
+fn refresh_helper_lane_governance(
+    runtime_root: &Path,
+    entry: &mut PendingExtensionEntry,
+) -> Result<()> {
+    let helper_lane_path = helper_lane_governance_artifacts(entry);
+    let artifact_hashes = helper_artifact_hashes(entry);
+    let drift = classify_helper_lane_drift(entry, &artifact_hashes, helper_lane_path.as_deref());
+    let previous_receipt = load_existing_helper_governance_receipt(runtime_root, &entry.entry_id);
+    let baseline = classify_helper_change_since_last_live(
+        previous_receipt.as_ref(),
+        &artifact_hashes,
+        &entry.status,
+    );
+    let receipt = HelperGovernanceReceipt {
+        receipt_id: chatty_factory_core::timestamp_id("helper-governance"),
+        entry_id: entry.entry_id.clone(),
+        family_id: entry.family_id.clone(),
+        tool_kind: entry.tool_kind.clone(),
+        helper_lane_path: helper_lane_path.map(|path| path.display().to_string()),
+        requested_capabilities: entry.requested_capabilities.clone(),
+        missing_helper_primitive_kinds: entry.missing_helper_primitive_kinds.clone(),
+        source_stub_path: if entry.source_stub_path.trim().is_empty() {
+            None
+        } else {
+            Some(entry.source_stub_path.clone())
+        },
+        scaffold_root: if entry.scaffold_root.trim().is_empty() {
+            None
+        } else {
+            Some(entry.scaffold_root.clone())
+        },
+        artifact_hashes: artifact_hashes.clone(),
+        drift_status: drift.0.clone(),
+        drift_notes: drift.1.clone(),
+        change_since_last_live_status: baseline.0.clone(),
+        change_since_last_live_notes: baseline.1.clone(),
+        baseline_artifact_hashes: baseline.2.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let receipt_path = persist_helper_governance_receipt(runtime_root, &receipt)?;
+    entry.helper_lineage_receipt_path = Some(receipt_path.display().to_string());
+    entry.helper_drift_status = Some(drift.0);
+    entry.helper_drift_notes = drift.1;
+    entry.helper_change_since_last_live_status = Some(baseline.0);
+    entry.helper_change_since_last_live_notes = baseline.1;
+    Ok(())
+}
+
+fn load_existing_bridge_governance_receipt(
+    runtime_root: &Path,
+    entry_id: &str,
+) -> Option<BridgeGovernanceReceipt> {
+    let path = runtime_root
+        .join("bridge_governance_receipts")
+        .join(format!("{entry_id}.json"));
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<BridgeGovernanceReceipt>(&contents).ok()
+}
+
+fn classify_bridge_lane_drift(
+    entry: &PendingExtensionEntry,
+    artifact_hashes: &BTreeMap<String, String>,
+    bridge_lane_path: Option<&Path>,
+) -> (String, Vec<String>) {
+    let mut notes = Vec::new();
+    if artifact_hashes.is_empty() {
+        notes.push("no bridge-lane artifact hashes could be computed".into());
+        return ("drifted_risky".into(), notes);
+    }
+    if bridge_lane_path.is_none() {
+        notes.push("bridge governance entry has no integrated bridge lane artifact".into());
+        return ("drifted_risky".into(), notes);
+    }
+    if entry.bridge_capabilities.is_empty() {
+        notes.push("bridge lane has no recorded bridge capabilities".into());
+        return ("unseeded".into(), notes);
+    }
+    if entry.bridge_capabilities.len() > 2 || !entry.requested_capabilities.is_empty() {
+        notes.push("bridge lane carries a broader bridge-capability or requested-capability shape than the narrow seed archetype".into());
+        return ("structurally_customized".into(), notes);
+    }
+    if !entry.source_stub_path.trim().is_empty() {
+        notes.push("bridge lane still carries scaffold lineage metadata".into());
+        return ("lightly_customized".into(), notes);
+    }
+    notes.push("bridge lane matches the current governed bridge-lane archetype".into());
+    ("seed_aligned".into(), notes)
+}
+
+fn classify_bridge_change_since_last_live(
+    previous_receipt: Option<&BridgeGovernanceReceipt>,
+    current_hashes: &BTreeMap<String, String>,
+    entry_status: &str,
+) -> (String, Vec<String>, BTreeMap<String, String>) {
+    let mut notes = Vec::new();
+    if let Some(previous) = previous_receipt {
+        let baseline = if !previous.baseline_artifact_hashes.is_empty() {
+            previous.baseline_artifact_hashes.clone()
+        } else if previous.change_since_last_live_status == "baseline_recorded"
+            || previous.change_since_last_live_status == "stable_since_last_live"
+        {
+            previous.artifact_hashes.clone()
+        } else {
+            BTreeMap::new()
+        };
+        if !baseline.is_empty() {
+            if &baseline == current_hashes {
+                notes.push("current bridge-lane artifacts match the last known-good live baseline".into());
+                return ("stable_since_last_live".into(), notes, baseline);
+            }
+            notes.push("bridge-lane artifacts changed since the last known-good live baseline".into());
+            return (
+                if entry_status == "fully_live" {
+                    "changed_since_last_live".into()
+                } else {
+                    "regressed_since_last_live".into()
+                },
+                notes,
+                baseline,
+            );
+        }
+    }
+    if entry_status == "fully_live" {
+        notes.push("current fully live bridge lane establishes the first live baseline".into());
+        return ("baseline_recorded".into(), notes, current_hashes.clone());
+    }
+    notes.push("no fully live baseline has been recorded yet for this bridge lane".into());
+    ("no_live_baseline".into(), notes, BTreeMap::new())
+}
+
+fn refresh_bridge_lane_governance(
+    runtime_root: &Path,
+    entry: &mut PendingExtensionEntry,
+) -> Result<()> {
+    let bridge_lane_path = bridge_lane_governance_artifacts(entry);
+    let artifact_hashes = bridge_artifact_hashes(entry);
+    let drift = classify_bridge_lane_drift(entry, &artifact_hashes, bridge_lane_path.as_deref());
+    let previous_receipt = load_existing_bridge_governance_receipt(runtime_root, &entry.entry_id);
+    let baseline = classify_bridge_change_since_last_live(
+        previous_receipt.as_ref(),
+        &artifact_hashes,
+        &entry.status,
+    );
+    let receipt = BridgeGovernanceReceipt {
+        receipt_id: chatty_factory_core::timestamp_id("bridge-governance"),
+        entry_id: entry.entry_id.clone(),
+        family_id: entry.family_id.clone(),
+        tool_kind: entry.tool_kind.clone(),
+        bridge_lane_path: bridge_lane_path.map(|path| path.display().to_string()),
+        bridge_capabilities: entry.bridge_capabilities.clone(),
+        requested_capabilities: entry.requested_capabilities.clone(),
+        source_stub_path: if entry.source_stub_path.trim().is_empty() {
+            None
+        } else {
+            Some(entry.source_stub_path.clone())
+        },
+        scaffold_root: if entry.scaffold_root.trim().is_empty() {
+            None
+        } else {
+            Some(entry.scaffold_root.clone())
+        },
+        artifact_hashes: artifact_hashes.clone(),
+        drift_status: drift.0.clone(),
+        drift_notes: drift.1.clone(),
+        change_since_last_live_status: baseline.0.clone(),
+        change_since_last_live_notes: baseline.1.clone(),
+        baseline_artifact_hashes: baseline.2.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let receipt_path = persist_bridge_governance_receipt(runtime_root, &receipt)?;
+    entry.bridge_lineage_receipt_path = Some(receipt_path.display().to_string());
+    entry.bridge_drift_status = Some(drift.0);
+    entry.bridge_drift_notes = drift.1;
+    entry.bridge_change_since_last_live_status = Some(baseline.0);
+    entry.bridge_change_since_last_live_notes = baseline.1;
+    Ok(())
+}
+
+fn classify_change_since_last_pass(
+    previous_receipt: Option<&ProofLineageReceipt>,
+    current_template_hash: &str,
+    current_bundle_hash: &str,
+    latest_equivalent_capability_fulfillment: Option<bool>,
+) -> (String, Vec<String>, Option<String>, Option<String>, Option<String>) {
+    let mut notes = Vec::new();
+
+    if let Some(previous) = previous_receipt {
+        let baseline_template_hash = previous
+            .last_passing_template_content_hash
+            .clone()
+            .or_else(|| {
+                if previous.latest_equivalent_capability_fulfillment == Some(true) {
+                    Some(previous.template_content_hash.clone())
+                } else {
+                    None
+                }
+            });
+        let baseline_bundle_hash = previous
+            .last_passing_bundle_content_hash
+            .clone()
+            .or_else(|| {
+                if previous.latest_equivalent_capability_fulfillment == Some(true) {
+                    Some(previous.bundle_content_hash.clone())
+                } else {
+                    None
+                }
+            });
+        let baseline_receipt_id = previous
+            .last_passing_paired_proof_receipt_id
+            .clone()
+            .or_else(|| {
+                if previous.latest_equivalent_capability_fulfillment == Some(true) {
+                    previous.latest_paired_proof_receipt_id.clone()
+                } else {
+                    None
+                }
+            });
+
+        if let (Some(template_hash), Some(bundle_hash)) =
+            (baseline_template_hash.clone(), baseline_bundle_hash.clone())
+        {
+            let template_changed = template_hash != current_template_hash;
+            let bundle_changed = bundle_hash != current_bundle_hash;
+            if !template_changed && !bundle_changed {
+                notes.push("current proof manifests match the last passing baseline".into());
+                return (
+                    "stable_since_last_pass".into(),
+                    notes,
+                    baseline_receipt_id,
+                    Some(template_hash),
+                    Some(bundle_hash),
+                );
+            }
+            if template_changed {
+                notes.push("template manifest changed since the last passing baseline".into());
+            }
+            if bundle_changed {
+                notes.push("comparison bundle manifest changed since the last passing baseline".into());
+            }
+            return (
+                if latest_equivalent_capability_fulfillment == Some(true) {
+                    "changed_since_last_pass".into()
+                } else {
+                    "regressed_since_last_pass".into()
+                },
+                notes,
+                baseline_receipt_id,
+                Some(template_hash),
+                Some(bundle_hash),
+            );
+        }
+    }
+
+    if latest_equivalent_capability_fulfillment == Some(true) {
+        notes.push("current passing proof establishes the first recorded passing baseline".into());
+        return (
+            "baseline_recorded".into(),
+            notes,
+            None,
+            Some(current_template_hash.to_string()),
+            Some(current_bundle_hash.to_string()),
+        );
+    }
+
+    notes.push("no passing baseline has been recorded yet for this proof".into());
+    (
+        "no_passing_baseline".into(),
+        notes,
+        None,
+        None,
+        None,
+    )
+}
+
+fn refresh_proof_harness_lineage(
+    workspace_root: &Path,
+    runtime_root: &Path,
+    entry: &mut PendingExtensionEntry,
+    template: &PrimitiveProofTemplate,
+    bundle: &CapabilityComparisonBundle,
+) -> Result<()> {
+    if entry.proof_seed_template_id.is_none() || entry.proof_seed_bundle_id.is_none() {
+        if let Some((template_id, bundle_id)) = infer_closest_proof_seed_ids(template, bundle) {
+            if entry.proof_seed_template_id.is_none() {
+                entry.proof_seed_template_id = Some(template_id);
+            }
+            if entry.proof_seed_bundle_id.is_none() {
+                entry.proof_seed_bundle_id = Some(bundle_id);
+            }
+        }
+    }
+    let drift = classify_proof_harness_drift(
+        template,
+        bundle,
+        entry.proof_seed_template_id.as_deref(),
+        entry.proof_seed_bundle_id.as_deref(),
+    );
+    let latest_receipt =
+        latest_proof_harness_receipt_for_template(workspace_root, &template.template_id);
+    let previous_receipt = load_existing_proof_lineage_receipt(runtime_root, &template.template_id);
+    let template_content_hash = stable_json_content_hash(template);
+    let bundle_content_hash = stable_json_content_hash(bundle);
+    let change_since_last_pass = classify_change_since_last_pass(
+        previous_receipt.as_ref(),
+        &template_content_hash,
+        &bundle_content_hash,
+        latest_receipt
+            .as_ref()
+            .map(|receipt| receipt.equivalent_capability_fulfillment),
+    );
+    let last_passing_receipt = latest_passing_proof_harness_receipt_for_template(
+        workspace_root,
+        &template.template_id,
+    );
+    let receipt = ProofLineageReceipt {
+        receipt_id: chatty_factory_core::timestamp_id("proof-lineage"),
+        proof_template_id: template.template_id.clone(),
+        comparison_bundle_id: bundle.bundle_id.clone(),
+        proof_seed_template_id: entry.proof_seed_template_id.clone(),
+        proof_seed_bundle_id: entry.proof_seed_bundle_id.clone(),
+        source_stub_path: if entry.source_stub_path.trim().is_empty() {
+            None
+        } else {
+            Some(entry.source_stub_path.clone())
+        },
+        template_manifest_path: entry
+            .integrated_paths
+            .iter()
+            .find(|path| path.contains("proof_harness") && path.contains("templates"))
+            .cloned(),
+        bundle_manifest_path: entry
+            .integrated_paths
+            .iter()
+            .find(|path| path.contains("proof_harness") && path.contains("bundles"))
+            .cloned(),
+        template_content_hash: template_content_hash.clone(),
+        bundle_content_hash: bundle_content_hash.clone(),
+        drift_status: drift.0.clone(),
+        drift_notes: drift.1.clone(),
+        latest_paired_proof_receipt_id: latest_receipt.as_ref().map(|receipt| receipt.receipt_id.clone()),
+        latest_equivalent_capability_fulfillment: latest_receipt
+            .as_ref()
+            .map(|receipt| receipt.equivalent_capability_fulfillment),
+        last_passing_paired_proof_receipt_id: last_passing_receipt
+            .as_ref()
+            .map(|receipt| receipt.receipt_id.clone())
+            .or(change_since_last_pass.2.clone()),
+        last_passing_template_content_hash: change_since_last_pass.3.clone(),
+        last_passing_bundle_content_hash: change_since_last_pass.4.clone(),
+        change_since_last_pass_status: change_since_last_pass.0.clone(),
+        change_since_last_pass_notes: change_since_last_pass.1.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let receipt_path = persist_proof_lineage_receipt(runtime_root, &receipt)?;
+    entry.proof_lineage_receipt_path = Some(receipt_path.display().to_string());
+    entry.proof_drift_status = Some(drift.0);
+    entry.proof_drift_notes = drift.1;
+    entry.proof_change_since_last_pass_status = Some(change_since_last_pass.0);
+    entry.proof_change_since_last_pass_notes = change_since_last_pass.1;
+    Ok(())
+}
+
+fn match_pending_extensions(
+    registry: &PendingExtensionRegistry,
+    build_spec: &FallbackBuildSpec,
+) -> Vec<PendingExtensionEntry> {
+    let expected_unresolved_layers = unresolved_scaffold_layers(build_spec)
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    registry
+        .entries
+        .iter()
+        .filter(|entry| entry.status == "pending_implementation")
+        .filter(|entry| entry.extension_kind == build_spec.suggested_extension_kind)
+        .filter(|entry| {
+            option_string_matches(
+                entry.family_id.as_deref(),
+                build_spec.suggested_family_id.as_ref().map(FamilyId::as_str),
+            )
+        })
+        .filter(|entry| {
+            option_string_matches(
+                entry.tool_kind.as_deref(),
+                build_spec.suggested_tool_kind.as_deref(),
+            )
+        })
+        .filter(|entry| {
+            option_string_matches(
+                entry.patch_kind.as_deref(),
+                build_spec.suggested_patch_kind.as_deref(),
+            )
+        })
+        .filter(|entry| {
+            build_spec.suggested_bridge_capabilities.is_empty()
+                || entry.bridge_capabilities == build_spec.suggested_bridge_capabilities
+        })
+        .filter(|entry| {
+            build_spec.requested_capabilities.is_empty()
+                || entry.requested_capabilities == build_spec.requested_capabilities
+        })
+        .filter(|entry| {
+            expected_unresolved_layers.is_empty() || entry.unresolved_layers == expected_unresolved_layers
+        })
+        .filter(|entry| {
+            build_spec.missing_family_build_primitive_classes.is_empty()
+                || entry.missing_family_build_primitive_classes
+                    == build_spec.missing_family_build_primitive_classes
+        })
+        .filter(|entry| {
+            build_spec.missing_patch_primitive_classes.is_empty()
+                || entry.missing_patch_primitive_classes
+                    == build_spec.missing_patch_primitive_classes
+        })
+        .filter(|entry| {
+            build_spec.missing_helper_primitive_kinds.is_empty()
+                || entry.missing_helper_primitive_kinds == build_spec.missing_helper_primitive_kinds
+        })
+        .cloned()
+        .collect()
+}
+
+fn option_string_matches(left: Option<&str>, right: Option<&str>) -> bool {
+    match (left, right) {
+        (Some(a), Some(b)) => a == b,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn pending_entry_slug(entry: &PendingExtensionEntry) -> String {
+    match entry.extension_kind.as_str() {
+        "composition_bundle" => format!(
+            "{}_{}_composition_bundle",
+            entry.family_id.as_deref().unwrap_or("unknown_family"),
+            entry.tool_kind.as_deref().unwrap_or("unknown_tool"),
+        ),
+        "patch_recipe" => format!(
+            "{}_{}_{}",
+            entry.family_id.as_deref().unwrap_or("unknown_family"),
+            entry.tool_kind.as_deref().unwrap_or("unknown_tool"),
+            entry.patch_kind.as_deref().unwrap_or("new_patch_lane")
+        ),
+        "chattycog_bridge_lane" => {
+            if entry.bridge_capabilities.is_empty() {
+                "chattycog_bridge_lane".into()
+            } else {
+                format!("chattycog_{}", entry.bridge_capabilities.join("_"))
+            }
+        }
+        other => format!(
+            "{}_{}",
+            entry.family_id.as_deref().unwrap_or("unknown_family"),
+            other
+        ),
+    }
+}
+
+fn build_registry_stub(entry: &PendingExtensionEntry, slug: &str) -> String {
+    match entry.extension_kind.as_str() {
+        "composition_bundle" => format!(
+            "// Composition bundle stub for {slug}\n// Unresolved layers: {}\n// Missing family build classes: {}\n// Missing patch classes: {}\n// Missing helper primitive kinds: {}\n",
+            entry.unresolved_layers.join(", "),
+            entry.missing_family_build_primitive_classes.join(", "),
+            entry.missing_patch_primitive_classes.join(", "),
+            entry.missing_helper_primitive_kinds.join(", ")
+        ),
+        "patch_recipe" => format!(
+            "PatchRecipeSpec {{\n    recipe_id: \"{slug}\",\n    family_id: \"{family}\",\n    tool_kind: Some(\"{tool}\"),\n    patch_kind: \"{patch}\",\n    primitive_classes: &[{primitive_classes}],\n    dependency_mode: \"standalone\",\n    requires_features: &[],\n    provides_features: &[\"todo_feature\"],\n    request_match_any: &[\"todo phrase\"],\n    request_match_all: &[],\n    handler: crate::patch_{slug},\n}},\n",
+            family = entry.family_id.as_deref().unwrap_or("unknown_family"),
+            tool = entry.tool_kind.as_deref().unwrap_or("unknown_tool"),
+            patch = entry.patch_kind.as_deref().unwrap_or("new_patch_lane"),
+            primitive_classes = if entry.missing_patch_primitive_classes.is_empty() {
+                "\"patch_extension\"".to_string()
+            } else {
+                entry.missing_patch_primitive_classes
+                    .iter()
+                    .map(|item| format!("\"{item}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        ),
+        "chattycog_bridge_lane" => format!(
+            "// Bridge lane stub for {slug}\n// Requested bridge capabilities: {}\n// Unresolved layers: {}\n",
+            entry.bridge_capabilities.join(", "),
+            entry.unresolved_layers.join(", ")
+        ),
+        "helper_lane" => format!(
+            "// Helper lane stub for {slug}\n// Requested capabilities: {}\n// Missing helper primitive kinds: {}\n",
+            entry.requested_capabilities.join(", "),
+            entry.missing_helper_primitive_kinds.join(", ")
+        ),
+        _ => format!(
+            "// Family manifest wiring stub for {slug}\n// Requested capabilities: {}\n// Missing family build classes: {}\n",
+            entry.requested_capabilities.join(", "),
+            entry.missing_family_build_primitive_classes.join(", ")
+        ),
+    }
+}
+
+fn build_handler_stub(entry: &PendingExtensionEntry, slug: &str) -> String {
+    match entry.extension_kind.as_str() {
+        "composition_bundle" => format!(
+            "// Composition bundle stub for `{slug}`\n// This lane spans unresolved layers: {}\n// Missing family build classes: {}\n// Missing patch classes: {}\n// Missing helper primitive kinds: {}\n// Wire the family manifest/startup surface and the deterministic patch lane together\n// before promoting this bundle to executable Rust registry code.\n",
+            if entry.unresolved_layers.is_empty() {
+                "none".to_string()
+            } else {
+                entry.unresolved_layers.join(", ")
+            },
+            if entry.missing_family_build_primitive_classes.is_empty() {
+                "none".to_string()
+            } else {
+                entry.missing_family_build_primitive_classes.join(", ")
+            },
+            if entry.missing_patch_primitive_classes.is_empty() {
+                "none".to_string()
+            } else {
+                entry.missing_patch_primitive_classes.join(", ")
+            },
+            if entry.missing_helper_primitive_kinds.is_empty() {
+                "none".to_string()
+            } else {
+                entry.missing_helper_primitive_kinds.join(", ")
+            },
+        ),
+        _ => format!(
+            "pub(crate) fn patch_{slug}(\n    _project_dir: &std::path::Path,\n    _project_name: &str,\n    _request: &str,\n    _request_id: &str,\n) -> anyhow::Result<(crate::PatchArtifacts, chatty_factory_core::PatchReceipt)> {{\n    anyhow::bail!(\"pending lane `{}` is not wired yet; implement handler logic here\")\n}}\n",
+            entry.entry_id
+        ),
+    }
+}
+
+fn build_promotion_plan(entry: &PendingExtensionEntry, slug: &str) -> String {
+    let suggested_targets = match entry.extension_kind.as_str() {
+        "composition_bundle" => format!(
+            "- family manifest/template: review the integrated family starter for `{}`\n- patch recipe + acceptance: review the integrated patch starter for `{}`\n- [registry.rs](/abs/path/not-applicable): wire any needed Rust patch registry entry only after the mixed bundle contract is settled\n- [lib.rs](/abs/path/not-applicable): add deterministic handler logic only for the patch-side portion of the bundle",
+            slug, slug
+        ),
+        _ => format!(
+            "- [registry.rs](/abs/path/not-applicable): add the stub entry for `{}`\n- [lib.rs](/abs/path/not-applicable): add or wire the handler for `{}`",
+            slug, slug
+        ),
+    };
+    format!(
+        "# Rust Registry Promotion Plan\n\nEntry id: `{}`\n\nExtension kind: `{}`\n\nUnresolved layers:\n{}\n\nMissing family build classes:\n{}\n\nMissing patch classes:\n{}\n\nMissing helper primitive kinds:\n{}\n\nSuggested Rust wiring target:\n{}\n\nRequested capabilities:\n{}\n\nIntegrated starter files:\n{}\n",
+        entry.entry_id,
+        entry.extension_kind,
+        if entry.unresolved_layers.is_empty() {
+            "- none".to_string()
+        } else {
+            entry.unresolved_layers.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n")
+        },
+        if entry.missing_family_build_primitive_classes.is_empty() {
+            "- none".to_string()
+        } else {
+            entry.missing_family_build_primitive_classes.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n")
+        },
+        if entry.missing_patch_primitive_classes.is_empty() {
+            "- none".to_string()
+        } else {
+            entry.missing_patch_primitive_classes.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n")
+        },
+        if entry.missing_helper_primitive_kinds.is_empty() {
+            "- none".to_string()
+        } else {
+            entry.missing_helper_primitive_kinds.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n")
+        },
+        suggested_targets,
+        entry
+            .requested_capabilities
+            .iter()
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        entry
+            .integrated_paths
+            .iter()
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+fn build_registry_apply_patch_template(entry: &PendingExtensionEntry, slug: &str) -> String {
+    match entry.extension_kind.as_str() {
+        "composition_bundle" => format!(
+            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/registry.rs\n@@\n-// Add generated registry entry here.\n+// Composition bundle `{slug}` spans unresolved layers: {}.\n+// Keep family manifest wiring in the integrated family starter files,\n+// and only add Rust patch-registry entries here once the patch-side scope is settled.\n*** End Patch\n",
+            entry.unresolved_layers.join(", ")
+        ),
+        "patch_recipe" => format!(
+            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/registry.rs\n@@\n         PatchRecipeSpec {{\n             recipe_id: \"log_summary_severity_filter\",\n             family_id: \"rust_cli_tool\",\n             tool_kind: Some(\"log_summary\"),\n             patch_kind: \"severity_filter\",\n             dependency_mode: \"standalone\",\n             requires_features: &[],\n             provides_features: &[\"severity_filter\"],\n             request_match_any: &[\"severity filter\", \"severity only\", \"select severity\"],\n             request_match_all: &[\"severity\", \"filter\"],\n             handler: crate::patch_rust_log_summary_severity_filter,\n         }},\n+        PatchRecipeSpec {{\n+            recipe_id: \"{slug}\",\n+            family_id: \"{family}\",\n+            tool_kind: Some(\"{tool}\"),\n+            patch_kind: \"{patch}\",\n+            dependency_mode: \"standalone\",\n+            requires_features: &[],\n+            provides_features: &[\"todo_feature\"],\n+            request_match_any: &[\"todo phrase\"],\n+            request_match_all: &[],\n+            handler: crate::patch_{slug},\n+        }},\n     ]\n }}\n*** End Patch\n",
+            family = entry.family_id.as_deref().unwrap_or("unknown_family"),
+            tool = entry.tool_kind.as_deref().unwrap_or("unknown_tool"),
+            patch = entry.patch_kind.as_deref().unwrap_or("new_patch_lane"),
+        ),
+        _ => format!(
+            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/registry.rs\n@@\n-// Add generated registry entry here.\n+// Add generated registry entry for `{slug}` here.\n*** End Patch\n"
+        ),
+    }
+}
+
+fn build_handler_apply_patch_template(entry: &PendingExtensionEntry, slug: &str) -> String {
+    match entry.extension_kind.as_str() {
+        "composition_bundle" => format!(
+            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/lib.rs\n@@\n pub fn candidate_acceptance_recipe_ids(\n     family_id: Option<&FamilyId>,\n     tool_kind: Option<&str>,\n ) -> Vec<String> {{\n@@\n }}\n+\n+// Composition bundle `{slug}` requires coordinated family + patch wiring.\n+// Keep the family-surface work in the integrated manifest/template starters,\n+// and add deterministic Rust patch logic here only for the patch-side portion.\n*** End Patch\n"
+        ),
+        _ => format!(
+            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/lib.rs\n@@\n pub fn candidate_acceptance_recipe_ids(\n     family_id: Option<&FamilyId>,\n     tool_kind: Option<&str>,\n ) -> Vec<String> {{\n@@\n }}\n+\n+pub(crate) fn patch_{slug}(\n+    _project_dir: &std::path::Path,\n+    _project_name: &str,\n+    _request: &str,\n+    _request_id: &str,\n+) -> anyhow::Result<(PatchArtifacts, chatty_factory_core::PatchReceipt)> {{\n+    anyhow::bail!(\"pending lane `{}` is not wired yet; replace this stub with deterministic patch logic\")\n+}}\n*** End Patch\n",
+            entry.entry_id
+        ),
+    }
+}
+
+fn extract_added_patch_block(template: &str) -> Result<String> {
+    let mut lines = Vec::new();
+    for line in template.lines() {
+        if line.starts_with("+++") || line.starts_with("***") || line.starts_with("@@") {
+            continue;
+        }
+        if let Some(stripped) = line.strip_prefix('+') {
+            lines.push(stripped.to_string());
+        }
+    }
+    if lines.is_empty() {
+        anyhow::bail!("apply_patch template did not contain an added block");
+    }
+    Ok(lines.join("\n"))
+}
+
+fn insert_patch_recipe_block(contents: &str, block: &str) -> Result<String> {
+    let marker = "\n    ]\n}";
+    let idx = contents
+        .rfind(marker)
+        .ok_or_else(|| anyhow::anyhow!("could not find patch registry insertion point"))?;
+    let mut updated = String::with_capacity(contents.len() + block.len() + 2);
+    updated.push_str(&contents[..idx]);
+    if !contents[..idx].ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push_str(block);
+    updated.push_str(marker);
+    updated.push_str(&contents[idx + marker.len()..]);
+    Ok(updated)
+}
+
+fn append_handler_block(contents: &str, block: &str) -> String {
+    let mut updated = contents.trim_end().to_string();
+    updated.push_str("\n\n");
+    updated.push_str(block.trim_end());
+    updated.push('\n');
+    updated
+}
+
+fn extract_recipe_block(contents: &str, recipe_id: &str) -> Result<String> {
+    let needle = format!("recipe_id: \"{recipe_id}\"");
+    let idx = contents
+        .find(&needle)
+        .ok_or_else(|| anyhow::anyhow!("could not find recipe block for `{}`", recipe_id))?;
+    let start = contents[..idx]
+        .rfind("PatchRecipeSpec {")
+        .ok_or_else(|| anyhow::anyhow!("could not find recipe block start for `{}`", recipe_id))?;
+    let end_rel = contents[idx..]
+        .find("\n        },")
+        .ok_or_else(|| anyhow::anyhow!("could not find recipe block end for `{}`", recipe_id))?;
+    Ok(contents[start..idx + end_rel + "\n        },".len()].to_string())
+}
+
+fn extract_handler_block(contents: &str, handler_name: &str) -> Result<String> {
+    let needle = format!("pub(crate) fn {handler_name}(");
+    let start = contents
+        .find(&needle)
+        .ok_or_else(|| anyhow::anyhow!("could not find handler block for `{}`", handler_name))?;
+    let next_fn = contents[start + needle.len()..]
+        .find("\npub(crate) fn ")
+        .map(|idx| start + needle.len() + idx);
+    let next_pub = contents[start + needle.len()..]
+        .find("\npub fn ")
+        .map(|idx| start + needle.len() + idx);
+    let end = match (next_fn, next_pub) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => contents.len(),
+    };
+    Ok(contents[start..end].to_string())
+}
+
+fn run_extension_wiring_compile_check(workspace_root: &Path) -> Result<std::process::Output> {
+    let output = Command::new("cargo")
+        .args([
+            "check",
+            "-p",
+            "chatty_factory_families",
+            "-p",
+            "chatty_factory_host",
+            "-p",
+            "chatty_factory_cli",
+        ])
+        .current_dir(workspace_root)
+        .output()?;
+    Ok(output)
+}
+
+fn build_extension_registry_view(registry: &PendingExtensionRegistry) -> HostExtensionRegistryView {
+    HostExtensionRegistryView {
+        pending_count: registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "pending_implementation")
+            .count(),
+        implemented_count: registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "implemented")
+            .count(),
+        validated_count: registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "validated_ready")
+            .count(),
+        promotion_prepared_count: registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "promotion_prepared")
+            .count(),
+        apply_patch_ready_count: registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "apply_patch_ready")
+            .count(),
+        host_wired_count: registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "host_wired")
+            .count(),
+        fully_live_count: registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "fully_live")
+            .count(),
+        archived_count: registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "archived")
+            .count(),
+        active_entries: registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status != "fully_live" && entry.status != "archived")
+            .cloned()
+            .collect(),
+        fully_live_entries: registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "fully_live")
+            .cloned()
+            .collect(),
+        archived_entries: registry
+            .entries
+            .iter()
+            .filter(|entry| entry.status == "archived")
+            .cloned()
+            .collect(),
+    }
+}
+
+fn verify_patch_artifacts(
+    runtime_root: &PathBuf,
+    request_id: &str,
+    artifacts: &PatchArtifacts,
+) -> Result<()> {
+    let acceptance_path = artifacts.project_dir.join("AcceptancePlan.json");
+    let acceptance_plan = serde_json::from_str(&fs::read_to_string(&acceptance_path)?)?;
+    persist_json_pretty(
+        &runtime_root
+            .join("acceptance_plans")
+            .join(format!("{}-acceptance.json", request_id)),
+        &acceptance_plan,
+    )?;
+
+    match verify_acceptance_plan(&artifacts.project_dir, &acceptance_plan) {
+        Ok(()) => {
+            let success_receipt = serde_json::json!({
+                "request_id": request_id,
+                "project_dir": artifacts.project_dir,
+                "status": "passed",
+                "patch_kind": artifacts.patch_kind
+            });
+            persist_json_pretty(
+                &runtime_root
+                    .join("acceptance_results")
+                    .join(format!("{}-result.json", request_id)),
+                &success_receipt,
+            )?;
+            Ok(())
+        }
+        Err(err) => persist_failure(
+            runtime_root,
+            request_id,
+            artifacts.project_dir.clone(),
+            acceptance_plan.family_id.clone(),
+            err,
+        ),
+    }
+}
+
+fn persist_failure(
+    runtime_root: &PathBuf,
+    request_id: &str,
+    project_dir: PathBuf,
+    family_id: Option<FamilyId>,
+    err: anyhow::Error,
+) -> Result<()> {
+    let message = err.to_string();
+    let report = FailureReport {
+        failure_id: chatty_factory_core::timestamp_id("failure"),
+        request_id: request_id.to_string(),
+        family_id,
+        failure_class: Some(classify_failure(&message)),
+        failing_check_id: None,
+        evidence: Some(FailureReportEvidence {
+            summary: message.clone(),
+            details: vec![format!("project_dir={}", project_dir.display())],
+        }),
+        recommended_lane: Some("inspect_acceptance_failure".into()),
+        needs_llm_review: true,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    persist_json_pretty(
+        &runtime_root
+            .join("failure_reports")
+            .join(format!("{}-failure.json", request_id)),
+        &report,
+    )?;
+    Err(anyhow::anyhow!(message))
+}
+
+fn load_acceptance_status(runtime_root: &Path, request_id: &str) -> Option<String> {
+    let result_path = runtime_root
+        .join("acceptance_results")
+        .join(format!("{request_id}-result.json"));
+    let contents = fs::read_to_string(result_path).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&contents).ok()?;
+    value
+        .get("status")
+        .and_then(|status| status.as_str())
+        .map(|status| status.to_string())
+}
+
+fn execute_and_persist_helper_runtime_state(
+    runtime_root: &Path,
+    request_id: &str,
+    project_dir: &Path,
+    spec: &ProjectSpec,
+) -> Result<Vec<HelperRuntimeReceipt>> {
+    let specs_dir = runtime_root.join("helper_specs");
+    let receipts_dir = runtime_root.join("helper_runtime_receipts");
+    fs::create_dir_all(&specs_dir)?;
+    fs::create_dir_all(&receipts_dir)?;
+
+    let mut receipts = Vec::new();
+    for helper in &spec.helper_services {
+        persist_json_pretty(
+            &specs_dir.join(format!("{request_id}-{}.json", helper.helper_id)),
+            helper,
+        )?;
+        let receipt = run_bounded_helper_service(project_dir, request_id, spec, helper)?;
+        persist_json_pretty(
+            &receipts_dir.join(format!("{request_id}-{}.json", helper.helper_id)),
+            &receipt,
+        )?;
+        receipts.push(receipt);
+    }
+
+    Ok(receipts)
+}
+
+fn run_bounded_helper_service(
+    project_dir: &Path,
+    request_id: &str,
+    spec: &ProjectSpec,
+    helper: &HelperServiceSpec,
+) -> Result<HelperRuntimeReceipt> {
+    match helper.helper_kind.as_str() {
+        "local_inbox_helper" => run_local_inbox_helper(project_dir, request_id, spec, helper),
+        _ => Ok(HelperRuntimeReceipt {
+            receipt_id: format!("helper-runtime-{request_id}-{}", helper.helper_id),
+            request_id: request_id.to_string(),
+            helper_id: helper.helper_id.clone(),
+            helper_kind: helper.helper_kind.clone(),
+            attached_project_name: Some(spec.project_name.clone()),
+            launch_status: "unsupported_helper_kind".into(),
+            process_id: None,
+            observed_status_files: helper.status_paths.clone(),
+            observed_output_files: helper.output_paths.clone(),
+            observed_primitive_ids: helper
+                .primitives
+                .iter()
+                .map(|primitive| primitive.primitive_id.clone())
+                .collect(),
+            notes: vec![
+                "No bounded host runner is implemented for this helper kind yet.".into(),
+            ],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        }),
+    }
+}
+
+fn run_local_inbox_helper(
+    project_dir: &Path,
+    request_id: &str,
+    spec: &ProjectSpec,
+    helper: &HelperServiceSpec,
+) -> Result<HelperRuntimeReceipt> {
+    let processed_root = project_dir
+        .join("bridge")
+        .join("helpers")
+        .join("local_inbox")
+        .join("processed");
+    let status_path = project_dir
+        .join("bridge")
+        .join("helpers")
+        .join("local_inbox")
+        .join("status.json");
+    let summary_path = project_dir
+        .join("bridge")
+        .join("helpers")
+        .join("local_inbox")
+        .join("summary.json");
+
+    fs::create_dir_all(&processed_root)?;
+    reset_helper_processed_root(&processed_root)?;
+
+    let global_allowed_extensions = normalized_helper_allowed_extensions(helper);
+    let lane_allowed_extensions = normalized_helper_lane_allowed_extensions(helper);
+    let observed_primitive_ids: Vec<String> = helper
+        .primitives
+        .iter()
+        .map(|primitive| primitive.primitive_id.clone())
+        .collect();
+    let mut observed_output_files = Vec::new();
+    let mut discovered_relative_files = Vec::new();
+    let mut observed_relative_files = Vec::new();
+    let mut filtered_out_relative_files = Vec::new();
+    let input_roots: Vec<(String, PathBuf)> = helper
+        .input_paths
+        .iter()
+        .map(|relative| {
+            let lane_label = Path::new(relative)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| "input".to_string());
+            (lane_label, project_dir.join(relative))
+        })
+        .collect();
+    let multiple_input_roots = input_roots.len() > 1;
+
+    for (lane_label, input_root) in &input_roots {
+        let observed_input_files = collect_helper_input_files(input_root)?;
+        let allowed_extensions = lane_allowed_extensions
+            .get(lane_label)
+            .cloned()
+            .unwrap_or_else(|| global_allowed_extensions.clone());
+        for file_path in &observed_input_files {
+            let relative = file_path.strip_prefix(input_root)?.to_path_buf();
+            let relative_string = relative.to_string_lossy().replace('\\', "/");
+            let lane_relative = if multiple_input_roots {
+                format!("{lane_label}/{relative_string}")
+            } else {
+                relative_string.clone()
+            };
+            discovered_relative_files.push(lane_relative.clone());
+            if !helper_accepts_file(file_path, &allowed_extensions) {
+                filtered_out_relative_files.push(lane_relative);
+                continue;
+            }
+            let destination_relative = if multiple_input_roots {
+                PathBuf::from(lane_label).join(&relative)
+            } else {
+                relative.clone()
+            };
+            let destination = processed_root.join(&destination_relative);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(file_path, &destination)?;
+            observed_output_files.push(path_relative_to_project(project_dir, &destination));
+            observed_relative_files.push(lane_relative);
+        }
+    }
+
+    let status_snapshot = chatty_factory_core::HelperStatusSnapshot {
+        helper_id: helper.helper_id.clone(),
+        helper_kind: helper.helper_kind.clone(),
+        status: "completed".into(),
+        summary: if global_allowed_extensions.is_empty() && lane_allowed_extensions.is_empty() {
+            format!(
+                "Processed {} inbox file(s) into bridge/helpers/local_inbox/processed.",
+                observed_relative_files.len()
+            )
+        } else {
+            format!(
+                "Processed {} accepted inbox file(s) and filtered out {} file(s) using global {:?} and lane rules {:?}.",
+                observed_relative_files.len(),
+                filtered_out_relative_files.len(),
+                global_allowed_extensions,
+                lane_allowed_extensions
+            )
+        },
+        observed_inputs: helper.input_paths.clone(),
+        observed_outputs: helper.output_paths.clone(),
+        observed_status_files: helper.status_paths.clone(),
+        observed_primitive_ids: observed_primitive_ids.clone(),
+        updated_at: Some(chatty_factory_core::timestamp_id("updated")),
+    };
+    persist_json_pretty(&status_path, &status_snapshot)?;
+
+    let summary_payload = serde_json::json!({
+        "helper_id": helper.helper_id,
+        "status": "completed",
+        "updated_at": status_snapshot.updated_at,
+        "observed_lane": if input_roots.len() == 1 {
+            input_roots
+                .first()
+                .map(|(lane_label, _)| lane_label.clone())
+                .unwrap_or_else(|| "module_assets".to_string())
+        } else {
+            "multiple".to_string()
+        },
+        "observed_lanes": input_roots
+            .iter()
+            .map(|(lane_label, _)| lane_label.clone())
+            .collect::<Vec<_>>(),
+        "observed_file_count": observed_relative_files.len(),
+        "observed_files": observed_relative_files,
+        "discovered_file_count": discovered_relative_files.len(),
+        "discovered_files": discovered_relative_files,
+        "filtered_out_file_count": filtered_out_relative_files.len(),
+        "filtered_out_files": filtered_out_relative_files,
+        "allowed_extensions": global_allowed_extensions,
+        "lane_allowed_extensions": lane_allowed_extensions,
+        "observed_primitive_ids": observed_primitive_ids,
+        "processed_output_root": "bridge/helpers/local_inbox/processed",
+        "notes": [
+            "Processed by the bounded host-supervised local inbox helper runner."
+        ]
+    });
+    persist_json_pretty(&summary_path, &summary_payload)?;
+    observed_output_files.push(path_relative_to_project(project_dir, &summary_path));
+
+    Ok(HelperRuntimeReceipt {
+        receipt_id: format!("helper-runtime-{request_id}-{}", helper.helper_id),
+        request_id: request_id.to_string(),
+        helper_id: helper.helper_id.clone(),
+        helper_kind: helper.helper_kind.clone(),
+        attached_project_name: Some(spec.project_name.clone()),
+        launch_status: "completed".into(),
+        process_id: None,
+        observed_status_files: helper.status_paths.clone(),
+        observed_output_files,
+        observed_primitive_ids: helper
+            .primitives
+            .iter()
+            .map(|primitive| primitive.primitive_id.clone())
+            .collect(),
+        notes: vec![
+            format!(
+                "Processed {} inbox file(s) through the bounded local inbox helper.",
+                summary_payload["observed_file_count"].as_u64().unwrap_or(0)
+            ),
+        ],
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    })
+}
+
+fn collect_helper_input_files(input_root: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    if !input_root.exists() {
+        return Ok(files);
+    }
+    collect_helper_input_files_recursive(input_root, input_root, &mut files)?;
+    Ok(files)
+}
+
+fn collect_helper_input_files_recursive(
+    root: &Path,
+    current: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<()> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_helper_input_files_recursive(root, &path, files)?;
+            continue;
+        }
+        let relative = path.strip_prefix(root)?.to_string_lossy().replace('\\', "/");
+        if relative.ends_with(".keep") {
+            continue;
+        }
+        files.push(path);
+    }
+    Ok(())
+}
+
+fn reset_helper_processed_root(processed_root: &Path) -> Result<()> {
+    if processed_root.exists() {
+        fs::remove_dir_all(processed_root)?;
+    }
+    fs::create_dir_all(processed_root)?;
+    Ok(())
+}
+
+fn normalized_helper_allowed_extensions(helper: &HelperServiceSpec) -> Vec<String> {
+    let mut extensions: Vec<String> = helper
+        .allowed_extensions
+        .iter()
+        .map(|extension| extension.trim().to_ascii_lowercase())
+        .filter(|extension| !extension.is_empty())
+        .map(|extension| {
+            if extension.starts_with('.') {
+                extension
+            } else {
+                format!(".{extension}")
+            }
+        })
+        .collect();
+    extensions.sort();
+    extensions.dedup();
+    extensions
+}
+
+fn normalized_helper_lane_allowed_extensions(
+    helper: &HelperServiceSpec,
+) -> BTreeMap<String, Vec<String>> {
+    let mut normalized = BTreeMap::new();
+    for (lane, extensions) in &helper.lane_allowed_extensions {
+        let mut lane_extensions: Vec<String> = extensions
+            .iter()
+            .map(|extension| extension.trim().to_ascii_lowercase())
+            .filter(|extension| !extension.is_empty())
+            .map(|extension| {
+                if extension.starts_with('.') {
+                    extension
+                } else {
+                    format!(".{extension}")
+                }
+            })
+            .collect();
+        lane_extensions.sort();
+        lane_extensions.dedup();
+        normalized.insert(lane.clone(), lane_extensions);
+    }
+    normalized
+}
+
+fn helper_accepts_file(path: &Path, allowed_extensions: &[String]) -> bool {
+    if allowed_extensions.is_empty() {
+        return true;
+    }
+    let extension = path
+        .extension()
+        .map(|value| format!(".{}", value.to_string_lossy().to_ascii_lowercase()));
+    extension
+        .as_ref()
+        .map(|extension| allowed_extensions.iter().any(|allowed| allowed == extension))
+        .unwrap_or(false)
+}
+
+fn path_relative_to_project(project_dir: &Path, path: &Path) -> String {
+    path.strip_prefix(project_dir)
+        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| path.display().to_string())
+}
+
+fn should_route_followup_via_planner(raw_request: &str, active_projects: &[String]) -> bool {
+    if active_projects.is_empty() {
+        return false;
+    }
+    let lower = raw_request.to_ascii_lowercase();
+    should_route_followup_via_planner_text(&lower)
+}

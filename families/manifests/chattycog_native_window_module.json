@@ -1,0 +1,31 @@
+{
+  "family_id": "chattycog_native_window_module",
+  "primary_substrate": "desktop",
+  "supports_standalone": true,
+  "supports_chattycog_wrapper": true,
+  "supported_stack_ids": ["chattycog", "module", "python", "native_window"],
+  "provided_build_primitive_classes": ["summary_surface", "status_chip"],
+  "primitive_adapters": [
+    {
+      "adapter_id": "chattycog_native_window_summary_surface",
+      "composition_layer": "family_build",
+      "primitive_name": "summary_surface",
+      "adapter_kind": "native_window_surface",
+      "support_level": "native",
+      "notes": ["Provided directly by the base ChattyCog native window module shell."]
+    },
+    {
+      "adapter_id": "chattycog_native_window_status_chip",
+      "composition_layer": "family_build",
+      "primitive_name": "status_chip",
+      "adapter_kind": "native_window_status_strip",
+      "support_level": "native",
+      "notes": ["Provided directly by the base ChattyCog native window module shell."]
+    }
+  ],
+  "explicit_stack_keywords": ["chattycog", "chatty-cog", "module", "desktop", "native window", "tkinter"],
+  "route_keywords": ["native window", "desktop module", "desktop app", "tkinter", "hosted native"],
+  "supported_tool_kinds": ["module_starter", "native_window_starter"],
+  "forbids_capabilities": ["backend_service", "websocket", "api_server", "daemon"],
+  "requires_helper_for": ["background_job", "email_delivery"]
+}

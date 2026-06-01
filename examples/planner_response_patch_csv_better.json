@@ -1,0 +1,37 @@
+{
+  "response_id": "planner-response-example-patch-csv-better",
+  "source_handoff_id": "planner-handoff-example-patch-csv-better",
+  "source_plan_id": "plan-example-patch-csv-better",
+  "approved": true,
+  "recommended_family_id": "python_cli_tool",
+  "recommended_tool_kind": "csv_report",
+  "recommended_patch_kind": "json_export",
+  "recommended_patch_recipe_ids": [
+    "csv_report_json_export"
+  ],
+  "recommended_operator_ids": [],
+  "recommended_acceptance_recipe_ids": [],
+  "rationale": [
+    "Treat the vague follow-up as a request to extend the csv report tool with a practical export lane.",
+    "Use the existing deterministic json export bolt-on instead of inventing a new patch path."
+  ],
+  "execution_steps": [
+    "Keep the active project on python_cli_tool",
+    "Apply the csv_report_json_export patch recipe",
+    "Rerun host acceptance after the bolt-on"
+  ],
+  "acceptance_notes": [
+    "Verify report.json is written and the CLI still prints the normal summary contract."
+  ],
+  "acceptance_checks_to_add": [],
+  "required_markers_to_add": [],
+  "acceptance_commands_to_add": [],
+  "expected_outputs_to_add": [],
+  "suggested_patch_kinds": [
+    "column_filter"
+  ],
+  "suggested_features": [
+    "planner_guided_patch_recipe"
+  ],
+  "created_at": "created-example-patch-csv-better"
+}

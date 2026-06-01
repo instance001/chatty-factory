@@ -1,0 +1,252 @@
+# ChattyFactory
+
+ChattyFactory is a deterministic build-and-patch factory for plain-language
+software requests.
+
+Its current product shape is:
+
+- plain-language request in
+- real generated project out
+- plain-language follow-up patching against existing projects
+- host-owned diagnosis and governance around patch surgery
+
+The architectural stance is deliberate:
+
+- the LLM should choose, triage, and review
+- the host should own exact machinery wherever practical
+
+## Current State
+
+At the current checkpoint, ChattyFactory is a working bounded factory rather
+than only a rebuild sketch.
+
+It now has:
+
+- 6 built-in deterministic families
+- deterministic build and patch flows
+- diagnosis-aware patch surgery:
+  - diagnosis
+  - intent freeze
+  - postcheck
+- project-level patchability governance
+- a desktop UI for project, patch, extension, proof, and governance surfaces
+
+The product promise is intentionally bounded:
+
+- plain-language requests should land on supported deterministic lanes
+- vague requests may trigger clarification or planner guidance instead of fake certainty
+- existing-project patching is strongest on generated projects that still match declared family and patch contracts
+
+## What It Does Well
+
+ChattyFactory is strongest today at:
+
+- building supported projects from plain-language requests
+- patching generated projects through declared deterministic lanes
+- explaining patch safety through:
+  - diagnosis
+  - intent freeze
+  - postcheck
+- surfacing project patchability risk and drift over time
+
+It is not claiming universal safe surgery across arbitrary unknown codebases.
+
+## Key Docs
+
+- [User Manual](./USER_MANUAL.md)
+- [Build Docs Archive](./build-docs/README.md)
+- [REBUILD_PLAN.md](./build-docs/plans/REBUILD_PLAN.md)
+- [Initial GitHub Release Plan](./build-docs/plans/INITIAL_GITHUB_RELEASE_PLAN.md)
+- [GitHub Upload Metadata](./build-docs/plans/GITHUB_UPLOAD_METADATA.md)
+- [Release Notes v0.1.0](./build-docs/plans/RELEASE_NOTES_v0.1.0.md)
+- [Architecture Checkpoint 2](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_2.md)
+- [Architecture Checkpoint 3](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_3.md)
+- [Architecture Checkpoint 4](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_4.md)
+- [Architecture Checkpoint 5](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_5.md)
+- [Architecture Checkpoint 6](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_6.md)
+- [Architecture Checkpoint 7](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_7.md)
+- [Architecture Checkpoint 8](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_8.md)
+- [Architecture Checkpoint 9](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_9.md)
+- [Architecture Checkpoint 10](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_10.md)
+- [Architecture Checkpoint 11](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_11.md)
+- [Architecture Checkpoint 12](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_12.md)
+- [Architecture Checkpoint 13](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_13.md)
+- [Architecture Checkpoint 14](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_14.md)
+- [Architecture Checkpoint 15](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_15.md)
+- [Architecture Checkpoint 16](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_16.md)
+- [Architecture Checkpoint 17](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_17.md)
+- [Architecture Checkpoint 18](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_18.md)
+- [Architecture Checkpoint 19](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_19.md)
+- [Architecture Checkpoint 20](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_20.md)
+- [Architecture Checkpoint 21](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_21.md)
+- [Architecture Checkpoint 22](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_22.md)
+- [Architecture Checkpoint 23](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_23.md)
+- [Architecture Checkpoint 24](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_24.md)
+- [Architecture Checkpoint 25](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_25.md)
+- [Architecture Checkpoint 26](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_26.md)
+- [Design Intent Review](./build-docs/reviews/DESIGN_INTENT_REVIEW.md)
+- [Generalized Primitive Proof Harness Milestone](./build-docs/milestones/GENERALIZED_PRIMITIVE_PROOF_HARNESS_MILESTONE.md)
+- [Bounded Adaptive Composition Milestone](./build-docs/milestones/BOUNDED_ADAPTIVE_COMPOSITION_MILESTONE.md)
+- [Composed Patch Milestone](./build-docs/milestones/COMPOSED_PATCH_MILESTONE.md)
+- [Helper Primitive Catalog Milestone](./build-docs/milestones/HELPER_PRIMITIVE_CATALOG_MILESTONE.md)
+- [Primitive-Native Execution Milestone](./build-docs/milestones/PRIMITIVE_NATIVE_EXECUTION_MILESTONE.md)
+- [Cross-Family Helper Monitoring Milestone](./build-docs/milestones/CROSS_FAMILY_HELPER_MONITORING_MILESTONE.md)
+- [Cross-Family Paired Proof Milestone](./build-docs/milestones/CROSS_FAMILY_PAIRED_PROOF_MILESTONE.md)
+- [Composition Governance Milestone](./build-docs/milestones/COMPOSITION_GOVERNANCE_MILESTONE.md)
+- [Patch Governance Milestone](./build-docs/milestones/PATCH_GOVERNANCE_MILESTONE.md)
+- [Helper Governance Milestone](./build-docs/milestones/HELPER_GOVERNANCE_MILESTONE.md)
+- [Bridge Governance Milestone](./build-docs/milestones/BRIDGE_GOVERNANCE_MILESTONE.md)
+- [Family Governance Milestone](./build-docs/milestones/FAMILY_GOVERNANCE_MILESTONE.md)
+- [Template Governance Milestone](./build-docs/milestones/TEMPLATE_GOVERNANCE_MILESTONE.md)
+- [Patch Diagnosis X-Ray Milestone](./build-docs/milestones/PATCH_DIAGNOSIS_XRAY_MILESTONE.md)
+- [Project Patch Readiness Governance Milestone](./build-docs/milestones/PROJECT_PATCH_READINESS_GOVERNANCE_MILESTONE.md)
+- [MILESTONE_CHECKPOINT.md](./build-docs/checkpoints/MILESTONE_CHECKPOINT.md)
+- [NEXT_WAVE_OPTIONS.md](./build-docs/plans/NEXT_WAVE_OPTIONS.md)
+- [HELPER_SERVICE_MILESTONE.md](./build-docs/milestones/HELPER_SERVICE_MILESTONE.md)
+- [Repository Layout](./docs/REPOSITORY_LAYOUT.md)
+- [Contract Inventory](./docs/CONTRACT_INVENTORY.md)
+- [Primitive Catalog](./docs/PRIMITIVE_CATALOG.md)
+- [Proof Harness Manifests](./proof_harness/README.md)
+- [Milestone One Route Sketch](./docs/MILESTONE_ONE_ROUTE_SKETCH.md)
+- [Family Spec Template](./docs/FAMILY_SPEC_TEMPLATE.md)
+- [Tooling Policy](./docs/TOOLING_POLICY.md)
+- [Artifact Policy](./docs/ARTIFACT_POLICY.md)
+- [Governance Model](./build-docs/plans/GOVERNANCE_MODEL.md)
+- [UI Module Structure](./docs/UI_MODULE_STRUCTURE.md)
+- [UI Remaining Boundaries Review](./docs/UI_REMAINING_BOUNDARIES_REVIEW.md)
+- [Next Pivot Recommendation](./docs/NEXT_PIVOT_RECOMMENDATION.md)
+- [Remaining Governed Surfaces Review](./build-docs/reviews/REMAINING_GOVERNED_SURFACES_REVIEW.md)
+- [Acceptance Governance Decision Review](./build-docs/reviews/ACCEPTANCE_GOVERNANCE_DECISION_REVIEW.md)
+- [Remaining Legacy-Sensitive Patch Lanes Review](./build-docs/reviews/REMAINING_LEGACY_SENSITIVE_PATCH_LANES_REVIEW.md)
+
+## License
+
+ChattyFactory is licensed under the GNU Affero General Public License v3.0
+only (`AGPL-3.0-only`).
+
+- Full license text: [LICENSE](./LICENSE)
+- Workspace declaration: [Cargo.toml](./Cargo.toml)
+
+This repo is intended to ship with that license clearly attached in both the
+source tree and the public-facing documentation.
+
+## Quick Start
+
+From `chatty-factory/`:
+
+Build a project:
+
+```powershell
+cargo run -p chatty_factory_cli -- build me a python csv report utility
+```
+
+Patch an existing generated project:
+
+```powershell
+cargo run -p chatty_factory_cli -- patch build_me_a_python_csv_report add email delivery
+```
+
+Launch the desktop UI:
+
+```powershell
+cargo run -p chatty_factory_ui
+```
+
+If a request is too vague, ChattyFactory may emit clarification or planner
+handoff artifacts instead of guessing.
+
+## Initial Family Specs
+
+- [static_web_dashboard](./families/static_web_dashboard.md)
+- [chattycog_basic_dashboard](./families/chattycog_basic_dashboard.md)
+- [python_cli_tool](./families/python_cli_tool.md)
+- [rust_cli_tool](./families/rust_cli_tool.md)
+
+## Supported Families
+
+The current built-in families are:
+
+- `static_web_dashboard`
+- `chattycog_webview_module`
+- `chattycog_native_window_module`
+- `chattycog_workspace_module`
+- `python_cli_tool`
+- `rust_cli_tool`
+
+## Current Direction
+
+Web remains the strongest early lane because it is the fastest place to prove host-owned machinery.
+
+But the rebuild is not philosophically web-only.
+The architecture is being designed so honest non-web families can return as soon as templates, contracts, checks, and repair lanes are strong enough to support them.
+
+## Local Folders
+
+- `models/`: future local GGUFs and related model files
+- `runtime/`: local receipts, logs, and other rebuild runtime state
+- `output/`: generated rebuild outputs
+- `templates/`: versioned family and wrapper template assets
+- `extensions/`: scaffolded implementation work bundles for new deterministic families, patch lanes, and bridge lanes
+
+Artifact handling is now explicit:
+- durable generated project files belong in `output/`
+- factory supervision state belongs in `runtime/`
+- local compile caches and similar byproducts are not treated as canonical product output
+
+## Project Session Commands
+
+- `cargo run -p chatty_factory_cli -- select-project <project_name>`: mark a project as explicitly selected by the user
+- `cargo run -p chatty_factory_cli -- selected-project`: show the current explicit selection and last touched project
+- `cargo run -p chatty_factory_cli -- clear-selected-project`: clear the explicit selection
+- `cargo run -p chatty_factory_cli -- project-browser`: refresh and show the host-owned project browser state
+- `cargo run -p chatty_factory_cli -- refresh-project-patch-readiness`: refresh host-owned per-project patchability receipts and browser-facing patchability baselines
+
+Each of those commands also supports `--json` to emit machine-friendly state for a future UI or wrapper process.
+
+## Extension Scaffolds
+
+- `cargo run -p chatty_factory_cli -- scaffold-extension <stub_dir_or_extension_spec_json>`: turn a fallback stub bundle into a repo-side implementation work bundle under `extensions/`
+- `cargo run -p chatty_factory_cli -- scaffold-extension --integrate <stub_dir_or_extension_spec_json>`: also emit live starter files into repo manifest/template/registry-adjacent paths
+- `cargo run -p chatty_factory_cli -- scaffold-extension --integrate --promote <stub_dir_or_extension_spec_json>`: also register the starter as a pending deterministic lane in `operator_registry/pending_lanes.json`
+- `cargo run -p chatty_factory_cli -- register-proof-harness-bundle <template_manifest_json> <comparison_bundle_manifest_json>`: register a repo-defined proof template and comparison bundle as a pending `proof_harness_bundle`
+- `cargo run -p chatty_factory_cli -- pending-extensions`: show the current pending deterministic lane registry summary
+- `cargo run -p chatty_factory_cli -- implement-extension <entry_id>`: mark a pending deterministic lane entry as implemented
+- `cargo run -p chatty_factory_cli -- archive-extension <entry_id> [reason]`: retire a superseded or bad lane entry without deleting its history
+- `cargo run -p chatty_factory_cli -- validate-extension <entry_id>`: verify the expected scaffold and integrated files exist, then mark the lane `validated_ready`
+- `cargo run -p chatty_factory_cli -- prepare-extension-promotion <entry_id>`: generate Rust-side promotion stubs and notes for a `validated_ready` lane, then mark it `promotion_prepared`
+- `cargo run -p chatty_factory_cli -- prepare-extension-apply-patch <entry_id>`: generate `apply_patch`-ready wiring templates for `registry.rs` and `lib.rs`, then mark the lane `apply_patch_ready`
+- `cargo run -p chatty_factory_cli -- consume-extension-apply-patch <entry_id>`: apply the prepared wiring into the live Rust family crate, run `cargo check`, roll back on failure, and mark the lane `host_wired` on success
+- `cargo run -p chatty_factory_cli -- validate-live-extension <entry_id>`: verify that a `host_wired` lane no longer contains placeholder recipe markers or stub handler logic, rerun `cargo check`, and mark it `fully_live`
+
+This is the bridge between:
+- honest fallback saying "not supported yet"
+- and the next deterministic lane implementation work
+
+The runtime keeps these signals separately:
+- `runtime/selected_project_session.json`: strongest user-selected project signal
+- `runtime/active_project_session.json`: last project touched by a build or patch run
+- `runtime/project_browser_state.json`: UI-facing project catalog plus selection/session state
+
+## Desktop UI
+
+- `cargo run -p chatty_factory_ui`: open the rebuild desktop shell
+
+The desktop UI currently:
+- reads `runtime/project_browser_state.json`
+- lists discovered output projects
+- lets you refresh, select, and clear the active user project
+- sends build and patch requests through `chatty_factory_cli`
+- shows the extension registry with shipped, active, and archived lanes
+- lets you inspect a lane and drive its next lifecycle action from the shell
+- shows command output in-app
+- shows project patchability badges, filters, and refresh state
+- shows patch X-ray summaries and recent patch surgeries
+- shows proof and governance surfaces beyond the original thin-shell project browser
+
+## Release Notes
+
+The initial public release plan and notes live at:
+
+- [Initial GitHub Release Plan](./build-docs/plans/INITIAL_GITHUB_RELEASE_PLAN.md)
+- [GitHub Upload Metadata](./build-docs/plans/GITHUB_UPLOAD_METADATA.md)
+- [Release Notes v0.1.0](./build-docs/plans/RELEASE_NOTES_v0.1.0.md)
