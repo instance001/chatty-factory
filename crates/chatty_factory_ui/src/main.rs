@@ -3989,7 +3989,7 @@ impl App for ChattyFactoryUiApp {
                     });
                     ui.separator();
                     egui::Frame::group(ui.style()).show(ui, |ui| {
-                        ui.label(egui::RichText::new("Project Browser Footer").strong());
+                        ui.label(egui::RichText::new("Project Browser Actions").strong());
                         ui.label(
                             egui::RichText::new(format!(
                                 "Selected project: {}",
@@ -3999,10 +3999,10 @@ impl App for ChattyFactoryUiApp {
                             .weak(),
                         );
                         ui.horizontal_wrapped(|ui| {
-                            if ui.small_button("Refresh browser now").clicked() {
+                            if ui.small_button("Refresh project list").clicked() {
                                 self.spawn_task(UiTask::RefreshBrowser);
                             }
-                            if ui.small_button("Refresh project patchability").clicked() {
+                            if ui.small_button("Refresh patchability").clicked() {
                                 self.spawn_task(UiTask::RefreshProjectPatchReadiness);
                             }
                         });

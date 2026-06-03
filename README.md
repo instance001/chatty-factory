@@ -30,6 +30,7 @@ It now has:
   - postcheck
 - project-level patchability governance
 - a desktop UI for project, patch, extension, proof, and governance surfaces
+- a scrollable summary-first workspace with expandable deep-detail sections
 
 The product promise is intentionally bounded:
 
@@ -177,6 +178,12 @@ Launch the desktop UI:
 ```powershell
 cargo run -p chatty_factory_ui
 ```
+
+The UI now defaults to a summary-first layout:
+
+- the main workspace scrolls cleanly
+- dense governance and diagnostic sections are collapsible
+- project, result, and fallback views keep the most important signal visible first
 
 If a request is too vague, ChattyFactory may emit clarification or planner
 handoff artifacts instead of guessing.

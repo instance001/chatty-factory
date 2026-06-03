@@ -10,6 +10,7 @@ If you want the shortest possible description, ChattyFactory is a local build-an
 - you can later select that project and ask for follow-up changes
 
 It also contains a local planning/runtime layer and a desktop UI for managing projects, extension lanes, and lane lifecycle work.
+The current UI is designed as a scrollable summary-first workspace with deeper diagnostics available through expandable sections.
 
 ## License
 

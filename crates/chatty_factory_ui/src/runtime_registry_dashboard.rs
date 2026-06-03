@@ -148,7 +148,7 @@ impl ChattyFactoryUiApp {
                     ));
                 }
             }
-            egui::CollapsingHeader::new("Starter Usage Deep View")
+            egui::CollapsingHeader::new("Starter Usage Details")
                 .default_open(false)
                 .show(ui, |ui| {
                     if !recent_builds.is_empty() {
@@ -324,7 +324,7 @@ impl ChattyFactoryUiApp {
                     self.spawn_task(UiTask::RefreshBridgeGovernance);
                 }
             });
-            egui::CollapsingHeader::new("Extension Registry Controls and Filters")
+            egui::CollapsingHeader::new("Extension Registry Controls")
                 .default_open(false)
                 .show(ui, |ui| {
             if ui
@@ -616,18 +616,18 @@ impl ChattyFactoryUiApp {
                     )),
                 );
             }
-            egui::CollapsingHeader::new("Family Governance Deep View")
+            egui::CollapsingHeader::new("Family Governance Details")
                 .default_open(false)
                 .show(ui, |ui| {
                     self.render_family_governance_panel(ui);
                 });
-            egui::CollapsingHeader::new("Template Governance Deep View")
+            egui::CollapsingHeader::new("Template Governance Details")
                 .default_open(false)
                 .show(ui, |ui| {
                     self.render_template_governance_panel(ui);
                 });
             ui.separator();
-            egui::CollapsingHeader::new("Extension Registry Deep View")
+            egui::CollapsingHeader::new("Extension Registry Details")
                 .default_open(false)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
