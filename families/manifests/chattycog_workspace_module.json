@@ -1,6 +1,11 @@
 {
   "family_id": "chattycog_workspace_module",
   "primary_substrate": "unknown",
+  "lifecycle_status": "frozen",
+  "lifecycle_notes": [
+    "Historical workspace-style Chatty-Cog module starter retained for narrow compatibility cases.",
+    "Do not treat this family as the default route for new module builds."
+  ],
   "supports_standalone": false,
   "supports_chattycog_wrapper": true,
   "supported_stack_ids": ["chattycog", "module", "workspace"],

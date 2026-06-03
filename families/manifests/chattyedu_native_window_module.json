@@ -1,0 +1,36 @@
+{
+  "family_id": "chattyedu_native_window_module",
+  "primary_substrate": "desktop",
+  "lifecycle_status": "active",
+  "lifecycle_notes": [
+    "Primary forward skeleton for standalone Rust GUI dashboards with removable Chatty-EDU compatibility plug files.",
+    "Prefer this family when the request explicitly targets Chatty-EDU or school-facing hosted native dashboards."
+  ],
+  "supports_standalone": true,
+  "supports_chattycog_wrapper": false,
+  "supported_stack_ids": ["chattyedu", "chatty-edu", "module", "rust", "native_window", "egui", "eframe", "education"],
+  "provided_build_primitive_classes": ["summary_surface", "status_chip"],
+  "primitive_adapters": [
+    {
+      "adapter_id": "chattyedu_native_window_summary_surface",
+      "composition_layer": "family_build",
+      "primitive_name": "summary_surface",
+      "adapter_kind": "native_window_surface",
+      "support_level": "native",
+      "notes": ["Provided directly by the base Chatty-EDU native window module shell."]
+    },
+    {
+      "adapter_id": "chattyedu_native_window_status_chip",
+      "composition_layer": "family_build",
+      "primitive_name": "status_chip",
+      "adapter_kind": "native_window_status_strip",
+      "support_level": "native",
+      "notes": ["Provided directly by the base Chatty-EDU native window module shell."]
+    }
+  ],
+  "explicit_stack_keywords": ["chattyedu", "chatty-edu", "education", "school", "classroom", "lesson", "student", "teacher", "rust dashboard", "rust gui", "eframe", "egui"],
+  "route_keywords": ["native window", "desktop module", "desktop app", "school dashboard", "lesson studio", "hosted native", "classroom tool"],
+  "supported_tool_kinds": ["module_starter", "native_window_starter"],
+  "forbids_capabilities": ["backend_service", "websocket", "api_server", "daemon"],
+  "requires_helper_for": ["background_job", "email_delivery"]
+}

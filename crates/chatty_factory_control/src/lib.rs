@@ -232,6 +232,21 @@ impl ControlPlane {
         decision_reasons.push("route_selected_from_request_plan".into());
         if wants_wrapper {
             decision_reasons.push("wrapper_intent_detected".into());
+        } else if matches!(
+            selected_family_id,
+            Some(FamilyId::ChattycogChattyeduNativeWindowModule)
+        ) {
+            decision_reasons.push("dual_native_window_fit_detected".into());
+        } else if matches!(
+            selected_family_id,
+            Some(FamilyId::ChattycogNativeWindowModule)
+        ) {
+            decision_reasons.push("chattycog_native_window_fit_detected".into());
+        } else if matches!(
+            selected_family_id,
+            Some(FamilyId::ChattyeduNativeWindowModule)
+        ) {
+            decision_reasons.push("chattyedu_native_window_fit_detected".into());
         } else if matches!(selected_family_id, Some(FamilyId::RustCliTool)) {
             decision_reasons.push("rust_cli_fit_detected".into());
         } else if wants_cli {

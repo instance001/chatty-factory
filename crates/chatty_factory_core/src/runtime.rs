@@ -1162,13 +1162,21 @@ fn infer_planner_response_from_text(
         Some(crate::FamilyId::PythonCliTool)
     } else if lower.contains("rust_cli_tool") {
         Some(crate::FamilyId::RustCliTool)
+    } else if lower.contains("chattycog_chattyedu_native_window_module") {
+        Some(crate::FamilyId::ChattycogChattyeduNativeWindowModule)
     } else if lower.contains("chattycog_native_window_module") {
         Some(crate::FamilyId::ChattycogNativeWindowModule)
+    } else if lower.contains("chattyedu_native_window_module") {
+        Some(crate::FamilyId::ChattyeduNativeWindowModule)
     } else if lower.contains("chattycog_workspace_module") {
         Some(crate::FamilyId::ChattycogWorkspaceModule)
     } else if lower.contains("chattycog_webview_module") {
         Some(crate::FamilyId::ChattycogWebviewModule)
-    } else if lower.contains("static_web_dashboard") || lower.contains("dashboard") {
+    } else if lower.contains("static_web_dashboard")
+        || lower.contains("static web dashboard")
+        || lower.contains("browser dashboard")
+        || lower.contains("web dashboard")
+    {
         Some(crate::FamilyId::StaticWebDashboard)
     } else {
         handoff.inferred_family_candidates.first().cloned()
@@ -1278,4 +1286,35 @@ fn extract_first_json_object(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FamilyId, PlannerHandoff, RequestMode};
+
+    #[test]
+    fn parser_does_not_force_static_web_from_generic_dashboard_word() {
+        let handoff = PlannerHandoff {
+            handoff_id: "handoff-1".into(),
+            request_id: "request-1".into(),
+            source_plan_id: "plan-1".into(),
+            mode: Some(RequestMode::NewBuild),
+            interpreted_goal: "Build a project".into(),
+            inferred_family_candidates: vec![FamilyId::ChattycogNativeWindowModule],
+            inferred_tool_kind: Some("native_window_starter".into()),
+            ..Default::default()
+        };
+
+        let parsed = infer_planner_response_from_text(
+            "approved with dashboard tool kind and native shell intent",
+            &handoff,
+        )
+        .expect("planner response should parse");
+
+        assert_eq!(
+            parsed.recommended_family_id,
+            Some(FamilyId::ChattycogNativeWindowModule)
+        );
+    }
 }

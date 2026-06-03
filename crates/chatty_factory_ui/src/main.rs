@@ -18,6 +18,7 @@ mod runtime_registry_dashboard;
 use chrono::{Local, Utc};
 use chatty_factory_core::{
     built_in_proof_templates,
+    build_starter_label,
     capability_comparison_bundle_manifest_path, capability_comparison_bundles_from_root,
     proof_template_manifest_path, proof_templates_from_root,
     AcceptanceRecipeStatus, CapabilityComparisonBundle, ChattyCogBridgeCapabilities,
@@ -58,6 +59,11 @@ enum UiTask {
     RefreshBridgeGovernance,
     RefreshFamilyGovernance,
     RefreshTemplateGovernance,
+    ApproveProposedConstraint { request_id_or_path: String },
+    SetApprovedConstraintActive { constraint_id: String, active: bool },
+    ArchiveUnmatchedInactiveConstraints,
+    DeactivateLowValueActiveConstraints,
+    RestoreApprovedConstraint { constraint_id: String },
     SelectProject { project_name: String },
     ClearSelectedProject,
     ImplementExtension { entry_id: String },
@@ -76,6 +82,7 @@ enum UiTask {
     },
     BuildRequest {
         request: String,
+        starter_override_id: Option<String>,
         auto_planner: bool,
         port: String,
         model: String,
@@ -190,10 +197,68 @@ struct FamilyGovernanceRefreshStatusView {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+struct FamilyUsageEntryView {
+    family_id: String,
+    family_display_name: String,
+    family_ecosystem: Option<String>,
+    project_count: usize,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct FamilyUsageSummaryView {
+    summary_id: String,
+    total_projects: usize,
+    #[serde(default)]
+    ecosystem_project_counts: BTreeMap<String, usize>,
+    #[serde(default)]
+    families: Vec<FamilyUsageEntryView>,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct StarterUsageEntryView {
+    starter_id: String,
+    starter_label: String,
+    starter_lifecycle: String,
+    build_count: usize,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct StarterUsageSummaryView {
+    summary_id: String,
+    total_build_receipts: usize,
+    explicit_override_builds: usize,
+    auto_routed_builds: usize,
+    matched_recommendation_builds: usize,
+    overridden_recommendation_builds: usize,
+    #[serde(default)]
+    starters: Vec<StarterUsageEntryView>,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct BuildReceiptView {
+    starter_override_id: Option<String>,
+    starter_override_summary: Option<String>,
+    recommended_starter_id: Option<String>,
+    recommended_starter_summary: Option<String>,
+    starter_recommendation_comparison: Option<String>,
+    project_name: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 struct FamilyGovernanceReceiptView {
     family_id: String,
+    #[serde(default)]
+    family_display_name: Option<String>,
+    #[serde(default)]
+    family_ecosystem: Option<String>,
     manifest_path: String,
     primary_substrate: String,
+    #[serde(default)]
+    lifecycle_status: String,
+    #[serde(default)]
+    lifecycle_notes: Vec<String>,
     supported_tool_kinds: Vec<String>,
     provided_build_primitive_classes: Vec<String>,
     primitive_adapter_ids: Vec<String>,
@@ -240,13 +305,113 @@ struct TemplateGovernanceReceiptView {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+struct ProjectHistoricalBlockerBundleView {
+    replacement_patch_kinds: Vec<String>,
+    ready_replacement_patch_kinds: Vec<String>,
+    already_present_replacement_patch_kinds: Vec<String>,
+    bundle_status: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 struct ProjectPatchReadinessReceiptView {
+    #[serde(default)]
+    family_display_name: Option<String>,
+    #[serde(default)]
+    family_ecosystem: Option<String>,
     blocked_lane_reasons: BTreeMap<String, String>,
     superseded_blocked_lane_replacements: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    decomposable_historical_blocker_bundles: BTreeMap<String, ProjectHistoricalBlockerBundleView>,
     risky_blocked_lane_count: usize,
     historical_blocked_lane_count: usize,
+    #[serde(default)]
+    decomposable_historical_blocker_count: usize,
     change_since_patchability_baseline_status: String,
     change_since_patchability_baseline_notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct BuildVerificationReceiptView {
+    review_subject: String,
+    failure_class: String,
+    failure_mode: String,
+    suggested_family_id: Option<String>,
+    suggested_tool_kind: Option<String>,
+    #[serde(default)]
+    matched_approved_constraint_ids: Vec<String>,
+    #[serde(default)]
+    matched_approved_constraint_summaries: Vec<String>,
+    #[serde(default)]
+    reasons: Vec<String>,
+    #[serde(default)]
+    blocked_methods: Vec<String>,
+    #[serde(default)]
+    findings: Vec<String>,
+    decision: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ProposedConstraintReceiptView {
+    status: String,
+    rationale: Vec<String>,
+    proposed_constraint: ProposedConstraintView,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ProposedConstraintView {
+    constraint_scope: String,
+    constraint_kind: String,
+    forbidden_method_summary: String,
+    replacement_guidance: Option<String>,
+    severity: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ApprovedConstraintShelfView {
+    shelf_id: String,
+    #[serde(default)]
+    constraints: Vec<ApprovedConstraintView>,
+    updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ConstraintShelfHistoryEntryView {
+    constraint: ApprovedConstraintView,
+    archived_reason: String,
+    archived_from_shelf_id: Option<String>,
+    #[serde(default)]
+    archived_match_count: usize,
+    archived_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ConstraintShelfHistoryView {
+    history_id: String,
+    #[serde(default)]
+    archived_constraints: Vec<ConstraintShelfHistoryEntryView>,
+    updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ConstraintShelfMutationReceiptView {
+    mutation_id: String,
+    constraint_id: String,
+    action: String,
+    status: String,
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ApprovedConstraintView {
+    constraint_id: String,
+    constraint_scope: String,
+    constraint_kind: String,
+    forbidden_method_summary: String,
+    replacement_guidance: Option<String>,
+    severity: String,
+    active: bool,
+    family_id: Option<String>,
+    tool_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -425,6 +590,10 @@ fn project_patchability_badge(
             }
             "baseline_recorded" => {
                 return if receipt.risky_blocked_lane_count == 0
+                    && receipt.decomposable_historical_blocker_count > 0
+                {
+                    ("patch-decomposable", egui::Color32::from_rgb(114, 160, 96))
+                } else if receipt.risky_blocked_lane_count == 0
                     && receipt.historical_blocked_lane_count > 0
                 {
                     ("patch-historical", egui::Color32::from_rgb(184, 156, 92))
@@ -443,6 +612,11 @@ fn project_patchability_badge(
     }
 
     if let Some(receipt) = receipt {
+        if receipt.risky_blocked_lane_count == 0
+            && receipt.decomposable_historical_blocker_count > 0
+        {
+            return ("patch-decomposable", egui::Color32::from_rgb(114, 160, 96));
+        }
         if receipt.risky_blocked_lane_count == 0 && receipt.historical_blocked_lane_count > 0 {
             return ("patch-historical", egui::Color32::from_rgb(184, 156, 92));
         }
@@ -475,6 +649,24 @@ fn project_historical_blocker_badge(
     }
 }
 
+fn project_decomposable_historical_badge(
+    receipt: Option<&ProjectPatchReadinessReceiptView>,
+) -> Option<egui::RichText> {
+    let has_decomposable_historical = receipt
+        .map(|receipt| receipt.decomposable_historical_blocker_count > 0)
+        .unwrap_or(false);
+    if has_decomposable_historical {
+        Some(
+            egui::RichText::new("[decomposable-historical]")
+                .small()
+                .color(egui::Color32::from_rgb(114, 160, 96))
+                .strong(),
+        )
+    } else {
+        None
+    }
+}
+
 fn project_patchability_risk_rank(
     receipt: Option<&ProjectPatchReadinessReceiptView>,
     readiness: &ProjectPatchReadinessSummary,
@@ -487,10 +679,13 @@ fn project_patchability_risk_rank(
                 if receipt.risky_blocked_lane_count > 0 {
                     return 3;
                 }
-                if receipt.historical_blocked_lane_count > 0 {
+                if receipt.decomposable_historical_blocker_count > 0 {
                     return 2;
                 }
-                return 1;
+                if receipt.historical_blocked_lane_count > 0 {
+                    return 1;
+                }
+                return 0;
             }
             "stable_since_patchability_baseline" => return 1,
             "improved_since_patchability_baseline" => return 0,
@@ -499,7 +694,10 @@ fn project_patchability_risk_rank(
     }
     if let Some(receipt) = receipt {
         if receipt.risky_blocked_lane_count == 0 && receipt.historical_blocked_lane_count > 0 {
-            return 2;
+            if receipt.decomposable_historical_blocker_count > 0 {
+                return 2;
+            }
+            return 1;
         }
     }
     if readiness.structurally_blocked_count + readiness.surface_mismatch_count > 0 {
@@ -516,6 +714,11 @@ struct UiExecutionResult {
     kind: String,
     request_id: String,
     project_name: String,
+    starter_override_id: Option<String>,
+    starter_override_summary: Option<String>,
+    recommended_starter_id: Option<String>,
+    recommended_starter_summary: Option<String>,
+    starter_recommendation_comparison: Option<String>,
     family_id: Option<String>,
     tool_kind: Option<String>,
     patch_kind: Option<String>,
@@ -534,6 +737,8 @@ struct UiExecutionResult {
     chattycog_ui_owner: Option<String>,
     chattycog_bridge_capabilities: Option<ChattyCogBridgeCapabilities>,
     patch_diagnosis_path: Option<String>,
+    patch_plan_review_path: Option<String>,
+    patch_constraint_review_path: Option<String>,
     patch_intent_freeze_path: Option<String>,
     patch_postcheck_path: Option<String>,
 }
@@ -583,8 +788,20 @@ struct PairedProofUiPreferences {
     project_browser_show_improved_only: bool,
     #[serde(default)]
     project_browser_show_historical_blockers_only: bool,
+    #[serde(default)]
+    project_browser_show_decomposable_historical_only: bool,
     #[serde(default = "default_true")]
     project_browser_sort_by_patch_risk: bool,
+    #[serde(default)]
+    negative_shelf_show_unmatched_only: bool,
+    #[serde(default)]
+    negative_shelf_show_inactive_unmatched_only: bool,
+    #[serde(default)]
+    negative_shelf_show_low_value_active_only: bool,
+    #[serde(default)]
+    negative_shelf_history_show_never_matched_only: bool,
+    #[serde(default)]
+    negative_shelf_history_show_historically_useful_only: bool,
     #[serde(default = "default_true")]
     auto_refresh_stale_proof_governance: bool,
     #[serde(default)]
@@ -616,6 +833,8 @@ struct PairedProofUiPreferences {
     auto_planner: bool,
     planner_port: String,
     planner_model: String,
+    #[serde(default = "default_build_starter_override_id")]
+    build_starter_override_id: String,
     #[serde(default)]
     active_profile_name: Option<String>,
     #[serde(default)]
@@ -635,6 +854,10 @@ struct ProofRunProfile {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_build_starter_override_id() -> String {
+    "auto".to_string()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -664,6 +887,14 @@ struct UiFallbackResult {
     chattycog_requested_bridge_capabilities: Vec<String>,
     chattycog_supported_bridge_capabilities: Vec<String>,
     stub_bundle_path: Option<String>,
+    build_failure_class: Option<String>,
+    build_failure_mode: Option<String>,
+    matched_approved_constraint_ids: Vec<String>,
+    matched_approved_constraint_summaries: Vec<String>,
+    build_verification_path: Option<String>,
+    proposed_constraint_path: Option<String>,
+    proposed_constraint_summary: Option<String>,
+    proposed_constraint_replacement_guidance: Option<String>,
 }
 
 struct ChattyFactoryUiApp {
@@ -703,7 +934,13 @@ struct ChattyFactoryUiApp {
     project_browser_show_regressed_only: bool,
     project_browser_show_improved_only: bool,
     project_browser_show_historical_blockers_only: bool,
+    project_browser_show_decomposable_historical_only: bool,
     project_browser_sort_by_patch_risk: bool,
+    negative_shelf_show_unmatched_only: bool,
+    negative_shelf_show_inactive_unmatched_only: bool,
+    negative_shelf_show_low_value_active_only: bool,
+    negative_shelf_history_show_never_matched_only: bool,
+    negative_shelf_history_show_historically_useful_only: bool,
     auto_refresh_stale_proof_governance: bool,
     last_auto_proof_governance_refresh_unix_secs: Option<i64>,
     auto_refresh_stale_composition_governance: bool,
@@ -719,6 +956,7 @@ struct ChattyFactoryUiApp {
     auto_refresh_stale_template_governance: bool,
     last_auto_template_governance_refresh_unix_secs: Option<i64>,
     request_input: String,
+    build_starter_override_id: String,
     paired_proof_request_input: String,
     selected_proof_template_id: String,
     proof_history_template_filter: String,
@@ -800,10 +1038,34 @@ impl ChattyFactoryUiApp {
                 .as_ref()
                 .map(|prefs| prefs.project_browser_show_historical_blockers_only)
                 .unwrap_or(false),
+            project_browser_show_decomposable_historical_only: paired_proof_ui_preferences
+                .as_ref()
+                .map(|prefs| prefs.project_browser_show_decomposable_historical_only)
+                .unwrap_or(false),
             project_browser_sort_by_patch_risk: paired_proof_ui_preferences
                 .as_ref()
                 .map(|prefs| prefs.project_browser_sort_by_patch_risk)
                 .unwrap_or(true),
+            negative_shelf_show_unmatched_only: paired_proof_ui_preferences
+                .as_ref()
+                .map(|prefs| prefs.negative_shelf_show_unmatched_only)
+                .unwrap_or(false),
+            negative_shelf_show_inactive_unmatched_only: paired_proof_ui_preferences
+                .as_ref()
+                .map(|prefs| prefs.negative_shelf_show_inactive_unmatched_only)
+                .unwrap_or(false),
+            negative_shelf_show_low_value_active_only: paired_proof_ui_preferences
+                .as_ref()
+                .map(|prefs| prefs.negative_shelf_show_low_value_active_only)
+                .unwrap_or(false),
+            negative_shelf_history_show_never_matched_only: paired_proof_ui_preferences
+                .as_ref()
+                .map(|prefs| prefs.negative_shelf_history_show_never_matched_only)
+                .unwrap_or(false),
+            negative_shelf_history_show_historically_useful_only: paired_proof_ui_preferences
+                .as_ref()
+                .map(|prefs| prefs.negative_shelf_history_show_historically_useful_only)
+                .unwrap_or(false),
             auto_refresh_stale_proof_governance: paired_proof_ui_preferences
                 .as_ref()
                 .map(|prefs| prefs.auto_refresh_stale_proof_governance)
@@ -854,6 +1116,10 @@ impl ChattyFactoryUiApp {
                 .as_ref()
                 .and_then(|prefs| prefs.last_auto_template_governance_refresh_unix_secs),
             request_input: String::new(),
+            build_starter_override_id: paired_proof_ui_preferences
+                .as_ref()
+                .map(|prefs| prefs.build_starter_override_id.clone())
+                .unwrap_or_else(default_build_starter_override_id),
             paired_proof_request_input: String::new(),
             selected_proof_template_id: paired_proof_ui_preferences
                 .as_ref()
@@ -1174,7 +1440,18 @@ impl ChattyFactoryUiApp {
             project_browser_show_improved_only: self.project_browser_show_improved_only,
             project_browser_show_historical_blockers_only: self
                 .project_browser_show_historical_blockers_only,
+            project_browser_show_decomposable_historical_only: self
+                .project_browser_show_decomposable_historical_only,
             project_browser_sort_by_patch_risk: self.project_browser_sort_by_patch_risk,
+            negative_shelf_show_unmatched_only: self.negative_shelf_show_unmatched_only,
+            negative_shelf_show_inactive_unmatched_only: self
+                .negative_shelf_show_inactive_unmatched_only,
+            negative_shelf_show_low_value_active_only: self
+                .negative_shelf_show_low_value_active_only,
+            negative_shelf_history_show_never_matched_only: self
+                .negative_shelf_history_show_never_matched_only,
+            negative_shelf_history_show_historically_useful_only: self
+                .negative_shelf_history_show_historically_useful_only,
             auto_refresh_stale_proof_governance: self.auto_refresh_stale_proof_governance,
             last_auto_proof_governance_refresh_unix_secs: self
                 .last_auto_proof_governance_refresh_unix_secs,
@@ -1200,6 +1477,7 @@ impl ChattyFactoryUiApp {
             auto_planner: self.auto_planner,
             planner_port: self.planner_port.clone(),
             planner_model: self.planner_model.clone(),
+            build_starter_override_id: self.build_starter_override_id.clone(),
             active_profile_name: if self.selected_proof_profile_name == "custom" {
                 None
             } else {
@@ -1665,6 +1943,25 @@ impl ChattyFactoryUiApp {
             }
             UiTask::RefreshTemplateGovernance => {
                 "Refreshing template governance registry".to_string()
+            }
+            UiTask::ApproveProposedConstraint { .. } => {
+                "Approving proposed constraint".to_string()
+            }
+            UiTask::SetApprovedConstraintActive { active, .. } => {
+                if *active {
+                    "Activating approved constraint".to_string()
+                } else {
+                    "Deactivating approved constraint".to_string()
+                }
+            }
+            UiTask::ArchiveUnmatchedInactiveConstraints => {
+                "Archiving unmatched inactive constraints".to_string()
+            }
+            UiTask::DeactivateLowValueActiveConstraints => {
+                "Deactivating low-value active constraints".to_string()
+            }
+            UiTask::RestoreApprovedConstraint { .. } => {
+                "Restoring approved constraint from history".to_string()
             }
             UiTask::SelectProject { project_name } => format!("Selecting project {project_name}"),
             UiTask::ClearSelectedProject => "Clearing selected project".to_string(),
@@ -2262,6 +2559,94 @@ fn extension_governed_artifact_set_summary(entry: &PendingExtensionEntry) -> Opt
         )),
         _ => None,
     }
+}
+
+fn family_display_name(family_id: &str) -> &'static str {
+    match family_id {
+        "chattycog_native_window_module" => "Chatty-Cog Rust Native Dashboard",
+        "chattyedu_native_window_module" => "Chatty-EDU Rust Native Dashboard",
+        "chattycog_chattyedu_native_window_module" => {
+            "Chatty-Cog + Chatty-EDU Rust Native Dashboard"
+        }
+        "chattycog_webview_module" => "Chatty-Cog Webview Module",
+        "chattycog_workspace_module" => "Chatty-Cog Workspace Module",
+        "static_web_dashboard" => "Static Web Dashboard",
+        "rust_cli_tool" => "Rust CLI Tool",
+        "python_cli_tool" => "Python CLI Tool",
+        _ => "Unknown Family",
+    }
+}
+
+fn family_ecosystem_badge(family_id: &str) -> Option<&'static str> {
+    match family_id {
+        "chattycog_native_window_module"
+        | "chattycog_webview_module"
+        | "chattycog_workspace_module" => Some("[ecosystem: Chatty-Cog]"),
+        "chattyedu_native_window_module" => Some("[ecosystem: Chatty-EDU]"),
+        "chattycog_chattyedu_native_window_module" => {
+            Some("[ecosystem: Chatty-Cog + Chatty-EDU]")
+        }
+        _ => None,
+    }
+}
+
+fn family_summary_label(family_id: &str) -> String {
+    if let Some(badge) = family_ecosystem_badge(family_id) {
+        format!("{} {}", family_display_name(family_id), badge)
+    } else {
+        family_display_name(family_id).to_string()
+    }
+}
+
+fn family_governance_picker_label(receipt: &FamilyGovernanceReceiptView) -> String {
+    format!(
+        "{} [{}]",
+        family_summary_label_from_receipt(receipt),
+        receipt.lifecycle_status
+    )
+}
+
+fn family_summary_label_from_receipt(receipt: &FamilyGovernanceReceiptView) -> String {
+    match (
+        receipt.family_display_name.as_deref(),
+        receipt.family_ecosystem.as_deref(),
+    ) {
+        (Some(display_name), Some(ecosystem)) if !display_name.trim().is_empty() => {
+            format!("{display_name} [ecosystem: {ecosystem}]")
+        }
+        (Some(display_name), _) if !display_name.trim().is_empty() => display_name.to_string(),
+        _ => family_summary_label(&receipt.family_id),
+    }
+}
+
+fn family_summary_label_from_patchability_receipt(
+    family_id: &str,
+    receipt: Option<&ProjectPatchReadinessReceiptView>,
+) -> String {
+    if let Some(receipt) = receipt {
+        match (
+            receipt.family_display_name.as_deref(),
+            receipt.family_ecosystem.as_deref(),
+        ) {
+            (Some(display_name), Some(ecosystem)) if !display_name.trim().is_empty() => {
+                return format!("{display_name} [ecosystem: {ecosystem}]");
+            }
+            (Some(display_name), _) if !display_name.trim().is_empty() => {
+                return display_name.to_string();
+            }
+            _ => {}
+        }
+    }
+    family_summary_label(family_id)
+}
+
+fn is_canonical_ecosystem_shell_family(family_id: &str) -> bool {
+    matches!(
+        family_id,
+        "chattycog_native_window_module"
+            | "chattyedu_native_window_module"
+            | "chattycog_chattyedu_native_window_module"
+    )
 }
 
 fn count_proof_baseline_status(
@@ -3023,7 +3408,23 @@ impl App for ChattyFactoryUiApp {
             ui.horizontal(|ui| {
                 ui.heading("ChattyFactory");
                 ui.separator();
-                ui.label(&self.status_line);
+                let status_fill = if self.task_running {
+                    egui::Color32::from_rgb(66, 74, 32)
+                } else {
+                    egui::Color32::from_rgb(32, 54, 68)
+                };
+                egui::Frame::none()
+                    .fill(status_fill)
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(70)))
+                    .rounding(6.0)
+                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(&self.status_line)
+                                .strong()
+                                .color(egui::Color32::WHITE),
+                        );
+                    });
                 if self.task_running {
                     ui.spinner();
                 }
@@ -3091,6 +3492,12 @@ impl App for ChattyFactoryUiApp {
                         "Show historical blockers only",
                     )
                     .changed();
+                let decomposable_historical_filter_changed = ui
+                    .checkbox(
+                        &mut self.project_browser_show_decomposable_historical_only,
+                        "Show decomposable historical only",
+                    )
+                    .changed();
                 let sort_changed = ui
                     .checkbox(
                         &mut self.project_browser_sort_by_patch_risk,
@@ -3101,6 +3508,7 @@ impl App for ChattyFactoryUiApp {
                     || regressed_filter_changed
                     || improved_filter_changed
                     || historical_filter_changed
+                    || decomposable_historical_filter_changed
                     || sort_changed
                 {
                     self.save_paired_proof_ui_preferences();
@@ -3116,6 +3524,8 @@ impl App for ChattyFactoryUiApp {
                         .active_project_session
                         .as_ref()
                         .map(|session| session.project_name.clone());
+                    let recent_override_counts =
+                        load_recent_project_starter_override_counts(&self.workspace_root);
                     let all_projects = state
                         .projects
                         .iter()
@@ -3179,6 +3589,25 @@ impl App for ChattyFactoryUiApp {
                                 .unwrap_or(false)
                         })
                         .count();
+                    let decomposable_historical_projects = all_projects
+                        .iter()
+                        .filter(|(_, _, receipt)| {
+                            receipt
+                                .as_ref()
+                                .map(|receipt| receipt.decomposable_historical_blocker_count > 0)
+                                .unwrap_or(false)
+                        })
+                        .count();
+                    let override_heavy_projects = all_projects
+                        .iter()
+                        .filter(|(project, _, _)| {
+                            recent_override_counts
+                                .get(&project.project_name)
+                                .copied()
+                                .unwrap_or(0)
+                                > 0
+                        })
+                        .count();
                     let mut projects = all_projects
                         .into_iter()
                         .filter(|(_, readiness, receipt)| {
@@ -3225,6 +3654,17 @@ impl App for ChattyFactoryUiApp {
                             {
                                 return false;
                             }
+                            if self.project_browser_show_decomposable_historical_only
+                                && receipt
+                                    .as_ref()
+                                    .map(|receipt| {
+                                        receipt.decomposable_historical_blocker_count > 0
+                                    })
+                                    .unwrap_or(false)
+                                    == false
+                            {
+                                return false;
+                            }
                             true
                         })
                         .collect::<Vec<_>>();
@@ -3236,6 +3676,8 @@ impl App for ChattyFactoryUiApp {
                             format!("Blocked projects: {blocked_projects}"),
                             format!("Risky blockers: {risky_blocker_projects}"),
                             format!("Historical blockers: {historical_blocker_projects}"),
+                            format!("Decomposable historical: {decomposable_historical_projects}"),
+                            format!("Override-heavy projects: {override_heavy_projects}"),
                         ],
                         "Refresh browser now",
                     );
@@ -3248,6 +3690,18 @@ impl App for ChattyFactoryUiApp {
                             project_patchability_risk_rank(right.2.as_ref(), &right.1)
                                 .cmp(&project_patchability_risk_rank(left.2.as_ref(), &left.1))
                                 .then(
+                                    recent_override_counts
+                                        .get(&right.0.project_name)
+                                        .copied()
+                                        .unwrap_or(0)
+                                        .cmp(
+                                            &recent_override_counts
+                                                .get(&left.0.project_name)
+                                                .copied()
+                                                .unwrap_or(0),
+                                        ),
+                                )
+                                .then(
                                     right
                                         .1
                                         .structurally_blocked_count
@@ -3259,7 +3713,11 @@ impl App for ChattyFactoryUiApp {
                         });
                     }
 
-                    egui::ScrollArea::vertical().show(ui, |ui| {
+                    let footer_reserve = 96.0;
+                    let max_list_height = (ui.available_height() - footer_reserve).max(140.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(max_list_height)
+                        .show(ui, |ui| {
                         for (project, readiness, patchability_receipt) in &projects {
                             let is_selected = self
                                 .selected_project_name
@@ -3271,6 +3729,10 @@ impl App for ChattyFactoryUiApp {
                                 .as_ref()
                                 .map(|id: &chatty_factory_core::FamilyId| id.as_str().to_string())
                                 .unwrap_or_else(|| "unknown_family".to_string());
+                            let family_label = family_summary_label_from_patchability_receipt(
+                                &family,
+                                patchability_receipt.as_ref(),
+                            );
                             let tool = project.tool_kind.as_deref().unwrap_or("none");
                             let summary = project
                                 .request_summary
@@ -3292,7 +3754,7 @@ impl App for ChattyFactoryUiApp {
                                 project_patchability_badge(patchability_receipt.as_ref(), readiness);
                             let label = format!(
                                 "{}{}\n{} | {} | {}",
-                                project.project_name, badge_text, family, tool, project.recency_hint
+                                project.project_name, badge_text, family_label, tool, project.recency_hint
                             );
                             if ui.selectable_label(is_selected, label).clicked() {
                                 self.selected_project_name = Some(project.project_name.clone());
@@ -3308,11 +3770,30 @@ impl App for ChattyFactoryUiApp {
                                 {
                                     ui.label(historical_badge);
                                 }
+                                if let Some(decomposable_badge) =
+                                    project_decomposable_historical_badge(
+                                        patchability_receipt.as_ref(),
+                                    )
+                                {
+                                    ui.label(decomposable_badge);
+                                }
+                                if let Some(count) =
+                                    recent_override_counts.get(&project.project_name)
+                                {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "[starter-override x{count}]"
+                                        ))
+                                        .small()
+                                        .color(egui::Color32::from_rgb(204, 134, 92))
+                                        .strong(),
+                                    );
+                                }
                             });
                             ui.label(egui::RichText::new(summary).small().weak());
                             ui.label(
                                 egui::RichText::new(format!(
-                                    "Patch readiness: {} ready, {} blocked ({} risky, {} historical), {} already present",
+                                    "Patch readiness: {} ready, {} blocked ({} risky, {} historical, {} decomposable), {} already present",
                                     readiness.ready_count,
                                     readiness.structurally_blocked_count + readiness.surface_mismatch_count,
                                     patchability_receipt
@@ -3322,6 +3803,10 @@ impl App for ChattyFactoryUiApp {
                                     patchability_receipt
                                         .as_ref()
                                         .map(|receipt| receipt.historical_blocked_lane_count)
+                                        .unwrap_or(0),
+                                    patchability_receipt
+                                        .as_ref()
+                                        .map(|receipt| receipt.decomposable_historical_blocker_count)
                                         .unwrap_or(0),
                                     readiness.already_present_count
                                 ))
@@ -3340,6 +3825,29 @@ impl App for ChattyFactoryUiApp {
                                         ))
                                         .small()
                                         .color(egui::Color32::from_rgb(184, 156, 92)),
+                                    );
+                                }
+                                if let Some((lane, bundle)) = receipt
+                                    .decomposable_historical_blocker_bundles
+                                    .iter()
+                                    .find(|(_, bundle)| bundle.bundle_status != "not_decomposable")
+                                {
+                                    let bundle_summary = if !bundle.ready_replacement_patch_kinds.is_empty() {
+                                        format!(
+                                            "Historical blocker decomposable now: {lane} -> {} (still needed: {})",
+                                            bundle.replacement_patch_kinds.join(", "),
+                                            bundle.ready_replacement_patch_kinds.join(", ")
+                                        )
+                                    } else {
+                                        format!(
+                                            "Historical blocker already covered by modern bundle: {lane} -> {}",
+                                            bundle.replacement_patch_kinds.join(", ")
+                                        )
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(bundle_summary)
+                                            .small()
+                                            .color(egui::Color32::from_rgb(121, 171, 125)),
                                     );
                                 }
                                 if let Some(note) = receipt
@@ -3363,6 +3871,28 @@ impl App for ChattyFactoryUiApp {
                                     );
                                 }
                             }
+                            if let Some(override_receipt) = latest_project_starter_override_receipt(
+                                &self.workspace_root,
+                                &project.project_name,
+                            ) {
+                                let chosen = override_receipt
+                                    .starter_override_id
+                                    .as_deref()
+                                    .map(build_starter_label)
+                                    .unwrap_or("Auto");
+                                let recommended = override_receipt
+                                    .recommended_starter_id
+                                    .as_deref()
+                                    .map(build_starter_label)
+                                    .unwrap_or("none");
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Starter override: chose {chosen} instead of {recommended}"
+                                    ))
+                                    .small()
+                                    .color(egui::Color32::from_rgb(204, 134, 92)),
+                                );
+                            }
                             if let Some(reason) = &readiness.first_blocked_reason {
                                 ui.label(egui::RichText::new(format!("Why: {reason}")).small().weak());
                             }
@@ -3385,21 +3915,42 @@ impl App for ChattyFactoryUiApp {
                         {
                             ui.label("No projects can be both regressed and improved under the current filters.");
                         } else if projects.is_empty()
+                            && self.project_browser_show_decomposable_historical_only
+                            && self.project_browser_show_regressed_only
+                            && self.project_browser_show_improved_only
+                        {
+                            ui.label("No projects can be both regressed and improved within the decomposable-historical filter.");
+                        } else if projects.is_empty()
                             && self.project_browser_show_historical_blockers_only
                             && self.project_browser_show_regressed_only
                             && self.project_browser_show_improved_only
                         {
                             ui.label("No projects can be both regressed and improved within the historical-blocker filter.");
                         } else if projects.is_empty()
+                            && self.project_browser_show_decomposable_historical_only
+                            && self.project_browser_show_blocked_lanes_only
+                        {
+                            ui.label("No projects currently expose blocked lanes that are also classified as decomposable historical blockers.");
+                        } else if projects.is_empty()
                             && self.project_browser_show_historical_blockers_only
                             && self.project_browser_show_blocked_lanes_only
                         {
                             ui.label("No projects currently expose blocked lanes that are also classified as historical blockers.");
                         } else if projects.is_empty()
+                            && self.project_browser_show_decomposable_historical_only
+                            && self.project_browser_show_regressed_only
+                        {
+                            ui.label("No regressed projects currently expose decomposable historical blockers.");
+                        } else if projects.is_empty()
                             && self.project_browser_show_historical_blockers_only
                             && self.project_browser_show_regressed_only
                         {
                             ui.label("No regressed projects currently expose historical blockers.");
+                        } else if projects.is_empty()
+                            && self.project_browser_show_decomposable_historical_only
+                            && self.project_browser_show_improved_only
+                        {
+                            ui.label("No improved projects currently expose decomposable historical blockers.");
                         } else if projects.is_empty()
                             && self.project_browser_show_historical_blockers_only
                             && self.project_browser_show_improved_only
@@ -3425,6 +3976,10 @@ impl App for ChattyFactoryUiApp {
                         } else if projects.is_empty() && self.project_browser_show_improved_only {
                             ui.label("No improved projects match the current filter.");
                         } else if projects.is_empty()
+                            && self.project_browser_show_decomposable_historical_only
+                        {
+                            ui.label("No projects currently expose decomposable historical blockers.");
+                        } else if projects.is_empty()
                             && self.project_browser_show_historical_blockers_only
                         {
                             ui.label("No projects currently expose historical blockers with modern replacements.");
@@ -3432,14 +3987,38 @@ impl App for ChattyFactoryUiApp {
                             ui.label("No projects currently expose structurally blocked patch lanes.");
                         }
                     });
+                    ui.separator();
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.label(egui::RichText::new("Project Browser Footer").strong());
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Selected project: {}",
+                                self.selected_project().unwrap_or("none")
+                            ))
+                            .small()
+                            .weak(),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.small_button("Refresh browser now").clicked() {
+                                self.spawn_task(UiTask::RefreshBrowser);
+                            }
+                            if ui.small_button("Refresh project patchability").clicked() {
+                                self.spawn_task(UiTask::RefreshProjectPatchReadiness);
+                            }
+                        });
+                    });
                 } else {
                     ui.label("No browser state loaded yet.");
                 }
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.columns(2, |columns| {
-                columns[0].group(|ui| {
+            egui::ScrollArea::vertical()
+                .id_source("main_workspace_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.columns(2, |columns| {
+                        columns[0].group(|ui| {
                     ui.heading("Project Details");
                     let selected_project_name = self.selected_project().map(|name| name.to_string());
                     let mut refresh_project_patchability_clicked = false;
@@ -3453,8 +4032,8 @@ impl App for ChattyFactoryUiApp {
                             "Family: {}",
                             spec.family_id
                                 .as_ref()
-                                .map(|id| id.as_str())
-                                .unwrap_or("unknown_family")
+                                .map(|id| family_summary_label(id.as_str()))
+                                .unwrap_or_else(|| family_summary_label("unknown_family"))
                         ));
                         ui.label(format!(
                             "Tool: {}",
@@ -3482,6 +4061,14 @@ impl App for ChattyFactoryUiApp {
                                         Some(&receipt),
                                         &summarize_project_patch_readiness(spec),
                                     );
+                                let patchability_family_label =
+                                    family_summary_label_from_patchability_receipt(
+                                        spec.family_id
+                                            .as_ref()
+                                            .map(|id| id.as_str())
+                                            .unwrap_or("unknown_family"),
+                                        Some(&receipt),
+                                    );
                                 ui.label(
                                     egui::RichText::new(format!(
                                         "[{patchability_badge}] {}",
@@ -3489,10 +4076,12 @@ impl App for ChattyFactoryUiApp {
                                     ))
                                     .color(patchability_color),
                                 );
+                                ui.label(format!("Governed family: {patchability_family_label}"));
                                 ui.label(format!(
-                                    "Blocked lanes: {} risky, {} historical",
+                                    "Blocked lanes: {} risky, {} historical, {} decomposable",
                                     receipt.risky_blocked_lane_count,
-                                    receipt.historical_blocked_lane_count
+                                    receipt.historical_blocked_lane_count,
+                                    receipt.decomposable_historical_blocker_count
                                 ));
                                 if let Some(note) =
                                     receipt.change_since_patchability_baseline_notes.first()
@@ -3540,88 +4129,168 @@ impl App for ChattyFactoryUiApp {
                                             .color(egui::Color32::from_rgb(214, 170, 72)),
                                     );
                                 }
-                                if !receipt.blocked_lane_reasons.is_empty() {
-                                    ui.label("Blocked lane reasons");
-                                    for (patch_kind, reason) in receipt.blocked_lane_reasons.iter().take(6) {
-                                        ui.label(format!("- {patch_kind}: {reason}"));
-                                    }
-                                }
-                                if !receipt.superseded_blocked_lane_replacements.is_empty() {
-                                    ui.label("Historical blockers with modern replacements");
-                                    for (patch_kind, replacements) in receipt
-                                        .superseded_blocked_lane_replacements
-                                        .iter()
-                                        .take(6)
-                                    {
-                                        ui.label(format!(
-                                            "- {patch_kind} -> {}",
-                                            replacements.join(", ")
-                                        ));
-                                    }
-                                }
+                                egui::CollapsingHeader::new("Patchability Deep View")
+                                    .default_open(false)
+                                    .show(ui, |ui| {
+                                        if !receipt.blocked_lane_reasons.is_empty() {
+                                            ui.label("Blocked lane reasons");
+                                            for (patch_kind, reason) in
+                                                receipt.blocked_lane_reasons.iter().take(6)
+                                            {
+                                                ui.label(format!("- {patch_kind}: {reason}"));
+                                            }
+                                        }
+                                        if !receipt.superseded_blocked_lane_replacements.is_empty() {
+                                            ui.label("Historical blockers with modern replacements");
+                                            for (patch_kind, replacements) in receipt
+                                                .superseded_blocked_lane_replacements
+                                                .iter()
+                                                .take(6)
+                                            {
+                                                ui.label(format!(
+                                                    "- {patch_kind} -> {}",
+                                                    replacements.join(", ")
+                                                ));
+                                            }
+                                        }
+                                        if !receipt.decomposable_historical_blocker_bundles.is_empty()
+                                        {
+                                            ui.label(
+                                                "Historical blockers decomposable into modern bundles",
+                                            );
+                                            for (patch_kind, bundle) in receipt
+                                                .decomposable_historical_blocker_bundles
+                                                .iter()
+                                                .filter(|(_, bundle)| {
+                                                    bundle.bundle_status != "not_decomposable"
+                                                })
+                                                .take(6)
+                                            {
+                                                ui.label(format!(
+                                                    "- {patch_kind} -> {}",
+                                                    bundle.replacement_patch_kinds.join(", ")
+                                                ));
+                                                if !bundle.ready_replacement_patch_kinds.is_empty() {
+                                                    ui.label(format!(
+                                                        "  still needed now: {}",
+                                                        bundle
+                                                            .ready_replacement_patch_kinds
+                                                            .join(", ")
+                                                    ));
+                                                }
+                                                if !bundle
+                                                    .already_present_replacement_patch_kinds
+                                                    .is_empty()
+                                                {
+                                                    ui.label(format!(
+                                                        "  already present: {}",
+                                                        bundle
+                                                            .already_present_replacement_patch_kinds
+                                                            .join(", ")
+                                                    ));
+                                                }
+                                                ui.label(format!(
+                                                    "  bundle status: {}",
+                                                    bundle.bundle_status
+                                                ));
+                                            }
+                                        }
+                                    });
                             }
                         }
                         if let Some(bridge) = &spec.chattycog_bridge_capabilities {
                             ui.separator();
-                            ui.label("Bridge Capabilities");
-                            ui.label(format!("Status: {}", bridge.status_enabled));
-                            ui.label(format!("Log sources: {}", bridge.log_sources_enabled));
                             ui.label(format!(
-                                "Shared room state: {}",
+                                "Bridge summary: status={} log_sources={} shared_room_state={}",
+                                bridge.status_enabled,
+                                bridge.log_sources_enabled,
                                 bridge.shared_room_state_enabled
                             ));
                         }
                         ui.separator();
-                        ui.label("Features");
-                        for feature in spec.features.iter().take(6) {
-                            ui.label(format!("- {feature}"));
-                        }
-                        ui.separator();
-                        ui.label("Patch Lanes");
-                        if !spec.patch_lanes.is_empty() {
-                            for lane in &spec.patch_lanes {
-                                ui.label(format!(
-                                    "- {} [{} | {} | {}]",
-                                    lane.patch_kind,
-                                    lane.availability_status,
-                                    lane.surgical_maturity,
-                                    lane.effective_preflight_readiness
-                                ));
-                                if lane.effective_preflight_readiness != "ready" {
+                        ui.label(format!("Feature count: {}", spec.features.len()));
+                        ui.label(format!(
+                            "Patch lane count: {}",
+                            if !spec.patch_lanes.is_empty() {
+                                spec.patch_lanes.len()
+                            } else {
+                                spec.supported_patch_kinds.len()
+                            }
+                        ));
+                        ui.label(format!(
+                            "Acceptance recipe count: {}",
+                            spec.acceptance_recipes.len()
+                        ));
+                        ui.label(format!(
+                            "Operator bundle count: {}",
+                            spec.operator_bundles.len()
+                        ));
+                        egui::CollapsingHeader::new("Project Surface Deep View")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                if let Some(bridge) = &spec.chattycog_bridge_capabilities {
+                                    ui.label("Bridge Capabilities");
+                                    ui.label(format!("Status: {}", bridge.status_enabled));
+                                    ui.label(format!("Log sources: {}", bridge.log_sources_enabled));
                                     ui.label(format!(
-                                        "  reason: {}",
-                                        lane.preflight_readiness_reason
+                                        "Shared room state: {}",
+                                        bridge.shared_room_state_enabled
                                     ));
                                 }
-                                if let Some(superseded_by) = patch_lane_superseded_summary(lane) {
-                                    ui.label(format!("  use instead: {superseded_by}"));
+                                ui.separator();
+                                ui.label("Features");
+                                for feature in spec.features.iter().take(6) {
+                                    ui.label(format!("- {feature}"));
                                 }
-                            }
-                        } else {
-                            for patch_kind in &spec.supported_patch_kinds {
-                                ui.label(format!("- {patch_kind}"));
-                            }
-                        }
-                        if !spec.acceptance_recipes.is_empty() {
-                            ui.separator();
-                            ui.label("Acceptance Recipes");
-                            for recipe in &spec.acceptance_recipes {
-                                ui.label(format!(
-                                    "- {} [{}]",
-                                    recipe.recipe_id, recipe.availability_status
-                                ));
-                            }
-                        }
-                        if !spec.operator_bundles.is_empty() {
-                            ui.separator();
-                            ui.label("Operator Bundles");
-                            for bundle in &spec.operator_bundles {
-                                ui.label(format!(
-                                    "- {} [{}]",
-                                    bundle.bundle_id, bundle.availability_status
-                                ));
-                            }
-                        }
+                                ui.separator();
+                                ui.label("Patch Lanes");
+                                if !spec.patch_lanes.is_empty() {
+                                    for lane in &spec.patch_lanes {
+                                        ui.label(format!(
+                                            "- {} [{} | {} | {}]",
+                                            lane.patch_kind,
+                                            lane.availability_status,
+                                            lane.surgical_maturity,
+                                            lane.effective_preflight_readiness
+                                        ));
+                                        if lane.effective_preflight_readiness != "ready" {
+                                            ui.label(format!(
+                                                "  reason: {}",
+                                                lane.preflight_readiness_reason
+                                            ));
+                                        }
+                                        if let Some(superseded_by) =
+                                            patch_lane_superseded_summary(lane)
+                                        {
+                                            ui.label(format!("  use instead: {superseded_by}"));
+                                        }
+                                    }
+                                } else {
+                                    for patch_kind in &spec.supported_patch_kinds {
+                                        ui.label(format!("- {patch_kind}"));
+                                    }
+                                }
+                                if !spec.acceptance_recipes.is_empty() {
+                                    ui.separator();
+                                    ui.label("Acceptance Recipes");
+                                    for recipe in &spec.acceptance_recipes {
+                                        ui.label(format!(
+                                            "- {} [{}]",
+                                            recipe.recipe_id, recipe.availability_status
+                                        ));
+                                    }
+                                }
+                                if !spec.operator_bundles.is_empty() {
+                                    ui.separator();
+                                    ui.label("Operator Bundles");
+                                    for bundle in &spec.operator_bundles {
+                                        ui.label(format!(
+                                            "- {} [{}]",
+                                            bundle.bundle_id, bundle.availability_status
+                                        ));
+                                    }
+                                }
+                            });
                         if let Some(project_name) = selected_project_name.as_deref() {
                             self.render_recent_project_patch_xrays_section(ui, project_name);
                         }
@@ -3631,16 +4300,16 @@ impl App for ChattyFactoryUiApp {
                     if refresh_project_patchability_clicked {
                         self.spawn_task(UiTask::RefreshProjectPatchReadiness);
                     }
-                });
+                        });
 
-                columns[1].group(|ui| {
-                    self.render_runtime_registry_dashboard(ui);
-                });
-            });
+                        columns[1].group(|ui| {
+                            self.render_runtime_registry_dashboard(ui);
+                        });
+                    });
 
-            ui.separator();
-            ui.heading("Last Result");
-            if self.last_action_summary.title.is_empty() {
+                    ui.separator();
+                    ui.heading("Last Result");
+                    if self.last_action_summary.title.is_empty() {
                 ui.label("No command summary yet.");
             } else {
                 ui.label(egui::RichText::new(&self.last_action_summary.title).strong());
@@ -3651,9 +4320,26 @@ impl App for ChattyFactoryUiApp {
                     ui.separator();
                     ui.label(format!("Kind: {}", result.kind));
                     ui.label(format!("Project: {}", result.project_name));
+                    if let Some(starter_id) = &result.starter_override_id {
+                        ui.label(format!("Starter override: {starter_id}"));
+                    }
+                    if let Some(summary) = &result.starter_override_summary {
+                        ui.label(format!("Starter note: {summary}"));
+                    }
+                    if let Some(starter_id) = &result.recommended_starter_id {
+                        ui.label(format!("Normal routing starter: {starter_id}"));
+                    }
+                    if let Some(summary) = &result.recommended_starter_summary {
+                        ui.label(format!("Starter recommendation: {summary}"));
+                    }
+                    if let Some(comparison) = &result.starter_recommendation_comparison {
+                        ui.label(format!("Starter comparison: {comparison}"));
+                    }
                     ui.label(format!(
                         "Family: {}",
-                        result.family_id.as_deref().unwrap_or("unknown_family")
+                        family_summary_label(
+                            result.family_id.as_deref().unwrap_or("unknown_family")
+                        )
                     ));
                     if let Some(tool_kind) = &result.tool_kind {
                         ui.label(format!("Tool: {tool_kind}"));
@@ -3679,71 +4365,102 @@ impl App for ChattyFactoryUiApp {
                         ui.label(format!("Acceptance: {status}"));
                     }
                     ui.label(format!("Request id: {}", result.request_id));
-                    if !result.route_notes.is_empty() {
-                        ui.label("Route notes");
-                        for note in result.route_notes.iter().take(4) {
-                            ui.label(format!("- {note}"));
-                        }
-                    }
-                    if !result.followup_rationale.is_empty() {
-                        ui.label("Follow-up rationale");
-                        for note in result.followup_rationale.iter().take(4) {
-                            ui.label(format!("- {note}"));
-                        }
-                    }
-                    if !result.patch_lanes.is_empty() {
-                        ui.label("Patch lanes");
-                        for lane in result.patch_lanes.iter().take(6) {
-                            ui.label(format!(
-                                "- {} [{} | {} | {}]",
-                                lane.patch_kind,
-                                lane.availability_status,
-                                lane.surgical_maturity,
-                                lane.effective_preflight_readiness
-                            ));
-                            if lane.effective_preflight_readiness != "ready" {
-                                ui.label(format!(
-                                    "  reason: {}",
-                                    lane.preflight_readiness_reason
-                                ));
-                            }
-                            if let Some(superseded_by) = patch_lane_superseded_summary(lane) {
-                                ui.label(format!("  use instead: {superseded_by}"));
-                            }
-                        }
-                    }
-                    if !result.acceptance_recipes.is_empty() {
-                        ui.label("Acceptance recipes");
-                        for recipe in result.acceptance_recipes.iter().take(6) {
-                            ui.label(format!(
-                                "- {} [{}]",
-                                recipe.recipe_id, recipe.availability_status
-                            ));
-                        }
-                    }
-                    if !result.operator_bundles.is_empty() {
-                        ui.label("Operator bundles");
-                        for bundle in result.operator_bundles.iter().take(6) {
-                            ui.label(format!(
-                                "- {} [{}]",
-                                bundle.bundle_id, bundle.availability_status
-                            ));
-                        }
-                    }
+                    ui.label(format!("Route note count: {}", result.route_notes.len()));
+                    ui.label(format!(
+                        "Follow-up rationale count: {}",
+                        result.followup_rationale.len()
+                    ));
+                    ui.label(format!("Patch lane count: {}", result.patch_lanes.len()));
+                    ui.label(format!(
+                        "Acceptance recipe count: {}",
+                        result.acceptance_recipes.len()
+                    ));
+                    ui.label(format!(
+                        "Operator bundle count: {}",
+                        result.operator_bundles.len()
+                    ));
                     if let Some(bridge) = &result.chattycog_bridge_capabilities {
-                        ui.label("Bridge capabilities");
-                        ui.label(format!("- status: {}", bridge.status_enabled));
-                        ui.label(format!("- log_sources: {}", bridge.log_sources_enabled));
                         ui.label(format!(
-                            "- shared_room_state: {}",
+                            "Bridge summary: status={} log_sources={} shared_room_state={}",
+                            bridge.status_enabled,
+                            bridge.log_sources_enabled,
                             bridge.shared_room_state_enabled
                         ));
                     }
+                    egui::CollapsingHeader::new("Execution Deep View")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            if !result.route_notes.is_empty() {
+                                ui.label("Route notes");
+                                for note in result.route_notes.iter().take(4) {
+                                    ui.label(format!("- {note}"));
+                                }
+                            }
+                            if !result.followup_rationale.is_empty() {
+                                ui.label("Follow-up rationale");
+                                for note in result.followup_rationale.iter().take(4) {
+                                    ui.label(format!("- {note}"));
+                                }
+                            }
+                            if !result.patch_lanes.is_empty() {
+                                ui.label("Patch lanes");
+                                for lane in result.patch_lanes.iter().take(6) {
+                                    ui.label(format!(
+                                        "- {} [{} | {} | {}]",
+                                        lane.patch_kind,
+                                        lane.availability_status,
+                                        lane.surgical_maturity,
+                                        lane.effective_preflight_readiness
+                                    ));
+                                    if lane.effective_preflight_readiness != "ready" {
+                                        ui.label(format!(
+                                            "  reason: {}",
+                                            lane.preflight_readiness_reason
+                                        ));
+                                    }
+                                    if let Some(superseded_by) =
+                                        patch_lane_superseded_summary(lane)
+                                    {
+                                        ui.label(format!("  use instead: {superseded_by}"));
+                                    }
+                                }
+                            }
+                            if !result.acceptance_recipes.is_empty() {
+                                ui.label("Acceptance recipes");
+                                for recipe in result.acceptance_recipes.iter().take(6) {
+                                    ui.label(format!(
+                                        "- {} [{}]",
+                                        recipe.recipe_id, recipe.availability_status
+                                    ));
+                                }
+                            }
+                            if !result.operator_bundles.is_empty() {
+                                ui.label("Operator bundles");
+                                for bundle in result.operator_bundles.iter().take(6) {
+                                    ui.label(format!(
+                                        "- {} [{}]",
+                                        bundle.bundle_id, bundle.availability_status
+                                    ));
+                                }
+                            }
+                            if let Some(bridge) = &result.chattycog_bridge_capabilities {
+                                ui.label("Bridge capabilities");
+                                ui.label(format!("- status: {}", bridge.status_enabled));
+                                ui.label(format!("- log_sources: {}", bridge.log_sources_enabled));
+                                ui.label(format!(
+                                    "- shared_room_state: {}",
+                                    bridge.shared_room_state_enabled
+                                ));
+                            }
+                        });
                     self.render_last_result_patch_xray_section(ui, &result);
-                    ui.label("Files");
-                    for path in result.file_paths.iter().take(8) {
-                        ui.label(format!("- {path}"));
-                    }
+                    egui::CollapsingHeader::new("Result Files")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            for path in result.file_paths.iter().take(8) {
+                                ui.label(format!("- {path}"));
+                            }
+                        });
                 } else if let Some(fallback) = &self.last_fallback_result {
                     ui.separator();
                     ui.label("Fallback required");
@@ -3761,8 +4478,17 @@ impl App for ChattyFactoryUiApp {
                         "Next step: {}",
                         fallback.recommended_next_step
                     ));
+                    if let Some(failure_class) = &fallback.build_failure_class {
+                        ui.label(format!("Build failure class: {failure_class}"));
+                    }
+                    if let Some(failure_mode) = &fallback.build_failure_mode {
+                        ui.label(format!("Build failure mode: {failure_mode}"));
+                    }
                     if let Some(family_id) = &fallback.suggested_family_id {
-                        ui.label(format!("Suggested family: {family_id}"));
+                        ui.label(format!(
+                            "Suggested family: {}",
+                            family_summary_label(family_id)
+                        ));
                     }
                     if let Some(tool_kind) = &fallback.suggested_tool_kind {
                         ui.label(format!("Suggested tool kind: {tool_kind}"));
@@ -3773,156 +4499,803 @@ impl App for ChattyFactoryUiApp {
                     if let Some(mode) = &fallback.suggested_hosting_mode {
                         ui.label(format!("Suggested hosting mode: {mode}"));
                     }
-                    if !fallback.reasons.is_empty() {
-                        ui.label("Reasons");
-                        for reason in fallback.reasons.iter().take(5) {
-                            ui.label(format!("- {reason}"));
+                    ui.label(format!("Reason count: {}", fallback.reasons.len()));
+                    ui.label(format!(
+                        "Candidate family count: {}",
+                        fallback.candidate_family_ids.len()
+                    ));
+                    ui.label(format!(
+                        "Requested capability count: {}",
+                        fallback.requested_capabilities.len()
+                    ));
+                    ui.label(format!(
+                        "Acceptance target count: {}",
+                        fallback.acceptance_targets.len()
+                    ));
+                    ui.label(format!(
+                        "Constraint count: {}",
+                        fallback.constraints.len()
+                    ));
+                    ui.label(format!(
+                        "Approved shelf match count: {}",
+                        fallback.matched_approved_constraint_ids.len()
+                    ));
+                    egui::CollapsingHeader::new("Fallback Deep View")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            if !fallback.reasons.is_empty() {
+                                ui.label("Reasons");
+                                for reason in fallback.reasons.iter().take(5) {
+                                    ui.label(format!("- {reason}"));
+                                }
+                            }
+                            if !fallback.candidate_family_ids.is_empty() {
+                                ui.label("Candidate families");
+                                for family_id in fallback.candidate_family_ids.iter().take(5) {
+                                    ui.label(format!("- {}", family_summary_label(family_id)));
+                                }
+                            }
+                            if !fallback.requested_capabilities.is_empty() {
+                                ui.label("Requested capabilities");
+                                for capability in fallback.requested_capabilities.iter().take(5) {
+                                    ui.label(format!("- {capability}"));
+                                }
+                            }
+                            if !fallback.suggested_bridge_capabilities.is_empty() {
+                                ui.label("Suggested bridge capabilities");
+                                for capability in fallback
+                                    .suggested_bridge_capabilities
+                                    .iter()
+                                    .take(6)
+                                {
+                                    ui.label(format!("- {capability}"));
+                                }
+                            }
+                            if !fallback.acceptance_targets.is_empty() {
+                                ui.label("Acceptance targets");
+                                for target in fallback.acceptance_targets.iter().take(6) {
+                                    ui.label(format!("- {target}"));
+                                }
+                            }
+                            if !fallback.suggested_artifacts.is_empty() {
+                                ui.label("Suggested stub artifacts");
+                                for artifact in fallback.suggested_artifacts.iter().take(6) {
+                                    ui.label(format!("- {artifact}"));
+                                }
+                            }
+                            if !fallback.implementation_notes.is_empty() {
+                                ui.label("Implementation notes");
+                                for note in fallback.implementation_notes.iter().take(6) {
+                                    ui.label(format!("- {note}"));
+                                }
+                            }
+                            if !fallback.pending_extension_ids.is_empty() {
+                                ui.label("Pending matching lanes");
+                                for entry_id in fallback.pending_extension_ids.iter().take(6) {
+                                    ui.label(format!("- {entry_id}"));
+                                }
+                            }
+                            if !fallback.pending_extension_scaffold_roots.is_empty() {
+                                ui.label("Pending scaffold roots");
+                                for root in fallback
+                                    .pending_extension_scaffold_roots
+                                    .iter()
+                                    .take(4)
+                                {
+                                    ui.label(format!("- {}", short_path(root)));
+                                }
+                            }
+                            if let Some(mode) = &fallback.chattycog_requested_hosting_mode {
+                                ui.label(format!("Requested ChattyCog hosting mode: {mode}"));
+                            }
+                            if !fallback.chattycog_valid_hosting_modes.is_empty() {
+                                ui.label("Valid ChattyCog hosting modes");
+                                for mode in fallback.chattycog_valid_hosting_modes.iter().take(5) {
+                                    ui.label(format!("- {mode}"));
+                                }
+                            }
+                            if !fallback.chattycog_requested_bridge_capabilities.is_empty() {
+                                ui.label("Requested ChattyCog bridge capabilities");
+                                for capability in fallback
+                                    .chattycog_requested_bridge_capabilities
+                                    .iter()
+                                    .take(6)
+                                {
+                                    ui.label(format!("- {capability}"));
+                                }
+                            }
+                            if !fallback.chattycog_supported_bridge_capabilities.is_empty() {
+                                ui.label("Currently supported ChattyCog bridge capabilities");
+                                for capability in fallback
+                                    .chattycog_supported_bridge_capabilities
+                                    .iter()
+                                    .take(6)
+                                {
+                                    ui.label(format!("- {capability}"));
+                                }
+                            }
+                            if !fallback.constraints.is_empty() {
+                                ui.label("Constraints");
+                                for constraint in fallback.constraints.iter().take(5) {
+                                    ui.label(format!("- {constraint}"));
+                                }
+                            }
+                            if !fallback.matched_approved_constraint_ids.is_empty() {
+                                ui.label("Approved shelf matches");
+                                for constraint_id in fallback
+                                    .matched_approved_constraint_ids
+                                    .iter()
+                                    .take(4)
+                                {
+                                    ui.label(format!("- {constraint_id}"));
+                                }
+                                for summary in fallback
+                                    .matched_approved_constraint_summaries
+                                    .iter()
+                                    .take(2)
+                                {
+                                    ui.label(format!("- {summary}"));
+                                }
+                            }
+                        });
+                    if let Some(path) = &fallback.build_verification_path {
+                        if let Some(verification) = load_build_verification_receipt(path) {
+                            ui.label("Build verification");
+                            ui.label(format!(
+                                "- subject: {} [{} | {}]",
+                                verification.review_subject,
+                                verification.failure_class,
+                                verification.failure_mode
+                            ));
+                            ui.label(format!("- decision: {}", verification.decision));
+                            for constraint_id in
+                                verification.matched_approved_constraint_ids.iter().take(4)
+                            {
+                                ui.label(format!("- approved match: {constraint_id}"));
+                            }
+                            for summary in verification
+                                .matched_approved_constraint_summaries
+                                .iter()
+                                .take(2)
+                            {
+                                ui.label(format!("- approved summary: {summary}"));
+                            }
+                            for reason in verification.reasons.iter().take(2) {
+                                ui.label(format!("- reason: {reason}"));
+                            }
+                            for method in verification.blocked_methods.iter().take(2) {
+                                ui.label(format!("- blocked method: {method}"));
+                            }
+                            for finding in verification.findings.iter().take(3) {
+                                ui.label(format!("- {finding}"));
+                            }
                         }
                     }
-                    if !fallback.candidate_family_ids.is_empty() {
-                        ui.label("Candidate families");
-                        for family_id in fallback.candidate_family_ids.iter().take(5) {
-                            ui.label(format!("- {family_id}"));
-                        }
-                    }
-                    if !fallback.requested_capabilities.is_empty() {
-                        ui.label("Requested capabilities");
-                        for capability in fallback.requested_capabilities.iter().take(5) {
-                            ui.label(format!("- {capability}"));
-                        }
-                    }
-                    if !fallback.suggested_bridge_capabilities.is_empty() {
-                        ui.label("Suggested bridge capabilities");
-                        for capability in fallback.suggested_bridge_capabilities.iter().take(6) {
-                            ui.label(format!("- {capability}"));
-                        }
-                    }
-                    if !fallback.acceptance_targets.is_empty() {
-                        ui.label("Acceptance targets");
-                        for target in fallback.acceptance_targets.iter().take(6) {
-                            ui.label(format!("- {target}"));
-                        }
-                    }
-                    if !fallback.suggested_artifacts.is_empty() {
-                        ui.label("Suggested stub artifacts");
-                        for artifact in fallback.suggested_artifacts.iter().take(6) {
-                            ui.label(format!("- {artifact}"));
-                        }
-                    }
-                    if !fallback.implementation_notes.is_empty() {
-                        ui.label("Implementation notes");
-                        for note in fallback.implementation_notes.iter().take(6) {
-                            ui.label(format!("- {note}"));
-                        }
-                    }
-                    if !fallback.pending_extension_ids.is_empty() {
-                        ui.label("Pending matching lanes");
-                        for entry_id in fallback.pending_extension_ids.iter().take(6) {
-                            ui.label(format!("- {entry_id}"));
-                        }
-                    }
-                    if !fallback.pending_extension_scaffold_roots.is_empty() {
-                        ui.label("Pending scaffold roots");
-                        for root in fallback.pending_extension_scaffold_roots.iter().take(4) {
-                            ui.label(format!("- {}", short_path(root)));
-                        }
-                    }
-                    if let Some(mode) = &fallback.chattycog_requested_hosting_mode {
-                        ui.label(format!("Requested ChattyCog hosting mode: {mode}"));
-                    }
-                    if !fallback.chattycog_valid_hosting_modes.is_empty() {
-                        ui.label("Valid ChattyCog hosting modes");
-                        for mode in fallback.chattycog_valid_hosting_modes.iter().take(5) {
-                            ui.label(format!("- {mode}"));
-                        }
-                    }
-                    if !fallback.chattycog_requested_bridge_capabilities.is_empty() {
-                        ui.label("Requested ChattyCog bridge capabilities");
-                        for capability in fallback
-                            .chattycog_requested_bridge_capabilities
-                            .iter()
-                            .take(6)
-                        {
-                            ui.label(format!("- {capability}"));
-                        }
-                    }
-                    if !fallback.chattycog_supported_bridge_capabilities.is_empty() {
-                        ui.label("Currently supported ChattyCog bridge capabilities");
-                        for capability in fallback
-                            .chattycog_supported_bridge_capabilities
-                            .iter()
-                            .take(6)
-                        {
-                            ui.label(format!("- {capability}"));
-                        }
-                    }
-                    if !fallback.constraints.is_empty() {
-                        ui.label("Constraints");
-                        for constraint in fallback.constraints.iter().take(5) {
-                            ui.label(format!("- {constraint}"));
+                    if let Some(path) = &fallback.proposed_constraint_path {
+                        if let Some(proposal) = load_proposed_constraint_receipt(path) {
+                            ui.label("Proposed constraint");
+                            ui.label(format!(
+                                "- {} [{} / {} / {}]",
+                                proposal.proposed_constraint.forbidden_method_summary,
+                                proposal.proposed_constraint.constraint_scope,
+                                proposal.proposed_constraint.constraint_kind,
+                                proposal.status
+                            ));
+                            ui.label(format!(
+                                "- severity: {}",
+                                proposal.proposed_constraint.severity
+                            ));
+                            if let Some(summary) = &fallback.proposed_constraint_summary {
+                                ui.label(format!("- summary: {summary}"));
+                            }
+                            if let Some(guidance) =
+                                proposal.proposed_constraint.replacement_guidance.as_deref()
+                            {
+                                ui.label(format!("- guidance: {guidance}"));
+                            }
+                            for rationale in proposal.rationale.iter().take(2) {
+                                ui.label(format!("- rationale: {rationale}"));
+                            }
                         }
                     }
                     if let Some(path) = &fallback.stub_bundle_path {
                         ui.label(format!("Stub bundle: {}", short_path(path)));
                     }
+                    if let Some(guidance) =
+                        fallback.proposed_constraint_replacement_guidance.as_deref()
+                    {
+                        ui.label(format!("Constraint guidance: {guidance}"));
+                    }
+                    let fallback_request_id = fallback.request_id.clone();
+                    let build_verification_path = fallback.build_verification_path.clone();
+                    let proposed_constraint_path = fallback.proposed_constraint_path.clone();
+                    ui.horizontal(|ui| {
+                        if proposed_constraint_path.is_some()
+                            && ui.small_button("Approve Proposed Constraint").clicked()
+                        {
+                            self.spawn_task(UiTask::ApproveProposedConstraint {
+                                request_id_or_path: fallback_request_id.clone(),
+                            });
+                        }
+                        if let Some(path) = &build_verification_path {
+                            if ui.small_button("Reveal Build Verification").clicked() {
+                                self.reveal_governed_artifact(
+                                    path,
+                                    "Revealed build verification receipt",
+                                    "Open failed",
+                                    "Revealed build verification receipt",
+                                    "Open failed",
+                                    None,
+                                );
+                            }
+                        }
+                        if let Some(path) = &proposed_constraint_path {
+                            if ui.small_button("Reveal Proposed Constraint").clicked() {
+                                self.reveal_governed_artifact(
+                                    path,
+                                    "Revealed proposed constraint receipt",
+                                    "Open failed",
+                                    "Revealed proposed constraint receipt",
+                                    "Open failed",
+                                    None,
+                                );
+                            }
+                        }
+                    });
                 }
             }
 
-            self.render_request_action_panel(ui);
+                    self.render_request_action_panel(ui);
 
-            ui.separator();
-            ui.heading("Cross-Family Paired Proof");
-            let proof_templates = proof_templates_from_root(&self.workspace_root);
-            let comparison_bundles = capability_comparison_bundles_from_root(&self.workspace_root);
-            let previous_selected_profile_name = self.selected_proof_profile_name.clone();
-            let previous_selected_template_id = self.selected_proof_template_id.clone();
-            let previous_follow_filter = self.pin_history_filter_to_selected_template;
-            let selected_proof_template = proof_templates
-                .iter()
-                .find(|template| template.template_id == self.selected_proof_template_id)
-                .cloned()
-                .or_else(|| proof_templates.first().cloned());
-            let selected_comparison_bundle = selected_proof_template
-                .as_ref()
-                .and_then(|template| comparison_bundle_for_template(template, &comparison_bundles));
-            self.render_proof_run_controls_section(
-                ui,
-                &proof_templates,
-                &selected_proof_template,
-                &selected_comparison_bundle,
-                &previous_selected_profile_name,
-                &previous_selected_template_id,
-                previous_follow_filter,
-            );
-            let paired_receipts = load_cross_family_paired_proof_receipts(&self.workspace_root);
-            let filtered_paired_receipts = paired_receipts
-                .iter()
-                .filter(|(receipt, _)| {
-                    proof_receipt_matches_filter(
-                        receipt,
-                        &self.proof_history_template_filter,
+                    ui.separator();
+                    egui::CollapsingHeader::new("Cross-Family Paired Proof")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                    let proof_templates = proof_templates_from_root(&self.workspace_root);
+                    let comparison_bundles =
+                        capability_comparison_bundles_from_root(&self.workspace_root);
+                    let previous_selected_profile_name = self.selected_proof_profile_name.clone();
+                    let previous_selected_template_id = self.selected_proof_template_id.clone();
+                    let previous_follow_filter = self.pin_history_filter_to_selected_template;
+                    let selected_proof_template = proof_templates
+                        .iter()
+                        .find(|template| template.template_id == self.selected_proof_template_id)
+                        .cloned()
+                        .or_else(|| proof_templates.first().cloned());
+                    let selected_comparison_bundle = selected_proof_template
+                        .as_ref()
+                        .and_then(|template| {
+                            comparison_bundle_for_template(template, &comparison_bundles)
+                        });
+                    self.render_proof_run_controls_section(
+                        ui,
+                        &proof_templates,
+                        &selected_proof_template,
+                        &selected_comparison_bundle,
+                        &previous_selected_profile_name,
+                        &previous_selected_template_id,
+                        previous_follow_filter,
+                    );
+                    let paired_receipts =
+                        load_cross_family_paired_proof_receipts(&self.workspace_root);
+                    let filtered_paired_receipts = paired_receipts
+                        .iter()
+                        .filter(|(receipt, _)| {
+                            proof_receipt_matches_filter(
+                                receipt,
+                                &self.proof_history_template_filter,
+                            )
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    self.render_paired_proof_results_section(
+                        ui,
+                        &paired_receipts,
+                        &filtered_paired_receipts,
+                        &proof_templates,
+                        &comparison_bundles,
+                    );
+                        });
+
+                    ui.separator();
+                    egui::CollapsingHeader::new("Negative Constraint Shelf")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            if let Some(shelf) = load_approved_constraint_shelf(&self.workspace_root) {
+                let shelf_history = load_constraint_shelf_history(&self.workspace_root);
+                let recent_matches = load_recent_build_verification_matches(&self.workspace_root);
+                let match_counts = approved_constraint_match_counts(&recent_matches);
+                let match_breakdowns = approved_constraint_match_breakdowns(&recent_matches);
+                let active_count = shelf
+                    .constraints
+                    .iter()
+                    .filter(|constraint| constraint.active)
+                    .count();
+                let unmatched_count = shelf
+                    .constraints
+                    .iter()
+                    .filter(|constraint| {
+                        match_counts
+                            .get(&constraint.constraint_id)
+                            .copied()
+                            .unwrap_or_default()
+                            == 0
+                    })
+                    .count();
+                let inactive_unmatched_count = shelf
+                    .constraints
+                    .iter()
+                    .filter(|constraint| {
+                        !constraint.active
+                            && match_counts
+                                .get(&constraint.constraint_id)
+                                .copied()
+                                .unwrap_or_default()
+                                == 0
+                    })
+                    .count();
+                let low_value_active_count = shelf
+                    .constraints
+                    .iter()
+                    .filter(|constraint| {
+                        constraint.active
+                            && match_counts
+                                .get(&constraint.constraint_id)
+                                .copied()
+                                .unwrap_or_default()
+                                == 0
+                    })
+                    .count();
+                ui.label(format!(
+                    "Approved constraints: {} total, {} active",
+                    shelf.constraints.len(),
+                    active_count
+                ));
+                ui.label(format!(
+                    "Unmatched approved rules: {} total, {} inactive, {} active",
+                    unmatched_count, inactive_unmatched_count, low_value_active_count
+                ));
+                if let Some(history) = shelf_history.as_ref() {
+                    ui.label(format!(
+                        "Archived rules: {}",
+                        history.archived_constraints.len()
+                    ));
+                }
+                let recent_mutations = load_recent_constraint_shelf_mutations(&self.workspace_root);
+                let total_match_events: usize = match_counts.values().sum();
+                ui.label(format!(
+                    "Recent match events: {} across {} approved rule(s)",
+                    total_match_events,
+                    match_counts.len()
+                ));
+                if !recent_mutations.is_empty() {
+                    let mutation_counts = summarize_constraint_shelf_mutation_actions(&recent_mutations);
+                    let activates = mutation_counts.get("activate").copied().unwrap_or_default();
+                    let deactivates = mutation_counts.get("deactivate").copied().unwrap_or_default();
+                    let bulk_deactivates = mutation_counts
+                        .get("bulk_deactivate_low_value_active")
+                        .copied()
+                        .unwrap_or_default();
+                    let archives = mutation_counts.get("archive").copied().unwrap_or_default();
+                    let restores = mutation_counts.get("restore").copied().unwrap_or_default();
+                    ui.label(format!(
+                        "Recent shelf mutations: {} activate, {} deactivate, {} bulk-deactivate, {} archive, {} restore",
+                        activates, deactivates, bulk_deactivates, archives, restores
+                    ));
+                }
+                if let Some(updated_at) = &shelf.updated_at {
+                    ui.label(format!("Updated: {updated_at}"));
+                }
+                ui.label(format!("Shelf id: {}", shelf.shelf_id));
+                let shelf_path = self
+                    .workspace_root
+                    .join("runtime")
+                    .join("approved_constraint_shelf.json");
+                let history_path = self
+                    .workspace_root
+                    .join("runtime")
+                    .join("constraint_shelf_history.json");
+                ui.horizontal(|ui| {
+                    if ui.small_button("Reveal Shelf").clicked() {
+                        self.reveal_governed_artifact(
+                            &shelf_path.display().to_string(),
+                            "Revealed approved constraint shelf",
+                            "Open failed",
+                            "Revealed approved constraint shelf",
+                            "Open failed",
+                            None,
+                        );
+                    }
+                    if shelf_history.is_some()
+                        && ui.small_button("Reveal Shelf History").clicked()
+                    {
+                        self.reveal_governed_artifact(
+                            &history_path.display().to_string(),
+                            "Revealed constraint shelf history",
+                            "Open failed",
+                            "Revealed constraint shelf history",
+                            "Open failed",
+                            None,
+                        );
+                    }
+                    if inactive_unmatched_count > 0
+                        && ui.small_button("Archive inactive + unmatched").clicked()
+                    {
+                        self.spawn_task(UiTask::ArchiveUnmatchedInactiveConstraints);
+                    }
+                    if low_value_active_count > 0
+                        && ui.small_button("Deactivate low-value active").clicked()
+                    {
+                        self.spawn_task(UiTask::DeactivateLowValueActiveConstraints);
+                    }
+                });
+                if ui
+                    .checkbox(
+                        &mut self.negative_shelf_show_unmatched_only,
+                        "Show unmatched approved rules only",
                     )
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            self.render_paired_proof_results_section(
-                ui,
-                &paired_receipts,
-                &filtered_paired_receipts,
-                &proof_templates,
-                &comparison_bundles,
-            );
+                    .changed()
+                {
+                    self.save_paired_proof_ui_preferences();
+                }
+                if ui
+                    .checkbox(
+                        &mut self.negative_shelf_show_inactive_unmatched_only,
+                        "Show inactive + unmatched only",
+                    )
+                    .changed()
+                {
+                    self.save_paired_proof_ui_preferences();
+                }
+                if ui
+                    .checkbox(
+                        &mut self.negative_shelf_show_low_value_active_only,
+                        "Show low-value active rules only",
+                    )
+                    .changed()
+                {
+                    self.save_paired_proof_ui_preferences();
+                }
+                let mut sorted_constraints = shelf.constraints.clone();
+                sorted_constraints.sort_by(|left, right| {
+                    let right_matches = match_counts
+                        .get(&right.constraint_id)
+                        .copied()
+                        .unwrap_or_default();
+                    let left_matches = match_counts
+                        .get(&left.constraint_id)
+                        .copied()
+                        .unwrap_or_default();
+                    right_matches
+                        .cmp(&left_matches)
+                        .then_with(|| left.constraint_id.cmp(&right.constraint_id))
+                });
+                let filtered_constraints = sorted_constraints
+                    .iter()
+                    .filter(|constraint| {
+                        let match_count = match_counts
+                            .get(&constraint.constraint_id)
+                            .copied()
+                            .unwrap_or_default();
+                        let unmatched_ok =
+                            !self.negative_shelf_show_unmatched_only || match_count == 0;
+                        let inactive_unmatched_ok =
+                            !self.negative_shelf_show_inactive_unmatched_only
+                                || (!constraint.active && match_count == 0);
+                        let low_value_active_ok =
+                            !self.negative_shelf_show_low_value_active_only
+                                || (constraint.active && match_count == 0);
+                        unmatched_ok && inactive_unmatched_ok && low_value_active_ok
+                    })
+                    .collect::<Vec<_>>();
+                if filtered_constraints.is_empty() {
+                    if self.negative_shelf_show_low_value_active_only {
+                        ui.label(
+                            "No approved constraints are currently both active and unmatched.",
+                        );
+                    } else if self.negative_shelf_show_inactive_unmatched_only {
+                        ui.label(
+                            "No approved constraints are currently both inactive and unmatched.",
+                        );
+                    } else if self.negative_shelf_show_unmatched_only {
+                        ui.label(
+                            "No approved constraints are currently unmatched under this shelf filter.",
+                        );
+                    } else {
+                        ui.label("No approved constraints are visible under the current shelf filters.");
+                    }
+                }
+                for constraint in filtered_constraints.into_iter().take(8) {
+                    ui.separator();
+                    let match_count = match_counts
+                        .get(&constraint.constraint_id)
+                        .copied()
+                        .unwrap_or_default();
+                    ui.horizontal(|ui| {
+                        ui.label(format!(
+                            "{} [{} | {}]",
+                            constraint.constraint_id,
+                            constraint.constraint_scope,
+                            constraint.constraint_kind
+                        ));
+                        ui.label(if constraint.active {
+                            "[active]"
+                        } else {
+                            "[inactive]"
+                        });
+                        if constraint.active && match_count == 0 {
+                            ui.label("[active-unmatched]");
+                        } else if !constraint.active && match_count == 0 {
+                            ui.label("[inactive-unmatched]");
+                        } else if match_count == 0 {
+                            ui.label("[unmatched]");
+                        }
+                        if constraint.active {
+                            if ui.small_button("Deactivate").clicked() {
+                                self.spawn_task(UiTask::SetApprovedConstraintActive {
+                                    constraint_id: constraint.constraint_id.clone(),
+                                    active: false,
+                                });
+                            }
+                        } else if ui.small_button("Activate").clicked() {
+                            self.spawn_task(UiTask::SetApprovedConstraintActive {
+                                constraint_id: constraint.constraint_id.clone(),
+                                active: true,
+                            });
+                        }
+                    });
+                    ui.label(format!("Method: {}", constraint.forbidden_method_summary));
+                    ui.label(format!("Severity: {}", constraint.severity));
+                    ui.label(format!("Recent matches: {match_count}"));
+                    if let Some(breakdown) = match_breakdowns.get(&constraint.constraint_id) {
+                        if !breakdown.by_failure_mode.is_empty() {
+                            let failure_modes = breakdown
+                                .by_failure_mode
+                                .iter()
+                                .map(|(mode, count)| format!("{mode}={count}"))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            ui.label(format!("Failure modes: {failure_modes}"));
+                        }
+                        if !breakdown.by_family_id.is_empty() {
+                            let families = breakdown
+                                .by_family_id
+                                .iter()
+                                .map(|(family, count)| format!("{family}={count}"))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            ui.label(format!("Families: {families}"));
+                        }
+                        if !breakdown.by_tool_kind.is_empty() {
+                            let tools = breakdown
+                                .by_tool_kind
+                                .iter()
+                                .map(|(tool, count)| format!("{tool}={count}"))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            ui.label(format!("Tools: {tools}"));
+                        }
+                    }
+                    if let Some(family_id) = &constraint.family_id {
+                        ui.label(format!("Family: {family_id}"));
+                    }
+                    if let Some(tool_kind) = &constraint.tool_kind {
+                        ui.label(format!("Tool: {tool_kind}"));
+                    }
+                    if let Some(guidance) = constraint.replacement_guidance.as_deref() {
+                        ui.label(format!("Guidance: {guidance}"));
+                    }
+                }
+                if !recent_matches.is_empty() {
+                    ui.separator();
+                    ui.label("Recent Shelf Matches");
+                    for (path, receipt) in recent_matches.into_iter().take(6) {
+                        ui.separator();
+                        ui.label(format!(
+                            "{} [{} | {}]",
+                            receipt.review_subject, receipt.failure_class, receipt.failure_mode
+                        ));
+                        for constraint_id in receipt.matched_approved_constraint_ids.iter().take(3)
+                        {
+                            ui.label(format!("- matched: {constraint_id}"));
+                        }
+                        for summary in receipt
+                            .matched_approved_constraint_summaries
+                            .iter()
+                            .take(2)
+                        {
+                            ui.label(format!("- summary: {summary}"));
+                        }
+                        for reason in receipt.reasons.iter().take(1) {
+                            ui.label(format!("- reason: {reason}"));
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.small_button("Reveal Match Receipt").clicked() {
+                                self.reveal_governed_artifact(
+                                    &path,
+                                    "Revealed build verification receipt",
+                                    "Open failed",
+                                    "Revealed build verification receipt",
+                                    "Open failed",
+                                    None,
+                                );
+                            }
+                        });
+                    }
+                }
+                if !recent_mutations.is_empty() {
+                    ui.separator();
+                    ui.label("Recent Shelf Mutations");
+                    for mutation in recent_mutations.iter().take(5) {
+                        ui.separator();
+                        ui.label(format!(
+                            "{} [{}]",
+                            mutation.constraint_id, mutation.action
+                        ));
+                        ui.label(format!("Status: {}", mutation.status));
+                        if let Some(created_at) = mutation.created_at.as_deref() {
+                            ui.label(format!("When: {created_at}"));
+                        }
+                    }
+                }
+                if let Some(history) = shelf_history {
+                    if !history.archived_constraints.is_empty() {
+                        let never_matched_archived_count = history
+                            .archived_constraints
+                            .iter()
+                            .filter(|entry| entry.archived_match_count == 0)
+                            .count();
+                        let historically_useful_archived_count = history
+                            .archived_constraints
+                            .iter()
+                            .filter(|entry| entry.archived_match_count > 0)
+                            .count();
+                        ui.separator();
+                        ui.label(format!("Shelf History [{}]", history.history_id));
+                        if let Some(updated_at) = history.updated_at.as_deref() {
+                            ui.label(format!("History updated: {updated_at}"));
+                        }
+                        ui.label(format!(
+                            "Archived rules: {} never matched, {} historically useful",
+                            never_matched_archived_count, historically_useful_archived_count
+                        ));
+                        if ui
+                            .checkbox(
+                                &mut self.negative_shelf_history_show_never_matched_only,
+                                "Show never matched before retirement only",
+                            )
+                            .changed()
+                        {
+                            self.save_paired_proof_ui_preferences();
+                        }
+                        if ui
+                            .checkbox(
+                                &mut self.negative_shelf_history_show_historically_useful_only,
+                                "Show historically useful archived only",
+                            )
+                            .changed()
+                        {
+                            self.save_paired_proof_ui_preferences();
+                        }
+                        let mut sorted_history = history
+                            .archived_constraints
+                            .iter()
+                            .filter(|entry| {
+                                let never_matched_ok =
+                                    !self.negative_shelf_history_show_never_matched_only
+                                        || entry.archived_match_count == 0;
+                                let historically_useful_ok =
+                                    !self
+                                        .negative_shelf_history_show_historically_useful_only
+                                        || entry.archived_match_count > 0;
+                                never_matched_ok && historically_useful_ok
+                            })
+                            .collect::<Vec<_>>();
+                        sorted_history.sort_by(|left, right| {
+                            if self.negative_shelf_history_show_historically_useful_only
+                                && !self.negative_shelf_history_show_never_matched_only
+                            {
+                                right
+                                    .archived_match_count
+                                    .cmp(&left.archived_match_count)
+                                    .then_with(|| {
+                                        right
+                                            .archived_at
+                                            .as_deref()
+                                            .unwrap_or("")
+                                            .cmp(left.archived_at.as_deref().unwrap_or(""))
+                                    })
+                                    .then_with(|| {
+                                        left.constraint
+                                            .constraint_id
+                                            .cmp(&right.constraint.constraint_id)
+                                    })
+                            } else {
+                                right
+                                    .archived_at
+                                    .as_deref()
+                                    .unwrap_or("")
+                                    .cmp(left.archived_at.as_deref().unwrap_or(""))
+                                    .then_with(|| {
+                                        left.constraint
+                                            .constraint_id
+                                            .cmp(&right.constraint.constraint_id)
+                                    })
+                            }
+                        });
+                        if sorted_history.is_empty() {
+                            ui.label(
+                                "No archived constraints match the current shelf-history filter.",
+                            );
+                        } else {
+                            if self.negative_shelf_history_show_historically_useful_only
+                                && !self.negative_shelf_history_show_never_matched_only
+                            {
+                                ui.label(
+                                    "Historically useful archived rules sorted by past match count, then recency",
+                                );
+                            } else {
+                                ui.label("Most recent archived rules first");
+                            }
+                        }
+                        for entry in sorted_history.into_iter().take(5) {
+                            ui.separator();
+                            ui.label(format!(
+                                "{} [{} | {}]",
+                                entry.constraint.constraint_id,
+                                entry.constraint.constraint_scope,
+                                entry.constraint.constraint_kind
+                            ));
+                            ui.label(format!("Archived reason: {}", entry.archived_reason));
+                            ui.label(format!(
+                                "Past matches before retirement: {}",
+                                entry.archived_match_count
+                            ));
+                            if entry.archived_match_count == 0 {
+                                ui.label("[never-matched-before-retirement]");
+                            }
+                            if let Some(archived_at) = entry.archived_at.as_deref() {
+                                ui.label(format!("Archived at: {archived_at}"));
+                            }
+                            if let Some(shelf_id) = entry.archived_from_shelf_id.as_deref() {
+                                ui.label(format!("Archived from shelf: {shelf_id}"));
+                            }
+                            ui.label(format!(
+                                "Method: {}",
+                                entry.constraint.forbidden_method_summary
+                            ));
+                            if let Some(guidance) =
+                                entry.constraint.replacement_guidance.as_deref()
+                            {
+                                ui.label(format!("Guidance: {guidance}"));
+                            }
+                            ui.horizontal(|ui| {
+                                if ui.small_button("Restore").clicked() {
+                                    self.spawn_task(UiTask::RestoreApprovedConstraint {
+                                        constraint_id: entry.constraint.constraint_id.clone(),
+                                    });
+                                }
+                            });
+                        }
+                    }
+                }
+                            } else {
+                                ui.label("No approved negative constraint shelf has been created yet.");
+                            }
+                        });
 
-            ui.separator();
-            ui.heading("Command Output");
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::multiline(&mut self.command_log)
-                        .font(egui::TextStyle::Monospace)
-                        .desired_rows(20)
-                        .interactive(false),
-                );
-            });
+                    ui.separator();
+                    ui.heading("Command Output");
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.command_log)
+                                .font(egui::TextStyle::Monospace)
+                                .desired_rows(12)
+                                .interactive(false),
+                        );
+                    });
+                    ui.add_space(24.0);
+                });
         });
     }
 }
@@ -3957,6 +5330,21 @@ fn run_ui_task(workspace_root: &Path, task: UiTask) -> anyhow::Result<UiTaskResu
         }
         UiTask::RefreshTemplateGovernance => {
             map_host_action_result(bridge.refresh_template_governance_registry()?)
+        }
+        UiTask::ApproveProposedConstraint { request_id_or_path } => {
+            map_host_action_result(bridge.approve_proposed_constraint(&request_id_or_path)?)
+        }
+        UiTask::SetApprovedConstraintActive { constraint_id, active } => {
+            map_host_action_result(bridge.set_approved_constraint_active(&constraint_id, active)?)
+        }
+        UiTask::ArchiveUnmatchedInactiveConstraints => {
+            map_host_action_result(bridge.archive_unmatched_inactive_constraints()?)
+        }
+        UiTask::DeactivateLowValueActiveConstraints => {
+            map_host_action_result(bridge.deactivate_low_value_active_constraints()?)
+        }
+        UiTask::RestoreApprovedConstraint { constraint_id } => {
+            map_host_action_result(bridge.restore_constraint_from_history(&constraint_id)?)
         }
         UiTask::SelectProject { project_name } => {
             map_host_action_result(bridge.select_project(&project_name)?)
@@ -4002,12 +5390,13 @@ fn run_ui_task(workspace_root: &Path, task: UiTask) -> anyhow::Result<UiTaskResu
         )?),
         UiTask::BuildRequest {
             request,
+            starter_override_id,
             auto_planner,
             port,
             model,
-        } => map_host_action_result(bridge.smart_request(
+        } => map_host_action_result(bridge.build_request_with_starter_override(
             &request,
-            None,
+            starter_override_id.as_deref(),
             &planner_options(auto_planner, &port, &model),
         )?),
         UiTask::PatchRequest {
@@ -4067,6 +5456,16 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
                 "runtime/patch_intent_freezes/",
                 "-freeze.json",
             );
+            let patch_plan_review_path = first_patch_receipt_path(
+                &file_paths,
+                "runtime/patch_plan_reviews/",
+                "-review.json",
+            );
+            let patch_constraint_review_path = first_patch_receipt_path(
+                &file_paths,
+                "runtime/patch_constraint_reviews/",
+                "-constraint-review.json",
+            );
             let patch_postcheck_path = first_patch_receipt_path(
                 &file_paths,
                 "runtime/patch_diagnoses/",
@@ -4076,6 +5475,11 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
             kind: execution.kind,
             request_id: execution.request_id,
             project_name: execution.project_name,
+            starter_override_id: execution.starter_override_id,
+            starter_override_summary: execution.starter_override_summary,
+            recommended_starter_id: execution.recommended_starter_id,
+            recommended_starter_summary: execution.recommended_starter_summary,
+            starter_recommendation_comparison: execution.starter_recommendation_comparison,
             family_id: execution.family_id,
             tool_kind: execution.tool_kind,
             patch_kind: execution.patch_kind,
@@ -4094,6 +5498,8 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
             chattycog_ui_owner: execution.chattycog_ui_owner,
             chattycog_bridge_capabilities: execution.chattycog_bridge_capabilities,
             patch_diagnosis_path,
+            patch_plan_review_path,
+            patch_constraint_review_path,
             patch_intent_freeze_path,
             patch_postcheck_path,
         }}),
@@ -4125,6 +5531,15 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
             chattycog_supported_bridge_capabilities: fallback
                 .chattycog_supported_bridge_capabilities,
             stub_bundle_path: fallback.stub_bundle_path,
+            build_failure_class: fallback.build_failure_class,
+            build_failure_mode: fallback.build_failure_mode,
+            matched_approved_constraint_ids: fallback.matched_approved_constraint_ids,
+            matched_approved_constraint_summaries: fallback.matched_approved_constraint_summaries,
+            build_verification_path: fallback.build_verification_path,
+            proposed_constraint_path: fallback.proposed_constraint_path,
+            proposed_constraint_summary: fallback.proposed_constraint_summary,
+            proposed_constraint_replacement_guidance: fallback
+                .proposed_constraint_replacement_guidance,
         }),
         extension_registry: result.extension_registry,
     })
@@ -4160,6 +5575,145 @@ fn load_project_patch_readiness_receipt(
         .join(format!("{project_name}.json"));
     let contents = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&contents).ok()
+}
+
+fn load_build_verification_receipt(path: &str) -> Option<BuildVerificationReceiptView> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+fn load_proposed_constraint_receipt(path: &str) -> Option<ProposedConstraintReceiptView> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+fn load_approved_constraint_shelf(
+    workspace_root: &Path,
+) -> Option<ApprovedConstraintShelfView> {
+    let path = workspace_root
+        .join("runtime")
+        .join("approved_constraint_shelf.json");
+    let contents = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+fn load_constraint_shelf_history(
+    workspace_root: &Path,
+) -> Option<ConstraintShelfHistoryView> {
+    let path = workspace_root
+        .join("runtime")
+        .join("constraint_shelf_history.json");
+    let contents = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+fn load_recent_constraint_shelf_mutations(
+    workspace_root: &Path,
+) -> Vec<ConstraintShelfMutationReceiptView> {
+    let path = workspace_root.join("runtime").join("constraint_shelf_mutations");
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return Vec::new();
+    };
+    let mut receipts = entries
+        .flatten()
+        .filter_map(|entry| {
+            let contents = std::fs::read_to_string(entry.path()).ok()?;
+            serde_json::from_str::<ConstraintShelfMutationReceiptView>(&contents).ok()
+        })
+        .collect::<Vec<_>>();
+    receipts.sort_by(|left, right| {
+        right
+            .created_at
+            .as_deref()
+            .unwrap_or("")
+            .cmp(left.created_at.as_deref().unwrap_or(""))
+            .then_with(|| left.mutation_id.cmp(&right.mutation_id))
+    });
+    receipts
+}
+
+fn summarize_constraint_shelf_mutation_actions(
+    receipts: &[ConstraintShelfMutationReceiptView],
+) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for receipt in receipts.iter().take(20) {
+        *counts.entry(receipt.action.clone()).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn load_recent_build_verification_matches(
+    workspace_root: &Path,
+) -> Vec<(String, BuildVerificationReceiptView)> {
+    let receipts_dir = workspace_root
+        .join("runtime")
+        .join("build_verification_receipts");
+    let Ok(entries) = std::fs::read_dir(receipts_dir) else {
+        return Vec::new();
+    };
+    let mut receipts = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let path_text = path.display().to_string();
+            let contents = std::fs::read_to_string(&path).ok()?;
+            let receipt = serde_json::from_str::<BuildVerificationReceiptView>(&contents).ok()?;
+            if receipt.matched_approved_constraint_ids.is_empty() {
+                return None;
+            }
+            Some((path_text, receipt))
+        })
+        .collect::<Vec<_>>();
+    receipts.sort_by(|left, right| right.0.cmp(&left.0));
+    receipts
+}
+
+fn approved_constraint_match_counts(
+    matches: &[(String, BuildVerificationReceiptView)],
+) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for (_, receipt) in matches {
+        for constraint_id in &receipt.matched_approved_constraint_ids {
+            *counts.entry(constraint_id.clone()).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+#[derive(Debug, Clone, Default)]
+struct ApprovedConstraintMatchBreakdown {
+    total_matches: usize,
+    by_failure_mode: BTreeMap<String, usize>,
+    by_family_id: BTreeMap<String, usize>,
+    by_tool_kind: BTreeMap<String, usize>,
+}
+
+fn approved_constraint_match_breakdowns(
+    matches: &[(String, BuildVerificationReceiptView)],
+) -> BTreeMap<String, ApprovedConstraintMatchBreakdown> {
+    let mut breakdowns: BTreeMap<String, ApprovedConstraintMatchBreakdown> =
+        BTreeMap::new();
+    for (_, receipt) in matches {
+        for constraint_id in &receipt.matched_approved_constraint_ids {
+            let breakdown = breakdowns.entry(constraint_id.clone()).or_default();
+            breakdown.total_matches += 1;
+            *breakdown
+                .by_failure_mode
+                .entry(receipt.failure_mode.clone())
+                .or_insert(0) += 1;
+            let family_id = receipt
+                .suggested_family_id
+                .clone()
+                .unwrap_or_else(|| "unknown_family".to_string());
+            *breakdown.by_family_id.entry(family_id).or_insert(0) += 1;
+            let tool_kind = receipt
+                .suggested_tool_kind
+                .clone()
+                .unwrap_or_else(|| "unknown_tool".to_string());
+            *breakdown.by_tool_kind.entry(tool_kind).or_insert(0) += 1;
+        }
+    }
+    breakdowns
 }
 
 fn load_runtime_status(workspace_root: &Path) -> RuntimeStatusView {
@@ -4336,6 +5890,66 @@ fn load_family_governance_refresh_status(
         }
     }
     Some(status)
+}
+
+fn load_family_usage_summary(workspace_root: &Path) -> Option<FamilyUsageSummaryView> {
+    let path = workspace_root.join("runtime").join("family_usage_summary.json");
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<FamilyUsageSummaryView>(&contents).ok()
+}
+
+fn load_starter_usage_summary(workspace_root: &Path) -> Option<StarterUsageSummaryView> {
+    let path = workspace_root.join("runtime").join("starter_usage_summary.json");
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<StarterUsageSummaryView>(&contents).ok()
+}
+
+fn load_recent_build_receipts(workspace_root: &Path) -> Vec<BuildReceiptView> {
+    let receipts_dir = workspace_root.join("runtime").join("build_receipts");
+    let Ok(entries) = fs::read_dir(receipts_dir) else {
+        return Vec::new();
+    };
+    let mut receipts = entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            let contents = fs::read_to_string(entry.path()).ok()?;
+            let receipt = serde_json::from_str::<BuildReceiptView>(&contents).ok()?;
+            Some((modified, receipt))
+        })
+        .collect::<Vec<_>>();
+    receipts.sort_by(|left, right| right.0.cmp(&left.0));
+    receipts.into_iter().map(|(_, receipt)| receipt).collect()
+}
+
+fn load_recent_project_starter_override_counts(
+    workspace_root: &Path,
+) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for receipt in load_recent_build_receipts(workspace_root)
+        .into_iter()
+        .take(20)
+        .filter(|receipt| {
+            receipt.starter_recommendation_comparison.as_deref()
+                == Some("overrode_normal_routing")
+        })
+    {
+        *counts.entry(receipt.project_name).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn latest_project_starter_override_receipt(
+    workspace_root: &Path,
+    project_name: &str,
+) -> Option<BuildReceiptView> {
+    load_recent_build_receipts(workspace_root)
+        .into_iter()
+        .find(|receipt| {
+            receipt.project_name == project_name
+                && receipt.starter_recommendation_comparison.as_deref()
+                    == Some("overrode_normal_routing")
+        })
 }
 
 fn load_family_governance_receipts(workspace_root: &Path) -> Vec<FamilyGovernanceReceiptView> {

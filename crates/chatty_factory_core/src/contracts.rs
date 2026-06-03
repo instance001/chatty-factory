@@ -461,6 +461,11 @@ pub struct BuildReceipt {
     pub receipt_id: String,
     pub request_id: String,
     pub family_id: Option<FamilyId>,
+    pub starter_override_id: Option<String>,
+    pub starter_override_summary: Option<String>,
+    pub recommended_starter_id: Option<String>,
+    pub recommended_starter_summary: Option<String>,
+    pub starter_recommendation_comparison: Option<String>,
     pub project_name: String,
     pub project_dir: String,
     pub tool_kind: Option<String>,
@@ -608,11 +613,204 @@ pub struct PatchIntentFreeze {
     pub created_at: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PatchPlanReview {
+    pub review_id: String,
+    pub request_id: String,
+    pub project_name: String,
+    pub diagnosis_id: String,
+    pub freeze_id: String,
+    pub original_intended_patch_kind: Option<String>,
+    pub reviewed_intended_patch_kind: Option<String>,
+    pub decision: String,
+    #[serde(default)]
+    pub promoted_candidate_patch_kinds: Vec<String>,
+    #[serde(default)]
+    pub original_target_files: Vec<String>,
+    #[serde(default)]
+    pub reviewed_target_files: Vec<String>,
+    #[serde(default)]
+    pub dropped_target_files: Vec<String>,
+    #[serde(default)]
+    pub original_insertion_points: Vec<String>,
+    #[serde(default)]
+    pub reviewed_insertion_points: Vec<String>,
+    #[serde(default)]
+    pub recommended_replacement_patch_kinds: Vec<String>,
+    #[serde(default)]
+    pub reviewed_replacement_bundle_patch_kinds: Vec<String>,
+    #[serde(default)]
+    pub reviewed_replacement_bundle_status: Option<String>,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    #[serde(default)]
+    pub blocked_reasons: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ImplementationConstraint {
+    pub constraint_id: String,
+    pub constraint_scope: String,
+    #[serde(default)]
+    pub constraint_origin: String,
+    pub family_id: Option<FamilyId>,
+    pub tool_kind: Option<String>,
+    pub language_id: Option<String>,
+    pub constraint_kind: String,
+    pub forbidden_method_summary: String,
+    #[serde(default)]
+    pub forbidden_markers: Vec<String>,
+    #[serde(default)]
+    pub required_markers: Vec<String>,
+    #[serde(default)]
+    pub forbidden_surface_groups: Vec<String>,
+    pub violation_reason_template: String,
+    pub replacement_guidance: Option<String>,
+    pub severity: String,
+    pub active: bool,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ConstraintViolation {
+    pub constraint_id: String,
+    pub constraint_kind: String,
+    pub scope: String,
+    #[serde(default)]
+    pub matched_markers: Vec<String>,
+    #[serde(default)]
+    pub missing_required_markers: Vec<String>,
+    #[serde(default)]
+    pub violated_surface_groups: Vec<String>,
+    pub reason: String,
+    pub replacement_guidance: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ConstraintReviewReceipt {
+    pub review_id: String,
+    pub request_id: String,
+    pub project_name: String,
+    pub family_id: Option<FamilyId>,
+    pub tool_kind: Option<String>,
+    pub review_subject: String,
+    pub original_intended_patch_kind: Option<String>,
+    pub reviewed_intended_patch_kind: Option<String>,
+    #[serde(default)]
+    pub selected_constraints: Vec<ImplementationConstraint>,
+    #[serde(default)]
+    pub violations: Vec<ConstraintViolation>,
+    #[serde(default)]
+    pub surviving_patch_kinds: Vec<String>,
+    #[serde(default)]
+    pub surviving_composition_patch_kinds: Vec<String>,
+    #[serde(default)]
+    pub blocked_methods: Vec<String>,
+    #[serde(default)]
+    pub recommended_replacements: Vec<String>,
+    pub decision: String,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuildVerificationReceipt {
+    pub verification_id: String,
+    pub request_id: String,
+    pub review_subject: String,
+    pub interpreted_goal: String,
+    #[serde(default)]
+    pub candidate_family_ids: Vec<FamilyId>,
+    pub suggested_family_id: Option<FamilyId>,
+    pub suggested_tool_kind: Option<String>,
+    pub suggested_extension_kind: String,
+    pub failure_class: FailureClass,
+    pub failure_mode: String,
+    #[serde(default)]
+    pub matched_approved_constraint_ids: Vec<String>,
+    #[serde(default)]
+    pub matched_approved_constraint_summaries: Vec<String>,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    #[serde(default)]
+    pub blocked_methods: Vec<String>,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    pub decision: String,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposedConstraintReceipt {
+    pub proposal_id: String,
+    pub request_id: String,
+    pub source_verification_id: String,
+    pub status: String,
+    pub rationale: Vec<String>,
+    pub proposed_constraint: ImplementationConstraint,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ApprovedConstraintShelf {
+    pub shelf_id: String,
+    #[serde(default)]
+    pub constraints: Vec<ImplementationConstraint>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ConstraintShelfHistoryEntry {
+    pub constraint: ImplementationConstraint,
+    pub archived_reason: String,
+    pub archived_from_shelf_id: Option<String>,
+    #[serde(default)]
+    pub archived_match_count: usize,
+    pub archived_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ConstraintShelfHistory {
+    pub history_id: String,
+    #[serde(default)]
+    pub archived_constraints: Vec<ConstraintShelfHistoryEntry>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConstraintApprovalReceipt {
+    pub approval_id: String,
+    pub request_id: String,
+    pub proposal_id: String,
+    pub approved_constraint_id: String,
+    pub status: String,
+    pub shelf_path: String,
+    pub proposal_path: String,
+    pub rationale: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConstraintShelfMutationReceipt {
+    pub mutation_id: String,
+    pub constraint_id: String,
+    pub action: String,
+    pub shelf_path: String,
+    pub status: String,
+    pub created_at: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FamilyCapabilityManifest {
     pub family_id: FamilyId,
     pub primary_substrate: String,
     pub supports_chattycog_wrapper: bool,
+    #[serde(default = "default_family_lifecycle_status")]
+    pub lifecycle_status: String,
+    #[serde(default)]
+    pub lifecycle_notes: Vec<String>,
     #[serde(default)]
     pub supported_stack_ids: Vec<String>,
     #[serde(default)]
@@ -626,6 +824,10 @@ pub struct FamilyCapabilityManifest {
     pub forbids_capabilities: Vec<String>,
     #[serde(default)]
     pub requires_helper_for: Vec<String>,
+}
+
+fn default_family_lifecycle_status() -> String {
+    "active".into()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1194,5 +1396,23 @@ pub struct ChattyCogModuleSpec {
     pub visual_load_path: Option<String>,
     pub visual_load: Option<ChattyCogVisualLoadSpec>,
     pub bridge: ChattyCogBridgeSpec,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChattyEduModuleSpec {
+    pub module_spec_id: String,
+    pub project_name: String,
+    pub module_id: String,
+    pub display_name: String,
+    pub description: String,
+    pub visual_kind: String,
+    pub visual_title: String,
+    pub visual_file: String,
+    pub handshake_path: String,
+    pub manifest_path: String,
+    pub visual_load_path: String,
+    pub network_capabilities_path: String,
+    pub bridge_status_env_var: String,
     pub created_at: Option<String>,
 }

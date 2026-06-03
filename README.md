@@ -22,7 +22,7 @@ than only a rebuild sketch.
 
 It now has:
 
-- 6 built-in deterministic families
+- 8 built-in deterministic families
 - deterministic build and patch flows
 - diagnosis-aware patch surgery:
   - diagnosis
@@ -84,6 +84,16 @@ It is not claiming universal safe surgery across arbitrary unknown codebases.
 - [Architecture Checkpoint 24](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_24.md)
 - [Architecture Checkpoint 25](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_25.md)
 - [Architecture Checkpoint 26](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_26.md)
+- [Architecture Checkpoint 27](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_27.md)
+- [Architecture Checkpoint 28](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_28.md)
+- [Architecture Checkpoint 29](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_29.md)
+- [Architecture Checkpoint 30](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_30.md)
+- [Architecture Checkpoint 31](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_31.md)
+- [Architecture Checkpoint 32](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_32.md)
+- [Architecture Checkpoint 33](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_33.md)
+- [Architecture Checkpoint 34](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_34.md)
+- [Architecture Checkpoint 35](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_35.md)
+- [Architecture Checkpoint 36](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_36.md)
 - [Design Intent Review](./build-docs/reviews/DESIGN_INTENT_REVIEW.md)
 - [Generalized Primitive Proof Harness Milestone](./build-docs/milestones/GENERALIZED_PRIMITIVE_PROOF_HARNESS_MILESTONE.md)
 - [Bounded Adaptive Composition Milestone](./build-docs/milestones/BOUNDED_ADAPTIVE_COMPOSITION_MILESTONE.md)
@@ -99,9 +109,15 @@ It is not claiming universal safe surgery across arbitrary unknown codebases.
 - [Family Governance Milestone](./build-docs/milestones/FAMILY_GOVERNANCE_MILESTONE.md)
 - [Template Governance Milestone](./build-docs/milestones/TEMPLATE_GOVERNANCE_MILESTONE.md)
 - [Patch Diagnosis X-Ray Milestone](./build-docs/milestones/PATCH_DIAGNOSIS_XRAY_MILESTONE.md)
+- [Patch Plan Self-Review Milestone](./build-docs/milestones/PATCH_PLAN_SELF_REVIEW_MILESTONE.md)
 - [Project Patch Readiness Governance Milestone](./build-docs/milestones/PROJECT_PATCH_READINESS_GOVERNANCE_MILESTONE.md)
+- [Negative Constraint Shelf Milestone](./build-docs/milestones/NEGATIVE_CONSTRAINT_SHELF_MILESTONE.md)
+- [ChattyCog Module Skeleton Integration Milestone](./build-docs/milestones/CHATTYCOG_MODULE_SKELETON_INTEGRATION_MILESTONE.md)
+- [Chatty-EDU Native Starter Integration Milestone](./build-docs/milestones/CHATTYEDU_NATIVE_STARTER_INTEGRATION_MILESTONE.md)
 - [MILESTONE_CHECKPOINT.md](./build-docs/checkpoints/MILESTONE_CHECKPOINT.md)
 - [NEXT_WAVE_OPTIONS.md](./build-docs/plans/NEXT_WAVE_OPTIONS.md)
+- [Negative Constraint Shelf Implementation Plan](./build-docs/plans/NEGATIVE_CONSTRAINT_SHELF_IMPLEMENTATION_PLAN.md)
+- [Positive Lane Deprecation Plan](./build-docs/plans/POSITIVE_LANE_DEPRECATION_PLAN.md)
 - [HELPER_SERVICE_MILESTONE.md](./build-docs/milestones/HELPER_SERVICE_MILESTONE.md)
 - [Repository Layout](./docs/REPOSITORY_LAYOUT.md)
 - [Contract Inventory](./docs/CONTRACT_INVENTORY.md)
@@ -140,6 +156,16 @@ Build a project:
 cargo run -p chatty_factory_cli -- build me a python csv report utility
 ```
 
+Build with a mechanically selected starter:
+
+```powershell
+cargo run -p chatty_factory_cli -- build --starter chattycog_native_window_module a shared context handoff dashboard module
+```
+
+```powershell
+cargo run -p chatty_factory_cli -- build --starter chattycog_chattyedu_native_window_module a dual-host native dashboard module
+```
+
 Patch an existing generated project:
 
 ```powershell
@@ -167,9 +193,11 @@ handoff artifacts instead of guessing.
 The current built-in families are:
 
 - `static_web_dashboard`
-- `chattycog_webview_module`
-- `chattycog_native_window_module`
-- `chattycog_workspace_module`
+- `chattycog_webview_module` (frozen legacy starter)
+- `chattycog_native_window_module` (primary forward skeleton)
+- `chattyedu_native_window_module` (primary forward skeleton for school-facing native modules)
+- `chattycog_chattyedu_native_window_module` (primary forward skeleton for dual-host native modules)
+- `chattycog_workspace_module` (frozen legacy starter)
 - `python_cli_tool`
 - `rust_cli_tool`
 
@@ -179,6 +207,17 @@ Web remains the strongest early lane because it is the fastest place to prove ho
 
 But the rebuild is not philosophically web-only.
 The architecture is being designed so honest non-web families can return as soon as templates, contracts, checks, and repair lanes are strong enough to support them.
+
+Current architectural posture:
+
+- older positive families proved the build/patch/x-ray/governance stack
+- they are now considered transitional rather than sacred
+- template-first skeletons plus the negative bookshelf are the preferred route
+  for future reliability gains
+- ecosystem-native starters now exist as explicit mechanical choices:
+  - `chattycog_native_window_module`
+  - `chattyedu_native_window_module`
+  - `chattycog_chattyedu_native_window_module`
 
 ## Local Folders
 

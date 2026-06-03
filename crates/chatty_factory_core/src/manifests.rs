@@ -12,6 +12,12 @@ pub fn built_in_family_manifests() -> Vec<FamilyCapabilityManifest> {
             "../../../families/manifests/chattycog_native_window_module.json"
         )),
         manifest(include_str!(
+            "../../../families/manifests/chattyedu_native_window_module.json"
+        )),
+        manifest(include_str!(
+            "../../../families/manifests/chattycog_chattyedu_native_window_module.json"
+        )),
+        manifest(include_str!(
             "../../../families/manifests/chattycog_workspace_module.json"
         )),
         manifest(include_str!(

@@ -2,6 +2,52 @@ use super::*;
 use chatty_factory_core::{PatchIntentFreeze, ProjectPatchDiagnosis};
 
 #[derive(Debug, Clone, serde::Deserialize)]
+struct PatchPlanReviewReceiptView {
+    #[serde(default)]
+    original_intended_patch_kind: Option<String>,
+    #[serde(default)]
+    reviewed_intended_patch_kind: Option<String>,
+    decision: String,
+    #[serde(default)]
+    promoted_candidate_patch_kinds: Vec<String>,
+    #[serde(default)]
+    recommended_replacement_patch_kinds: Vec<String>,
+    #[serde(default)]
+    reviewed_replacement_bundle_patch_kinds: Vec<String>,
+    #[serde(default)]
+    reviewed_replacement_bundle_status: Option<String>,
+    #[serde(default)]
+    reviewed_target_files: Vec<String>,
+    #[serde(default)]
+    dropped_target_files: Vec<String>,
+    #[serde(default)]
+    findings: Vec<String>,
+    #[serde(default)]
+    blocked_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct PatchConstraintReviewReceiptView {
+    review_subject: String,
+    decision: String,
+    #[serde(default)]
+    blocked_methods: Vec<String>,
+    #[serde(default)]
+    recommended_replacements: Vec<String>,
+    #[serde(default)]
+    findings: Vec<String>,
+    #[serde(default)]
+    violations: Vec<PatchConstraintViolationView>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct PatchConstraintViolationView {
+    constraint_kind: String,
+    reason: String,
+    replacement_guidance: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 struct PatchDiagnosisPostcheckReceiptView {
     verified_invariants: Vec<String>,
     warnings: Vec<String>,
@@ -182,6 +228,8 @@ impl ChattyFactoryUiApp {
         result: &UiExecutionResult,
     ) {
         if result.patch_diagnosis_path.is_none()
+            && result.patch_plan_review_path.is_none()
+            && result.patch_constraint_review_path.is_none()
             && result.patch_intent_freeze_path.is_none()
             && result.patch_postcheck_path.is_none()
         {
@@ -196,6 +244,14 @@ impl ChattyFactoryUiApp {
             .patch_intent_freeze_path
             .as_deref()
             .and_then(load_patch_intent_freeze_receipt);
+        let review = result
+            .patch_plan_review_path
+            .as_deref()
+            .and_then(load_patch_plan_review_receipt);
+        let constraint_review = result
+            .patch_constraint_review_path
+            .as_deref()
+            .and_then(load_patch_constraint_review_receipt);
         let postcheck = result
             .patch_postcheck_path
             .as_deref()
@@ -203,6 +259,106 @@ impl ChattyFactoryUiApp {
 
         ui.separator();
         ui.label(egui::RichText::new("Patch X-ray").strong());
+        if let Some(review) = &review {
+            ui.label(format!("Plan review: {}", review.decision));
+            if let (Some(original), Some(reviewed)) = (
+                review.original_intended_patch_kind.as_deref(),
+                review.reviewed_intended_patch_kind.as_deref(),
+            ) {
+                if original != reviewed {
+                    ui.label(format!(
+                        "Redirected: historical patch intent `{original}` -> modern replacement `{reviewed}`"
+                    ));
+                }
+            }
+            if !review.recommended_replacement_patch_kinds.is_empty()
+                && review
+                    .reviewed_replacement_bundle_status
+                    .as_deref()
+                    .is_some()
+            {
+                ui.label(format!(
+                    "Bundle redirect: historical patch intent -> modern replacement bundle {}",
+                    review.recommended_replacement_patch_kinds.join(", ")
+                ));
+                if let Some(status) = review.reviewed_replacement_bundle_status.as_deref() {
+                    ui.label(format!("Bundle status: {status}"));
+                }
+                if !review.reviewed_replacement_bundle_patch_kinds.is_empty() {
+                    ui.label(format!(
+                        "Bundle execution set: {}",
+                        review.reviewed_replacement_bundle_patch_kinds.join(", ")
+                    ));
+                }
+            }
+            if !review.promoted_candidate_patch_kinds.is_empty() {
+                ui.label(format!(
+                    "Promoted candidates: {}",
+                    review.promoted_candidate_patch_kinds.join(", ")
+                ));
+            }
+            if !review.reviewed_target_files.is_empty() {
+                ui.label(format!(
+                    "Reviewed target files: {}",
+                    review.reviewed_target_files.join(", ")
+                ));
+            }
+            if !review.dropped_target_files.is_empty() {
+                ui.label(format!(
+                    "Dropped target files: {}",
+                    review.dropped_target_files.join(", ")
+                ));
+            }
+            if !review.findings.is_empty() {
+                ui.label("Plan review findings");
+                for finding in review.findings.iter().take(3) {
+                    ui.label(format!("- {finding}"));
+                }
+            }
+            if !review.blocked_reasons.is_empty() {
+                ui.label("Plan review blocked reasons");
+                for reason in review.blocked_reasons.iter().take(3) {
+                    ui.label(format!("- {reason}"));
+                }
+            }
+        }
+        if let Some(constraint_review) = &constraint_review {
+            ui.label(format!("Constraint review: {}", constraint_review.decision));
+            ui.label(format!(
+                "Constraint subject: {}",
+                constraint_review.review_subject
+            ));
+            if !constraint_review.blocked_methods.is_empty() {
+                ui.label(format!(
+                    "Blocked methods: {}",
+                    constraint_review.blocked_methods.join(", ")
+                ));
+            }
+            if !constraint_review.recommended_replacements.is_empty() {
+                ui.label(format!(
+                    "Constraint replacements: {}",
+                    constraint_review.recommended_replacements.join(", ")
+                ));
+            }
+            if !constraint_review.findings.is_empty() {
+                ui.label("Constraint review findings");
+                for finding in constraint_review.findings.iter().take(3) {
+                    ui.label(format!("- {finding}"));
+                }
+            }
+            if !constraint_review.violations.is_empty() {
+                ui.label("Constraint violations");
+                for violation in constraint_review.violations.iter().take(3) {
+                    ui.label(format!(
+                        "- {}: {}",
+                        violation.constraint_kind, violation.reason
+                    ));
+                    if let Some(guidance) = &violation.replacement_guidance {
+                        ui.label(format!("  use instead: {guidance}"));
+                    }
+                }
+            }
+        }
         if let Some(freeze) = &freeze {
             let superseded_by = freeze.intended_patch_kind.as_deref().and_then(|patch_kind| {
                 current_patch_lane_superseded_for_execution(result, patch_kind)
@@ -401,6 +557,21 @@ impl ChattyFactoryUiApp {
                 }
             });
         }
+        if let Some(path) = &result.patch_plan_review_path {
+            ui.horizontal(|ui| {
+                ui.label(format!("Plan review: {}", short_path(path)));
+                if ui.small_button("Reveal Plan Review").clicked() {
+                    self.reveal_governed_artifact(
+                        path,
+                        "Revealed patch plan review receipt",
+                        "Open failed",
+                        "Revealed patch plan review receipt",
+                        "Open failed",
+                        None,
+                    );
+                }
+            });
+        }
         if let Some(path) = &result.patch_intent_freeze_path {
             ui.horizontal(|ui| {
                 ui.label(format!("Intent freeze: {}", short_path(path)));
@@ -431,6 +602,21 @@ impl ChattyFactoryUiApp {
                 }
             });
         }
+        if let Some(path) = &result.patch_constraint_review_path {
+            ui.horizontal(|ui| {
+                ui.label(format!("Constraint review: {}", short_path(path)));
+                if ui.small_button("Reveal Constraint Review").clicked() {
+                    self.reveal_governed_artifact(
+                        path,
+                        "Revealed patch constraint review receipt",
+                        "Open failed",
+                        "Revealed patch constraint review receipt",
+                        "Open failed",
+                        None,
+                    );
+                }
+            });
+        }
     }
 }
 
@@ -440,6 +626,16 @@ fn load_patch_diagnosis_receipt(path: &str) -> Option<ProjectPatchDiagnosis> {
 }
 
 fn load_patch_intent_freeze_receipt(path: &str) -> Option<PatchIntentFreeze> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+fn load_patch_plan_review_receipt(path: &str) -> Option<PatchPlanReviewReceiptView> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+fn load_patch_constraint_review_receipt(path: &str) -> Option<PatchConstraintReviewReceiptView> {
     let contents = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&contents).ok()
 }

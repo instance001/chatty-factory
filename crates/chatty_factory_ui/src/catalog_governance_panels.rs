@@ -20,10 +20,23 @@ impl ChattyFactoryUiApp {
             .iter()
             .filter(|receipt| receipt.change_since_last_live_status == "regressed_since_last_live")
             .count();
+        let ecosystem_native_families = family_governance_receipts
+            .iter()
+            .filter(|receipt| is_canonical_ecosystem_shell_family(&receipt.family_id))
+            .count();
+        let family_usage_summary = load_family_usage_summary(&self.workspace_root);
         if render_governance_metric_strip(
             ui,
             &[
                 format!("Governed families: {}", family_governance_receipts.len()),
+                format!("Canonical ecosystem shell families: {ecosystem_native_families}"),
+                format!(
+                    "Built family-backed projects: {}",
+                    family_usage_summary
+                        .as_ref()
+                        .map(|summary| summary.total_projects)
+                        .unwrap_or(0)
+                ),
                 format!("Stable families: {stable_families}"),
                 format!("Changed families: {changed_families}"),
                 format!("Regressed families: {regressed_families}"),
@@ -94,14 +107,48 @@ impl ChattyFactoryUiApp {
                         ui.selectable_value(
                             &mut self.selected_family_governance_id,
                             Some(receipt.family_id.clone()),
-                            &receipt.family_id,
+                            family_governance_picker_label(receipt),
                         );
                     }
                 });
             if let Some(receipt) = family_governance_receipts.iter().find(|receipt| {
                 Some(receipt.family_id.as_str()) == self.selected_family_governance_id.as_deref()
             }) {
+                ui.label(format!(
+                    "Family: {}",
+                    family_summary_label_from_receipt(receipt)
+                ));
+                if is_canonical_ecosystem_shell_family(&receipt.family_id) {
+                    ui.label("Shell role: canonical ecosystem-native starter");
+                }
+                if let Some(ecosystem) = receipt.family_ecosystem.as_deref() {
+                    ui.label(format!("Ecosystem: {ecosystem}"));
+                }
+                if let Some(summary) = family_usage_summary.as_ref() {
+                    if let Some(entry) = summary
+                        .families
+                        .iter()
+                        .find(|entry| entry.family_id == receipt.family_id)
+                    {
+                        ui.label(format!("Built projects using this family: {}", entry.project_count));
+                    } else {
+                        ui.label("Built projects using this family: 0");
+                    }
+                    if let Some(ecosystem) = receipt.family_ecosystem.as_deref() {
+                        if let Some(count) = summary.ecosystem_project_counts.get(ecosystem) {
+                            ui.label(format!(
+                                "Built projects across the {ecosystem} ecosystem: {count}"
+                            ));
+                        }
+                    }
+                }
                 ui.label(format!("Primary substrate: {}", receipt.primary_substrate));
+                ui.label(format!("Lifecycle: {}", receipt.lifecycle_status));
+                if !receipt.lifecycle_notes.is_empty() {
+                    for note in receipt.lifecycle_notes.iter().take(3) {
+                        ui.label(format!("- {note}"));
+                    }
+                }
                 ui.label(format!(
                     "Supported tool kinds: {}",
                     if receipt.supported_tool_kinds.is_empty() {
@@ -163,6 +210,29 @@ impl ChattyFactoryUiApp {
                         );
                     }
                 });
+            }
+            if let Some(summary) = family_usage_summary.as_ref() {
+                ui.separator();
+                ui.label(format!(
+                    "Family usage summary: {} built project(s) across {} governed family surface(s)",
+                    summary.total_projects,
+                    summary.families.len()
+                ));
+                ui.label(format!("Usage summary id: {}", summary.summary_id));
+                ui.label(format!("Usage updated: {}", summary.updated_at));
+                for entry in summary.families.iter().take(6) {
+                    let label = match entry.family_ecosystem.as_deref() {
+                        Some(ecosystem) => format!(
+                            "- {} [ecosystem: {}] -> {} project(s)",
+                            entry.family_display_name, ecosystem, entry.project_count
+                        ),
+                        None => format!(
+                            "- {} -> {} project(s)",
+                            entry.family_display_name, entry.project_count
+                        ),
+                    };
+                    ui.label(label);
+                }
             }
         } else {
             ui.label("No governed family receipts found yet.");

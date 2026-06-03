@@ -1,4 +1,5 @@
 const CHATTYCOG_TERMS: &[&str] = &["chattycog", "chatty-cog", "module"];
+const CHATTYEDU_TERMS: &[&str] = &["chattyedu", "chatty-edu"];
 const RUST_TERMS: &[&str] = &["rust", "cargo", "compiled tool", "compiled utility"];
 const PYTHON_TERMS: &[&str] = &[
     "python",
@@ -9,7 +10,7 @@ const PYTHON_TERMS: &[&str] = &[
     "sort files",
     "utility",
 ];
-const WEB_SHAPE_TERMS: &[&str] = &["dashboard", "browser", "web", "module"];
+const WEB_SHAPE_TERMS: &[&str] = &["browser", "web", "webview"];
 const DASHBOARD_TERMS: &[&str] = &["dashboard", "panel", "metric"];
 const CLI_SHAPE_TERMS: &[&str] = &[
     "sorter",
@@ -314,6 +315,10 @@ pub fn request_mentions_chattycog(lower: &str) -> bool {
     contains_any(lower, CHATTYCOG_TERMS)
 }
 
+pub fn request_mentions_chattyedu(lower: &str) -> bool {
+    contains_any(lower, CHATTYEDU_TERMS)
+}
+
 pub fn request_mentions_rust(lower: &str) -> bool {
     contains_any(lower, RUST_TERMS)
 }
@@ -384,14 +389,24 @@ pub fn infer_cli_tool_kind_from_text(lower: &str) -> Option<&'static str> {
 pub fn infer_request_tool_kind_from_text(
     lower: &str,
     wants_chattycog: bool,
+    wants_chattyedu: bool,
     desired_surface_cli: bool,
 ) -> Option<&'static str> {
-    if wants_chattycog && contains_any(lower, &["native window", "desktop", "tkinter"]) {
+    if (wants_chattycog || wants_chattyedu) && contains_any(lower, &["native window", "desktop", "tkinter"]) {
         Some("native_window_starter")
     } else if wants_chattycog && contains_any(lower, &["workspace", "ui.json", "headless", "notes module"]) {
         Some("workspace_module")
-    } else if wants_chattycog && contains_any(lower, &["dashboard", "module", "starter", "webview"]) {
+    } else if wants_chattycog
+        && contains_any(
+            lower,
+            &["webview", "embedded webview", "hosted webview", "browser tab"],
+        )
+    {
         Some("module_starter")
+    } else if wants_chattycog {
+        Some("native_window_starter")
+    } else if wants_chattyedu {
+        Some("native_window_starter")
     } else if request_has_dashboard_shape(lower) {
         Some("dashboard")
     } else if desired_surface_cli || request_has_cli_shape(lower) {
@@ -518,4 +533,40 @@ pub fn should_route_followup_via_planner_text(lower: &str) -> bool {
         request_has_vague_improvement(lower) || request_looks_like_followup_action(lower);
     let explicit_build_shape = request_has_explicit_build_shape(lower);
     (short && vague_followup) || (!explicit_build_shape && lower.starts_with("make "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generic_chattycog_requests_prefer_native_window_starter() {
+        let tool_kind =
+            infer_request_tool_kind_from_text("build me a chattycog dashboard module", true, false, false);
+        assert_eq!(tool_kind, Some("native_window_starter"));
+    }
+
+    #[test]
+    fn explicit_chattycog_webview_requests_keep_webview_starter() {
+        let tool_kind =
+            infer_request_tool_kind_from_text("build me a chattycog webview module", true, false, false);
+        assert_eq!(tool_kind, Some("module_starter"));
+    }
+
+    #[test]
+    fn generic_chattyedu_requests_prefer_native_window_starter() {
+        let tool_kind = infer_request_tool_kind_from_text(
+            "build me a chatty-edu lesson dashboard module",
+            false,
+            true,
+            false,
+        );
+        assert_eq!(tool_kind, Some("native_window_starter"));
+    }
+
+    #[test]
+    fn dashboard_word_alone_is_not_treated_as_web_shape() {
+        assert!(!request_has_web_shape("build me a dashboard"));
+        assert!(request_has_web_shape("build me a browser dashboard"));
+    }
 }

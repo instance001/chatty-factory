@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use chatty_factory_control::ControlPlane;
-use chatty_factory_core::default_request_text;
+use chatty_factory_core::{
+    build_starter_choices, default_request_text, is_known_build_starter_id,
+};
 use chatty_factory_host::{HostActionResult, HostBridge, HostPlannerOptions};
 use chatty_factory_families::built_in_families;
 use serde::Serialize;
@@ -110,6 +112,42 @@ fn main() -> Result<()> {
     ) {
         return run_refresh_bridge_governance_mode(&host_bridge, &args);
     }
+    if matches!(
+        args.first().map(String::as_str),
+        Some("approve-proposed-constraint")
+    ) {
+        return run_approve_proposed_constraint_mode(&host_bridge, &args);
+    }
+    if matches!(
+        args.first().map(String::as_str),
+        Some("deactivate-approved-constraint")
+    ) {
+        return run_set_approved_constraint_active_mode(&host_bridge, &args, false);
+    }
+    if matches!(
+        args.first().map(String::as_str),
+        Some("activate-approved-constraint")
+    ) {
+        return run_set_approved_constraint_active_mode(&host_bridge, &args, true);
+    }
+    if matches!(
+        args.first().map(String::as_str),
+        Some("archive-unmatched-inactive-constraints")
+    ) {
+        return run_archive_unmatched_inactive_constraints_mode(&host_bridge);
+    }
+    if matches!(
+        args.first().map(String::as_str),
+        Some("deactivate-low-value-active-constraints")
+    ) {
+        return run_deactivate_low_value_active_constraints_mode(&host_bridge);
+    }
+    if matches!(
+        args.first().map(String::as_str),
+        Some("restore-approved-constraint")
+    ) {
+        return run_restore_approved_constraint_mode(&host_bridge, &args);
+    }
     if matches!(args.first().map(String::as_str), Some("implement-extension")) {
         return run_implement_extension_mode(&host_bridge, &args);
     }
@@ -146,11 +184,17 @@ fn main() -> Result<()> {
     ) {
         return run_clear_selected_project_mode(&host_bridge, &runtime_root, &args);
     }
+    if matches!(args.first().map(String::as_str), Some("reverify-build")) {
+        return run_reverify_build_mode(&host_bridge, &args);
+    }
     if matches!(args.first().map(String::as_str), Some("patch")) {
         return run_patch_mode(
             &host_bridge,
             &args,
         );
+    }
+    if matches!(args.first().map(String::as_str), Some("build")) {
+        return run_build_mode(&host_bridge, &args);
     }
 
     let clean_args = strip_runtime_control_args(&args);
@@ -159,13 +203,22 @@ fn main() -> Result<()> {
     } else {
         clean_args.join(" ")
     };
+    validate_build_starter_override_arg(build_starter_override_from_args(&args))?;
 
     let planner_response = planner_response_path.as_deref().map(PathBuf::from);
-    let result = host_bridge.smart_request(
-        &raw_request,
-        planner_response.as_deref(),
-        &planner_options_from_args(&args),
-    )?;
+    let result = if let Some(starter_override_id) = build_starter_override_from_args(&args) {
+        host_bridge.build_request_with_starter_override(
+            &raw_request,
+            Some(starter_override_id),
+            &planner_options_from_args(&args),
+        )?
+    } else {
+        host_bridge.smart_request(
+            &raw_request,
+            planner_response.as_deref(),
+            &planner_options_from_args(&args),
+        )?
+    };
     println!("ChattyFactory rebuild");
     println!("Built-in families: {}", families.len());
     println!("Milestone-one control nodes: {}", control.node_count());
@@ -191,6 +244,73 @@ fn run_patch_mode(
         &raw_request,
         args,
     )
+}
+
+fn run_build_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
+    let clean_args = strip_runtime_control_args(args);
+    if clean_args.len() < 2 {
+        anyhow::bail!("build requires: build [--starter <family_id|auto>] <request>");
+    }
+    let raw_request = clean_args[1..].join(" ");
+    validate_build_starter_override_arg(build_starter_override_from_args(args))?;
+    let result = host_bridge.build_request_with_starter_override(
+        &raw_request,
+        build_starter_override_from_args(args),
+        &planner_options_from_args(args),
+    )?;
+    println!("ChattyFactory deterministic build");
+    println!("Request: {}", raw_request);
+    if let Some(starter_override_id) = build_starter_override_from_args(args) {
+        println!("starter={}", starter_override_id);
+    } else {
+        println!("starter=auto");
+    }
+    print_host_action_result(&result, has_json_flag(args))
+}
+
+fn run_reverify_build_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
+    if args.len() < 2 {
+        anyhow::bail!("reverify-build requires: reverify-build <project_name>");
+    }
+    let result = host_bridge.reverify_build_project(&args[1])?;
+    print_host_action_result(&result, has_json_flag(args))
+}
+
+fn run_approve_proposed_constraint_mode(
+    host_bridge: &HostBridge,
+    args: &[String],
+) -> Result<()> {
+    if args.len() < 2 {
+        anyhow::bail!(
+            "approve-proposed-constraint requires: approve-proposed-constraint <request_id_or_receipt_path>"
+        );
+    }
+    let result = host_bridge.approve_proposed_constraint(&args[1])?;
+    print_host_action_result(&result, has_json_flag(args))
+}
+
+fn run_set_approved_constraint_active_mode(
+    host_bridge: &HostBridge,
+    args: &[String],
+    active: bool,
+) -> Result<()> {
+    if args.len() < 2 {
+        anyhow::bail!(
+            "{} requires: {} <constraint_id>",
+            if active {
+                "activate-approved-constraint"
+            } else {
+                "deactivate-approved-constraint"
+            },
+            if active {
+                "activate-approved-constraint"
+            } else {
+                "deactivate-approved-constraint"
+            }
+        );
+    }
+    let result = host_bridge.set_approved_constraint_active(&args[1], active)?;
+    print_host_action_result(&result, has_json_flag(args))
 }
 
 fn run_select_project_mode(
@@ -598,6 +718,35 @@ fn execute_patch_request(
     Ok(())
 }
 
+fn run_archive_unmatched_inactive_constraints_mode(host_bridge: &HostBridge) -> Result<()> {
+    let result = host_bridge.archive_unmatched_inactive_constraints()?;
+    println!("ChattyFactory constraint shelf archive");
+    print_host_action_result(&result, false)?;
+    Ok(())
+}
+
+fn run_deactivate_low_value_active_constraints_mode(host_bridge: &HostBridge) -> Result<()> {
+    let result = host_bridge.deactivate_low_value_active_constraints()?;
+    println!("ChattyFactory constraint shelf deactivate");
+    print_host_action_result(&result, false)?;
+    Ok(())
+}
+
+fn run_restore_approved_constraint_mode(
+    host_bridge: &HostBridge,
+    args: &[String],
+) -> Result<()> {
+    if args.len() < 2 {
+        anyhow::bail!(
+            "restore-approved-constraint requires: restore-approved-constraint <constraint_id>"
+        );
+    }
+    let result = host_bridge.restore_constraint_from_history(&args[1])?;
+    println!("ChattyFactory constraint shelf restore");
+    print_host_action_result(&result, has_json_flag(args))?;
+    Ok(())
+}
+
 fn parse_cli_args(args: Vec<String>) -> (Option<String>, Vec<String>) {
     let mut planner_response_path = None;
     let mut remaining = Vec::new();
@@ -605,6 +754,10 @@ fn parse_cli_args(args: Vec<String>) -> (Option<String>, Vec<String>) {
     while i < args.len() {
         if args[i] == "--planner-response" && i + 1 < args.len() {
             planner_response_path = Some(args[i + 1].clone());
+            i += 2;
+        } else if args[i] == "--starter" && i + 1 < args.len() {
+            remaining.push(args[i].clone());
+            remaining.push(args[i + 1].clone());
             i += 2;
         } else {
             remaining.push(args[i].clone());
@@ -622,7 +775,7 @@ fn strip_runtime_control_args(args: &[String]) -> Vec<String> {
             "--auto-planner" | "--skip-launch" | "--json" => {
                 i += 1;
             }
-            "--model" | "--port" => {
+            "--model" | "--port" | "--starter" => {
                 i += if i + 1 < args.len() { 2 } else { 1 };
             }
             _ => {
@@ -647,6 +800,35 @@ fn has_json_flag(args: &[String]) -> bool {
     args.iter().any(|arg| arg == "--json")
 }
 
+fn build_starter_override_from_args(args: &[String]) -> Option<&str> {
+    let mut i = 0usize;
+    while i < args.len() {
+        if args[i] == "--starter" {
+            return args.get(i + 1).map(String::as_str).filter(|value| !value.is_empty());
+        }
+        i += 1;
+    }
+    None
+}
+
+fn validate_build_starter_override_arg(starter_override_id: Option<&str>) -> Result<()> {
+    if let Some(starter_override_id) = starter_override_id {
+        if !is_known_build_starter_id(starter_override_id) {
+            let known = build_starter_choices()
+                .iter()
+                .map(|choice| choice.id)
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::bail!(
+                "unknown build starter '{}'; known starters: {}",
+                starter_override_id,
+                known
+            );
+        }
+    }
+    Ok(())
+}
+
 fn print_json<T: Serialize>(value: &T) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
@@ -665,6 +847,12 @@ fn print_host_action_result(result: &HostActionResult, as_json: bool) -> Result<
         println!("kind={}", execution.kind);
         println!("request_id={}", execution.request_id);
         println!("project={}", execution.project_name);
+        if let Some(starter_override_id) = &execution.starter_override_id {
+            println!("starter_override_id={starter_override_id}");
+        }
+        if let Some(starter_override_summary) = &execution.starter_override_summary {
+            println!("starter_override_summary={starter_override_summary}");
+        }
         if let Some(family_id) = &execution.family_id {
             println!("family={family_id}");
         }
@@ -774,6 +962,18 @@ fn print_host_action_result(result: &HostActionResult, as_json: bool) -> Result<
         println!("fallback_goal={}", fallback.interpreted_goal);
         println!("fallback_question={}", fallback.question);
         println!("fallback_next_step={}", fallback.recommended_next_step);
+        if let Some(class) = &fallback.build_failure_class {
+            println!("fallback_build_failure_class={class}");
+        }
+        if let Some(mode) = &fallback.build_failure_mode {
+            println!("fallback_build_failure_mode={mode}");
+        }
+        for constraint_id in &fallback.matched_approved_constraint_ids {
+            println!("fallback_approved_constraint_id={constraint_id}");
+        }
+        for summary in &fallback.matched_approved_constraint_summaries {
+            println!("fallback_approved_constraint_summary={summary}");
+        }
         for reason in &fallback.reasons {
             println!("fallback_reason={reason}");
         }
@@ -837,6 +1037,18 @@ fn print_host_action_result(result: &HostActionResult, as_json: bool) -> Result<
         }
         for capability in &fallback.chattycog_supported_bridge_capabilities {
             println!("fallback_chattycog_supported_bridge_capability={capability}");
+        }
+        if let Some(summary) = &fallback.proposed_constraint_summary {
+            println!("fallback_proposed_constraint_summary={summary}");
+        }
+        if let Some(guidance) = &fallback.proposed_constraint_replacement_guidance {
+            println!("fallback_proposed_constraint_guidance={guidance}");
+        }
+        if let Some(path) = &fallback.build_verification_path {
+            println!("fallback_build_verification={path}");
+        }
+        if let Some(path) = &fallback.proposed_constraint_path {
+            println!("fallback_proposed_constraint={path}");
         }
         if let Some(path) = &fallback.stub_bundle_path {
             println!("fallback_stub_bundle={path}");

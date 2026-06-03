@@ -1,9 +1,14 @@
 {
   "family_id": "chattycog_native_window_module",
   "primary_substrate": "desktop",
+  "lifecycle_status": "active",
+  "lifecycle_notes": [
+    "Primary forward skeleton for standalone Rust GUI dashboards with removable Chatty-Cog compatibility files.",
+    "Prefer this family over older Chatty-Cog starter families unless the request explicitly asks for workspace or webview hosting."
+  ],
   "supports_standalone": true,
   "supports_chattycog_wrapper": true,
-  "supported_stack_ids": ["chattycog", "module", "python", "native_window"],
+  "supported_stack_ids": ["chattycog", "module", "rust", "native_window", "egui", "eframe"],
   "provided_build_primitive_classes": ["summary_surface", "status_chip"],
   "primitive_adapters": [
     {
@@ -23,8 +28,8 @@
       "notes": ["Provided directly by the base ChattyCog native window module shell."]
     }
   ],
-  "explicit_stack_keywords": ["chattycog", "chatty-cog", "module", "desktop", "native window", "tkinter"],
-  "route_keywords": ["native window", "desktop module", "desktop app", "tkinter", "hosted native"],
+  "explicit_stack_keywords": ["chattycog", "chatty-cog", "module", "desktop", "native window", "rust dashboard", "rust gui", "eframe", "egui"],
+  "route_keywords": ["native window", "desktop module", "desktop app", "rust dashboard", "rust gui", "eframe", "egui", "hosted native"],
   "supported_tool_kinds": ["module_starter", "native_window_starter"],
   "forbids_capabilities": ["backend_service", "websocket", "api_server", "daemon"],
   "requires_helper_for": ["background_job", "email_delivery"]

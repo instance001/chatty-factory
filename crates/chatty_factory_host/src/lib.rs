@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::hash::{DefaultHasher, Hasher};
 use std::path::{Path, PathBuf};
@@ -9,7 +9,10 @@ use chatty_factory_control::ControlPlane;
 use chatty_factory_core::{
     active_project_summary_line, apply_planner_response, build_runtime_model_catalog,
     build_primitive_classes_for_family, primitive_adapters_for_family,
+    build_starter_choices,
+    build_starter_label, build_starter_lifecycle,
     build_context_bundle, build_execution_policy, build_project_snapshot,
+    contains_any,
     chattycog_valid_hosting_modes, default_runtime_config, derive_planner_handoff,
     derive_request_plan, derive_scaffold_inputs, discover_projects, discover_runtime,
     gate_patch_project_snapshot, infer_chattycog_hosting_mode_from_text,
@@ -20,19 +23,26 @@ use chatty_factory_core::{
     supported_chattycog_bridge_capabilities,
     should_route_followup_via_planner_text, candidate_operator_bundle_ids_for,
     built_in_capability_comparison_bundles, built_in_proof_templates,
-    AcceptanceCheck, AcceptanceRecipeStatus, ChattyCogBridgeCapabilities, ClarificationRequest,
+    AcceptanceCheck, AcceptanceRecipeStatus, ApprovedConstraintShelf, ChattyCogBridgeCapabilities,
+    ClarificationRequest,
     capability_comparison_bundle_by_id, capability_comparison_bundle_by_id_from_root,
-    proof_template_by_id, proof_template_by_id_from_root, ComposableRoutePlan,
-    CompositionRouteClass, FailureReport, FailureReportEvidence, FamilyId,
+    proof_template_by_id, proof_template_by_id_from_root, BuildVerificationReceipt,
+    ComposableRoutePlan, CompositionRouteClass, ConstraintApprovalReceipt, ConstraintShelfHistory,
+    ConstraintShelfHistoryEntry, ConstraintShelfMutationReceipt,
+    DesiredSurface, ExoskeletonTarget,
+    FailureClass, FailureReport, FailureReportEvidence, FamilyId,
     FamilyPrimitiveAdapter, FallbackBuildSpec, FallbackPlanReceipt,
     HelperRuntimeReceipt, HelperServiceSpec,
     OperatorBundleStatus, PatchLaneStatus, PatchReceipt, PlannerDispatchReceipt, PlannerHandoff,
     PlannerResponse, PrimitiveExecutionPlan, PrimitiveExecutionStep, PrimitiveProofHarnessReceipt,
-    PrimitiveProofEnrichmentBinding, PrimitiveProofFamilyRequestBinding, PrimitiveProofTemplate, CapabilityComparisonBundle, ProjectBrowserState, ProjectPatchDiagnosis, PatchIntentFreeze, ProjectSession, ProjectSpec, RuntimeConfig,
-    RuntimeModelCatalogReceipt, RuntimeSmokeReceipt, patch_primitive_classes_for_kinds,
+    PrimitiveProofEnrichmentBinding, PrimitiveProofFamilyRequestBinding, PrimitiveProofTemplate, CapabilityComparisonBundle, ConstraintReviewReceipt, ConstraintViolation, ImplementationConstraint, ProjectBrowserState, ProjectPatchDiagnosis, PatchIntentFreeze, PatchPlanReview, ProjectSession, ProjectSpec, ProposedConstraintReceipt, RuntimeConfig,
+    RequestMode, RequestPlan, RequestRecord, RuntimeModelCatalogReceipt, RuntimeSmokeReceipt,
+    patch_primitive_classes_for_kinds,
 };
 use chatty_factory_families::{
     apply_request_plan_enrichments, build_chattycog_native_window_module,
+    build_chattycog_chattyedu_native_window_module,
+    build_chattyedu_native_window_module,
     build_chattycog_webview_module, build_chattycog_workspace_module, build_python_cli_tool,
     patch_conflicting_anchor_markers, patch_expected_artifact_groups,
     patch_ownership_boundaries, patch_required_anchor_markers,
@@ -157,10 +167,20 @@ struct PatchGovernanceRefreshStatus {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ProjectHistoricalBlockerBundle {
+    pub replacement_patch_kinds: Vec<String>,
+    pub ready_replacement_patch_kinds: Vec<String>,
+    pub already_present_replacement_patch_kinds: Vec<String>,
+    pub bundle_status: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct ProjectPatchReadinessReceipt {
     pub receipt_id: String,
     pub project_name: String,
     pub family_id: Option<String>,
+    pub family_display_name: Option<String>,
+    pub family_ecosystem: Option<String>,
     pub tool_kind: Option<String>,
     pub request_summary: Option<String>,
     pub project_spec_path: String,
@@ -171,8 +191,10 @@ struct ProjectPatchReadinessReceipt {
     pub patch_surgical_maturity_counts: BTreeMap<String, usize>,
     pub blocked_lane_reasons: BTreeMap<String, String>,
     pub superseded_blocked_lane_replacements: BTreeMap<String, Vec<String>>,
+    pub decomposable_historical_blocker_bundles: BTreeMap<String, ProjectHistoricalBlockerBundle>,
     pub risky_blocked_lane_count: usize,
     pub historical_blocked_lane_count: usize,
+    pub decomposable_historical_blocker_count: usize,
     pub change_since_patchability_baseline_status: String,
     pub change_since_patchability_baseline_notes: Vec<String>,
     pub baseline_readiness_signature_hash: String,
@@ -267,8 +289,12 @@ struct BridgeGovernanceRefreshStatus {
 struct FamilyGovernanceReceipt {
     pub receipt_id: String,
     pub family_id: String,
+    pub family_display_name: String,
+    pub family_ecosystem: Option<String>,
     pub manifest_path: Option<String>,
     pub primary_substrate: String,
+    pub lifecycle_status: String,
+    pub lifecycle_notes: Vec<String>,
     pub supported_tool_kinds: Vec<String>,
     pub provided_build_primitive_classes: Vec<String>,
     pub primitive_adapter_ids: Vec<String>,
@@ -287,6 +313,213 @@ struct FamilyGovernanceRefreshStatus {
     pub refreshed_entries: usize,
     pub skipped_entries: usize,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct FamilyUsageEntry {
+    pub family_id: String,
+    pub family_display_name: String,
+    pub family_ecosystem: Option<String>,
+    pub project_count: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct FamilyUsageSummaryReceipt {
+    pub summary_id: String,
+    pub total_projects: usize,
+    pub ecosystem_project_counts: BTreeMap<String, usize>,
+    pub families: Vec<FamilyUsageEntry>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct StarterUsageEntry {
+    pub starter_id: String,
+    pub starter_label: String,
+    pub starter_lifecycle: String,
+    pub build_count: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct StarterUsageSummaryReceipt {
+    pub summary_id: String,
+    pub total_build_receipts: usize,
+    pub explicit_override_builds: usize,
+    pub auto_routed_builds: usize,
+    pub matched_recommendation_builds: usize,
+    pub overridden_recommendation_builds: usize,
+    pub starters: Vec<StarterUsageEntry>,
+    pub updated_at: String,
+}
+
+fn governance_family_display_name(family_id: &FamilyId) -> String {
+    match family_id {
+        FamilyId::ChattycogNativeWindowModule => "Chatty-Cog Rust Native Dashboard".into(),
+        FamilyId::ChattyeduNativeWindowModule => "Chatty-EDU Rust Native Dashboard".into(),
+        FamilyId::ChattycogChattyeduNativeWindowModule => {
+            "Chatty-Cog + Chatty-EDU Rust Native Dashboard".into()
+        }
+        FamilyId::ChattycogWebviewModule => "Chatty-Cog Webview Module".into(),
+        FamilyId::ChattycogWorkspaceModule => "Chatty-Cog Workspace Module".into(),
+        FamilyId::StaticWebDashboard => "Static Web Dashboard".into(),
+        FamilyId::RustCliTool => "Rust CLI Tool".into(),
+        FamilyId::PythonCliTool => "Python CLI Tool".into(),
+    }
+}
+
+fn governance_family_ecosystem(family_id: &FamilyId) -> Option<String> {
+    match family_id {
+        FamilyId::ChattycogNativeWindowModule
+        | FamilyId::ChattycogWebviewModule
+        | FamilyId::ChattycogWorkspaceModule => Some("Chatty-Cog".into()),
+        FamilyId::ChattyeduNativeWindowModule => Some("Chatty-EDU".into()),
+        FamilyId::ChattycogChattyeduNativeWindowModule => {
+            Some("Chatty-Cog + Chatty-EDU".into())
+        }
+        _ => None,
+    }
+}
+
+fn starter_id_for_family_id(family_id: &FamilyId) -> &'static str {
+    match family_id {
+        FamilyId::ChattycogNativeWindowModule => "chattycog_native_window_module",
+        FamilyId::ChattyeduNativeWindowModule => "chattyedu_native_window_module",
+        FamilyId::ChattycogChattyeduNativeWindowModule => {
+            "chattycog_chattyedu_native_window_module"
+        }
+        FamilyId::ChattycogWebviewModule => "chattycog_webview_module",
+        FamilyId::ChattycogWorkspaceModule => "chattycog_workspace_module",
+        FamilyId::StaticWebDashboard => "static_web_dashboard",
+        FamilyId::RustCliTool => "rust_cli_tool",
+        FamilyId::PythonCliTool => "python_cli_tool",
+    }
+}
+
+fn derive_family_usage_summary(output_root: &Path) -> Result<FamilyUsageSummaryReceipt> {
+    let projects = discover_projects(output_root, None)?;
+    let mut family_counts: BTreeMap<String, FamilyUsageEntry> = BTreeMap::new();
+    let mut ecosystem_project_counts: BTreeMap<String, usize> = BTreeMap::new();
+
+    for project in projects {
+        let Some(family_id) = project.family_id else {
+            continue;
+        };
+        let family_key = family_id.as_str().to_string();
+        let display_name = governance_family_display_name(&family_id);
+        let ecosystem = governance_family_ecosystem(&family_id);
+        let entry = family_counts
+            .entry(family_key.clone())
+            .or_insert_with(|| FamilyUsageEntry {
+                family_id: family_key.clone(),
+                family_display_name: display_name.clone(),
+                family_ecosystem: ecosystem.clone(),
+                project_count: 0,
+            });
+        entry.project_count += 1;
+        if let Some(ecosystem) = ecosystem {
+            *ecosystem_project_counts.entry(ecosystem).or_insert(0) += 1;
+        }
+    }
+
+    let total_projects = family_counts.values().map(|entry| entry.project_count).sum();
+    let mut families = family_counts.into_values().collect::<Vec<_>>();
+    families.sort_by(|left, right| {
+        right
+            .project_count
+            .cmp(&left.project_count)
+            .then_with(|| left.family_display_name.cmp(&right.family_display_name))
+    });
+
+    Ok(FamilyUsageSummaryReceipt {
+        summary_id: chatty_factory_core::timestamp_id("family-usage-summary"),
+        total_projects,
+        ecosystem_project_counts,
+        families,
+        updated_at: chatty_factory_core::timestamp_id("updated"),
+    })
+}
+
+fn derive_starter_usage_summary(runtime_root: &Path) -> Result<StarterUsageSummaryReceipt> {
+    let receipts_dir = runtime_root.join("build_receipts");
+    let Ok(entries) = fs::read_dir(receipts_dir) else {
+        return Ok(StarterUsageSummaryReceipt {
+            summary_id: chatty_factory_core::timestamp_id("starter-usage-summary"),
+            total_build_receipts: 0,
+            explicit_override_builds: 0,
+            auto_routed_builds: 0,
+            matched_recommendation_builds: 0,
+            overridden_recommendation_builds: 0,
+            starters: Vec::new(),
+            updated_at: chatty_factory_core::timestamp_id("updated"),
+        });
+    };
+
+    let mut starter_counts: BTreeMap<String, StarterUsageEntry> = BTreeMap::new();
+    let mut total_build_receipts = 0usize;
+    let mut explicit_override_builds = 0usize;
+    let mut auto_routed_builds = 0usize;
+    let mut matched_recommendation_builds = 0usize;
+    let mut overridden_recommendation_builds = 0usize;
+
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let contents = match fs::read_to_string(entry.path()) {
+            Ok(contents) => contents,
+            Err(_) => continue,
+        };
+        let receipt = match serde_json::from_str::<chatty_factory_core::BuildReceipt>(&contents) {
+            Ok(receipt) => receipt,
+            Err(_) => continue,
+        };
+        total_build_receipts += 1;
+        match receipt.starter_recommendation_comparison.as_deref() {
+            Some("matched_normal_routing") | Some("auto_followed_normal_routing") => {
+                matched_recommendation_builds += 1;
+            }
+            Some("overrode_normal_routing") => {
+                overridden_recommendation_builds += 1;
+            }
+            _ => {}
+        }
+        let starter_id = if let Some(starter_id) = receipt.starter_override_id {
+            explicit_override_builds += 1;
+            starter_id
+        } else {
+            auto_routed_builds += 1;
+            "auto".to_string()
+        };
+        let entry = starter_counts
+            .entry(starter_id.clone())
+            .or_insert_with(|| StarterUsageEntry {
+                starter_id: starter_id.clone(),
+                starter_label: build_starter_label(&starter_id).to_string(),
+                starter_lifecycle: build_starter_lifecycle(&starter_id).to_string(),
+                build_count: 0,
+            });
+        entry.build_count += 1;
+    }
+
+    let mut starters = starter_counts.into_values().collect::<Vec<_>>();
+    starters.sort_by(|left, right| {
+        right
+            .build_count
+            .cmp(&left.build_count)
+            .then_with(|| left.starter_label.cmp(&right.starter_label))
+    });
+
+    Ok(StarterUsageSummaryReceipt {
+        summary_id: chatty_factory_core::timestamp_id("starter-usage-summary"),
+        total_build_receipts,
+        explicit_override_builds,
+        auto_routed_builds,
+        matched_recommendation_builds,
+        overridden_recommendation_builds,
+        starters,
+        updated_at: chatty_factory_core::timestamp_id("updated"),
+    })
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -328,6 +561,15 @@ pub struct HostPlannerOptions {
     pub requested_port: Option<u16>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BuildStarterOverride {
+    family_id: FamilyId,
+    desired_surface: DesiredSurface,
+    exoskeleton_target: ExoskeletonTarget,
+    tool_kind: &'static str,
+    rationale: &'static str,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HostRuntimeRefreshResult {
     pub config: Option<RuntimeConfig>,
@@ -340,6 +582,11 @@ pub struct HostExecutionResult {
     pub kind: String,
     pub request_id: String,
     pub project_name: String,
+    pub starter_override_id: Option<String>,
+    pub starter_override_summary: Option<String>,
+    pub recommended_starter_id: Option<String>,
+    pub recommended_starter_summary: Option<String>,
+    pub starter_recommendation_comparison: Option<String>,
     pub family_id: Option<String>,
     pub tool_kind: Option<String>,
     pub patch_kind: Option<String>,
@@ -402,6 +649,14 @@ pub struct HostFallbackResult {
     pub build_spec_path: Option<String>,
     pub planner_handoff_path: Option<String>,
     pub stub_bundle_path: Option<String>,
+    pub build_failure_class: Option<String>,
+    pub build_failure_mode: Option<String>,
+    pub matched_approved_constraint_ids: Vec<String>,
+    pub matched_approved_constraint_summaries: Vec<String>,
+    pub build_verification_path: Option<String>,
+    pub proposed_constraint_path: Option<String>,
+    pub proposed_constraint_summary: Option<String>,
+    pub proposed_constraint_replacement_guidance: Option<String>,
     pub receipt_path: Option<String>,
 }
 
@@ -501,9 +756,39 @@ fn score_family_for_primitive_native_build(
     let filterish = lower.contains("filter") || lower.contains("filtered");
     let explicit_static_family = lower.contains("static web dashboard")
         || lower.contains("static dashboard");
-    let explicit_chattycog_family = lower.contains("chattycog")
-        || lower.contains("webview module")
-        || lower.contains("chattycog webview");
+    let explicit_chattycog_webview_family = lower.contains("webview module")
+        || lower.contains("chattycog webview")
+        || lower.contains("hosted webview");
+    let explicit_chattycog_workspace_family = lower.contains("workspace module")
+        || lower.contains("ui.json")
+        || lower.contains("notes module");
+    let explicit_chattycog_native_family = (lower.contains("chattycog")
+        || lower.contains("chatty-cog")
+        || lower.contains("native window")
+        || lower.contains("desktop module")
+        || lower.contains("rust dashboard"))
+        && !lower.contains("chattyedu")
+        && !lower.contains("chatty-edu")
+        && !explicit_chattycog_webview_family
+        && !explicit_chattycog_workspace_family;
+    let explicit_chattyedu_native_family = lower.contains("chattyedu")
+        || lower.contains("chatty-edu");
+    let explicit_dual_native_family = lower.contains("chattycog_chattyedu_native_window_module")
+        || ((lower.contains("chattycog") || lower.contains("chatty-cog"))
+            && (lower.contains("chattyedu") || lower.contains("chatty-edu"))
+            && contains_any(
+                &lower,
+                &[
+                    "both",
+                    "either",
+                    "dual host",
+                    "dual-host",
+                    "both hosts",
+                    "either host",
+                    "both exoskeletons",
+                    "either exoskeleton",
+                ],
+            ));
 
     let mut score = 0usize;
     score += matched_family_build * 4;
@@ -528,8 +813,28 @@ fn score_family_for_primitive_native_build(
     if explicit_static_family && matches!(family_id, FamilyId::StaticWebDashboard) {
         score += 100;
     }
-    if explicit_chattycog_family && matches!(family_id, FamilyId::ChattycogWebviewModule) {
+    if explicit_chattycog_webview_family && matches!(family_id, FamilyId::ChattycogWebviewModule) {
         score += 100;
+    }
+    if explicit_chattycog_workspace_family
+        && matches!(family_id, FamilyId::ChattycogWorkspaceModule)
+    {
+        score += 100;
+    }
+    if explicit_chattycog_native_family
+        && matches!(family_id, FamilyId::ChattycogNativeWindowModule)
+    {
+        score += 100;
+    }
+    if explicit_chattyedu_native_family
+        && matches!(family_id, FamilyId::ChattyeduNativeWindowModule)
+    {
+        score += 100;
+    }
+    if explicit_dual_native_family
+        && matches!(family_id, FamilyId::ChattycogChattyeduNativeWindowModule)
+    {
+        score += 120;
     }
     score += plan
         .inferred_family_candidates
@@ -564,8 +869,30 @@ fn score_family_for_primitive_native_build(
     if explicit_static_family && matches!(family_id, FamilyId::StaticWebDashboard) {
         reasons.push("request explicitly named static dashboard family".into());
     }
-    if explicit_chattycog_family && matches!(family_id, FamilyId::ChattycogWebviewModule) {
+    if explicit_chattycog_webview_family
+        && matches!(family_id, FamilyId::ChattycogWebviewModule)
+    {
         reasons.push("request explicitly named ChattyCog webview family".into());
+    }
+    if explicit_chattycog_workspace_family
+        && matches!(family_id, FamilyId::ChattycogWorkspaceModule)
+    {
+        reasons.push("request explicitly named ChattyCog workspace family".into());
+    }
+    if explicit_chattycog_native_family
+        && matches!(family_id, FamilyId::ChattycogNativeWindowModule)
+    {
+        reasons.push("request explicitly named or implied the primary ChattyCog native family".into());
+    }
+    if explicit_chattyedu_native_family
+        && matches!(family_id, FamilyId::ChattyeduNativeWindowModule)
+    {
+        reasons.push("request explicitly named or implied the primary Chatty-EDU native family".into());
+    }
+    if explicit_dual_native_family
+        && matches!(family_id, FamilyId::ChattycogChattyeduNativeWindowModule)
+    {
+        reasons.push("request explicitly named or implied the dual-host native family".into());
     }
     if reasons.is_empty() {
         reasons.push("family retained only by legacy route ranking".into());
@@ -1060,6 +1387,11 @@ impl HostBridge {
                 kind: "proof_template_run".into(),
                 request_id: paired_receipt.receipt_id.clone(),
                 project_name: format!("{left_project_name},{right_project_name}"),
+                starter_override_id: None,
+                starter_override_summary: None,
+                recommended_starter_id: None,
+                recommended_starter_summary: None,
+                starter_recommendation_comparison: None,
                 family_id: None,
                 tool_kind: Some(template_kind),
                 patch_kind: None,
@@ -1246,9 +1578,16 @@ impl HostBridge {
         fs::create_dir_all(&self.runtime_root)?;
         let _ = self.refresh_project_patch_readiness_registry()?;
         let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
+        let family_usage_summary_path =
+            refresh_family_usage_summary(&self.output_root, &self.runtime_root)?;
+        let starter_usage_summary_path = refresh_starter_usage_summary(&self.runtime_root)?;
         Ok(HostActionResult {
             summary: "Project browser refreshed".into(),
-            details: vec![format!("projects={}", browser_state.projects.len())],
+            details: vec![
+                format!("projects={}", browser_state.projects.len()),
+                format!("family_usage_summary={}", family_usage_summary_path.display()),
+                format!("starter_usage_summary={}", starter_usage_summary_path.display()),
+            ],
             browser_state: Some(browser_state),
             runtime_refresh: None,
             execution_result: None,
@@ -1312,6 +1651,161 @@ impl HostBridge {
         })
     }
 
+    pub fn reverify_build_project(&self, project_name: &str) -> Result<HostActionResult> {
+        let project_dir = self.output_root.join(project_name);
+        let spec = load_project_spec_with_contract_refresh(&project_dir)?;
+        let request = RequestRecord {
+            request_id: chatty_factory_core::timestamp_id("reverify-build"),
+            raw_request: format!("reverify deterministic build for project `{project_name}`"),
+            mode: Some(RequestMode::NewBuild),
+            active_project: Some(project_name.to_string()),
+            explicit_stack: None,
+            desired_surface: None,
+            requested_capabilities: spec.features.clone(),
+            exoskeleton_target: None,
+            candidate_family_ids: spec.family_id.clone().into_iter().collect(),
+            ambiguity_flags: Vec::new(),
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let plan = RequestPlan {
+            plan_id: chatty_factory_core::timestamp_id("reverify-plan"),
+            request_id: request.request_id.clone(),
+            mode: Some(RequestMode::NewBuild),
+            interpreted_goal: spec
+                .request_summary
+                .clone()
+                .unwrap_or_else(|| format!("Reverify generated build `{project_name}`")),
+            inferred_family_candidates: spec.family_id.clone().into_iter().collect(),
+            inferred_tool_kind: spec.tool_kind.clone(),
+            intended_patch_kind: None,
+            available_patch_kinds: spec.supported_patch_kinds.clone(),
+            planner_patch_recipe_ids: Vec::new(),
+            planner_operator_bundle_ids: Vec::new(),
+            planner_operator_ids: Vec::new(),
+            planner_acceptance_recipe_ids: Vec::new(),
+            execution_steps: vec![
+                "verify acceptance artifacts".into(),
+                "run execution safety".into(),
+            ],
+            constraints: vec![
+                "reverify existing generated project without mutating it".into(),
+            ],
+            rationale: vec![
+                "host-side build reverification requested for an existing generated project"
+                    .into(),
+            ],
+            planner_acceptance_checks: spec.acceptance_checks.clone(),
+            planner_required_markers: Vec::new(),
+            planner_acceptance_commands: spec.acceptance_commands.clone(),
+            planner_expected_outputs: spec.expected_files.clone(),
+            planner_suggested_patch_kinds: Vec::new(),
+            planner_suggested_features: spec.features.clone(),
+            confidence_score: 100,
+            confidence_band: "high".into(),
+            escalation_reasons: Vec::new(),
+            needs_llm_review: false,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("requests")
+                .join(format!("{}.json", request.request_id)),
+            &request,
+        )?;
+        persist_json_pretty(
+            &self
+                .runtime_root
+                .join("plans")
+                .join(format!("{}.json", plan.plan_id)),
+            &plan,
+        )?;
+
+        let artifacts = BuildArtifacts {
+            project_dir: project_dir.clone(),
+            emitted_files: spec.expected_files.iter().map(PathBuf::from).collect(),
+        };
+        if let Err(error) = verify_build_artifacts(&self.runtime_root, &request.request_id, &artifacts)
+        {
+            let _ = persist_post_build_failure_learning(
+                &self.runtime_root,
+                &request,
+                &plan,
+                project_name,
+                spec.family_id.clone(),
+                spec.tool_kind.as_deref(),
+                spec.family_id
+                    .as_ref()
+                    .map(FamilyId::as_str)
+                    .unwrap_or("deterministic_build"),
+                "acceptance_plan_failed_after_build",
+                "do not treat emitted build artifacts as shippable when acceptance verification fails",
+                &error.to_string(),
+            );
+            return emit_fallback_result(
+                &self.runtime_root,
+                &request,
+                &plan,
+                None,
+                "Deterministic build verification failed during reverify",
+            );
+        }
+        let execution_status = match run_execution_safety(
+            &self.runtime_root,
+            &request.request_id,
+            &self.output_root,
+            &project_dir,
+        ) {
+            Ok(status) => status,
+            Err(error) => {
+                let _ = persist_post_build_failure_learning(
+                    &self.runtime_root,
+                    &request,
+                    &plan,
+                    project_name,
+                    spec.family_id.clone(),
+                    spec.tool_kind.as_deref(),
+                    spec.family_id
+                        .as_ref()
+                        .map(FamilyId::as_str)
+                        .unwrap_or("deterministic_build"),
+                    "execution_smoke_failed_after_build",
+                    "do not ship a generated build when execution smoke fails after scaffold emission",
+                    &error.to_string(),
+                );
+                return emit_fallback_result(
+                    &self.runtime_root,
+                    &request,
+                    &plan,
+                    None,
+                    "Deterministic build execution smoke failed during reverify",
+                );
+            }
+        };
+
+        let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
+        Ok(HostActionResult {
+            summary: "Build reverify passed".into(),
+            details: vec![
+                format!("project={project_name}"),
+                format!(
+                    "family={}",
+                    spec.family_id
+                        .as_ref()
+                        .map(FamilyId::as_str)
+                        .unwrap_or("unknown_family")
+                ),
+                format!("execution_smoke={execution_status}"),
+            ],
+            browser_state: Some(browser_state),
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
     pub fn clear_selected_project(&self) -> Result<HostActionResult> {
         let session_path = self.runtime_root.join("selected_project_session.json");
         if session_path.exists() {
@@ -1322,6 +1816,352 @@ impl HostBridge {
             summary: "Selected project cleared".into(),
             details: Vec::new(),
             browser_state: Some(browser_state),
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn approve_proposed_constraint(&self, request_id_or_path: &str) -> Result<HostActionResult> {
+        let proposal_path =
+            resolve_proposed_constraint_path(&self.runtime_root, request_id_or_path)?;
+        let mut proposal: ProposedConstraintReceipt =
+            serde_json::from_str(&fs::read_to_string(&proposal_path)?)?;
+        proposal.status = "approved".into();
+        proposal.proposed_constraint.active = true;
+        persist_json_pretty(&proposal_path, &proposal)?;
+
+        let shelf_path = self.runtime_root.join("approved_constraint_shelf.json");
+        let mut shelf = load_approved_constraint_shelf(&shelf_path)?;
+        if let Some(existing) = shelf
+            .constraints
+            .iter_mut()
+            .find(|constraint| constraint.constraint_id == proposal.proposed_constraint.constraint_id)
+        {
+            *existing = proposal.proposed_constraint.clone();
+        } else {
+            shelf.constraints.push(proposal.proposed_constraint.clone());
+        }
+        shelf.updated_at = Some(chatty_factory_core::timestamp_id("updated"));
+        persist_json_pretty(&shelf_path, &shelf)?;
+
+        let approval = ConstraintApprovalReceipt {
+            approval_id: chatty_factory_core::timestamp_id("constraint-approval"),
+            request_id: proposal.request_id.clone(),
+            proposal_id: proposal.proposal_id.clone(),
+            approved_constraint_id: proposal.proposed_constraint.constraint_id.clone(),
+            status: "approved".into(),
+            shelf_path: shelf_path.display().to_string(),
+            proposal_path: proposal_path.display().to_string(),
+            rationale: proposal.rationale.clone(),
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let approval_path = self
+            .runtime_root
+            .join("constraint_approvals")
+            .join(format!("{}-constraint-approval.json", proposal.request_id));
+        persist_json_pretty(&approval_path, &approval)?;
+
+        Ok(HostActionResult {
+            summary: "Proposed constraint approved".into(),
+            details: vec![
+                format!("proposal={}", proposal_path.display()),
+                format!("approved_constraint={}", proposal.proposed_constraint.constraint_id),
+                format!("shelf={}", shelf_path.display()),
+                format!("approval_receipt={}", approval_path.display()),
+                format!("shelf_constraints={}", shelf.constraints.len()),
+            ],
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn set_approved_constraint_active(
+        &self,
+        constraint_id: &str,
+        active: bool,
+    ) -> Result<HostActionResult> {
+        let shelf_path = self.runtime_root.join("approved_constraint_shelf.json");
+        let mut shelf = load_approved_constraint_shelf(&shelf_path)?;
+        let Some(constraint) = shelf
+            .constraints
+            .iter_mut()
+            .find(|constraint| constraint.constraint_id == constraint_id)
+        else {
+            anyhow::bail!("approved constraint `{}` was not found in the shelf", constraint_id);
+        };
+        constraint.active = active;
+        shelf.updated_at = Some(chatty_factory_core::timestamp_id("updated"));
+        persist_json_pretty(&shelf_path, &shelf)?;
+
+        let action = if active { "activate" } else { "deactivate" };
+        let mutation = ConstraintShelfMutationReceipt {
+            mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
+            constraint_id: constraint_id.to_string(),
+            action: action.into(),
+            shelf_path: shelf_path.display().to_string(),
+            status: "applied".into(),
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let mutation_path = self
+            .runtime_root
+            .join("constraint_shelf_mutations")
+            .join(format!("{}-{}.json", action, sanitize_filename_like(constraint_id)));
+        persist_json_pretty(&mutation_path, &mutation)?;
+
+        Ok(HostActionResult {
+            summary: format!("Approved constraint {}d", action),
+            details: vec![
+                format!("constraint_id={constraint_id}"),
+                format!("active={}", active),
+                format!("shelf={}", shelf_path.display()),
+                format!("mutation_receipt={}", mutation_path.display()),
+            ],
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn archive_unmatched_inactive_constraints(&self) -> Result<HostActionResult> {
+        let shelf_path = self.runtime_root.join("approved_constraint_shelf.json");
+        let mut shelf = load_approved_constraint_shelf(&shelf_path)?;
+        let history_path = self.runtime_root.join("constraint_shelf_history.json");
+        let mut history = load_constraint_shelf_history(&history_path)?;
+        let match_counts = approved_constraint_match_counts_from_runtime(&self.runtime_root);
+        let archived_constraints = shelf
+            .constraints
+            .iter()
+            .filter(|constraint| {
+                !constraint.active
+                    && match_counts
+                        .get(&constraint.constraint_id)
+                        .copied()
+                        .unwrap_or_default()
+                        == 0
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if archived_constraints.is_empty() {
+            return Ok(HostActionResult {
+                summary: "No unmatched inactive constraints to archive".into(),
+                details: vec![format!("shelf={}", shelf_path.display())],
+                browser_state: None,
+                runtime_refresh: None,
+                execution_result: None,
+                fallback_result: None,
+                followup_route: None,
+                extension_registry: None,
+            });
+        }
+
+        let archived_constraint_ids = archived_constraints
+            .iter()
+            .map(|constraint| constraint.constraint_id.clone())
+            .collect::<Vec<_>>();
+        shelf.constraints.retain(|constraint| {
+            !archived_constraint_ids
+                .iter()
+                .any(|constraint_id| constraint_id == &constraint.constraint_id)
+        });
+        shelf.updated_at = Some(chatty_factory_core::timestamp_id("updated"));
+        persist_json_pretty(&shelf_path, &shelf)?;
+
+        for constraint in archived_constraints {
+            let archived_match_count = match_counts
+                .get(&constraint.constraint_id)
+                .copied()
+                .unwrap_or_default();
+            history.archived_constraints.push(ConstraintShelfHistoryEntry {
+                constraint,
+                archived_reason: "inactive_unmatched_bulk_archive".into(),
+                archived_from_shelf_id: Some(shelf.shelf_id.clone()),
+                archived_match_count,
+                archived_at: Some(chatty_factory_core::timestamp_id("archived")),
+            });
+        }
+        history.updated_at = Some(chatty_factory_core::timestamp_id("updated"));
+        persist_json_pretty(&history_path, &history)?;
+
+        let mutation_root = self.runtime_root.join("constraint_shelf_mutations");
+        for constraint_id in archived_constraint_ids.iter() {
+            let mutation = ConstraintShelfMutationReceipt {
+                mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
+                constraint_id: constraint_id.clone(),
+                action: "archive".into(),
+                shelf_path: shelf_path.display().to_string(),
+                status: "removed_from_shelf".into(),
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            };
+            let mutation_path = mutation_root.join(format!(
+                "archive-{}.json",
+                sanitize_filename_like(constraint_id)
+            ));
+            persist_json_pretty(&mutation_path, &mutation)?;
+        }
+
+        let mut details = vec![
+            format!("archived_constraints={}", archived_constraint_ids.len()),
+            format!("shelf={}", shelf_path.display()),
+            format!("history={}", history_path.display()),
+        ];
+        for constraint_id in archived_constraint_ids.iter().take(8) {
+            details.push(format!("archived_constraint_id={constraint_id}"));
+        }
+        Ok(HostActionResult {
+            summary: "Archived unmatched inactive constraints".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn deactivate_low_value_active_constraints(&self) -> Result<HostActionResult> {
+        let shelf_path = self.runtime_root.join("approved_constraint_shelf.json");
+        let mut shelf = load_approved_constraint_shelf(&shelf_path)?;
+        let match_counts = approved_constraint_match_counts_from_runtime(&self.runtime_root);
+        let deactivated_constraint_ids = shelf
+            .constraints
+            .iter()
+            .filter(|constraint| {
+                constraint.active
+                    && match_counts
+                        .get(&constraint.constraint_id)
+                        .copied()
+                        .unwrap_or_default()
+                        == 0
+            })
+            .map(|constraint| constraint.constraint_id.clone())
+            .collect::<Vec<_>>();
+        if deactivated_constraint_ids.is_empty() {
+            return Ok(HostActionResult {
+                summary: "No low-value active constraints to deactivate".into(),
+                details: vec![format!("shelf={}", shelf_path.display())],
+                browser_state: None,
+                runtime_refresh: None,
+                execution_result: None,
+                fallback_result: None,
+                followup_route: None,
+                extension_registry: None,
+            });
+        }
+
+        for constraint in shelf.constraints.iter_mut() {
+            if deactivated_constraint_ids
+                .iter()
+                .any(|constraint_id| constraint_id == &constraint.constraint_id)
+            {
+                constraint.active = false;
+            }
+        }
+        shelf.updated_at = Some(chatty_factory_core::timestamp_id("updated"));
+        persist_json_pretty(&shelf_path, &shelf)?;
+
+        let mutation_root = self.runtime_root.join("constraint_shelf_mutations");
+        for constraint_id in deactivated_constraint_ids.iter() {
+            let mutation = ConstraintShelfMutationReceipt {
+                mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
+                constraint_id: constraint_id.clone(),
+                action: "bulk_deactivate_low_value_active".into(),
+                shelf_path: shelf_path.display().to_string(),
+                status: "deactivated".into(),
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            };
+            let mutation_path = mutation_root.join(format!(
+                "bulk-deactivate-{}.json",
+                sanitize_filename_like(constraint_id)
+            ));
+            persist_json_pretty(&mutation_path, &mutation)?;
+        }
+
+        let mut details = vec![
+            format!("deactivated_constraints={}", deactivated_constraint_ids.len()),
+            format!("shelf={}", shelf_path.display()),
+        ];
+        for constraint_id in deactivated_constraint_ids.iter().take(8) {
+            details.push(format!("deactivated_constraint_id={constraint_id}"));
+        }
+        Ok(HostActionResult {
+            summary: "Deactivated low-value active constraints".into(),
+            details,
+            browser_state: None,
+            runtime_refresh: None,
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
+    pub fn restore_constraint_from_history(
+        &self,
+        constraint_id: &str,
+    ) -> Result<HostActionResult> {
+        let shelf_path = self.runtime_root.join("approved_constraint_shelf.json");
+        let history_path = self.runtime_root.join("constraint_shelf_history.json");
+        let mut shelf = load_approved_constraint_shelf(&shelf_path)?;
+        let mut history = load_constraint_shelf_history(&history_path)?;
+        let Some(entry_index) = history
+            .archived_constraints
+            .iter()
+            .position(|entry| entry.constraint.constraint_id == constraint_id)
+        else {
+            anyhow::bail!(
+                "archived approved constraint `{}` was not found in shelf history",
+                constraint_id
+            );
+        };
+        let entry = history.archived_constraints.remove(entry_index);
+        if let Some(existing) = shelf
+            .constraints
+            .iter_mut()
+            .find(|constraint| constraint.constraint_id == constraint_id)
+        {
+            *existing = entry.constraint.clone();
+        } else {
+            shelf.constraints.push(entry.constraint.clone());
+        }
+        shelf.updated_at = Some(chatty_factory_core::timestamp_id("updated"));
+        persist_json_pretty(&shelf_path, &shelf)?;
+        history.updated_at = Some(chatty_factory_core::timestamp_id("updated"));
+        persist_json_pretty(&history_path, &history)?;
+
+        let mutation = ConstraintShelfMutationReceipt {
+            mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
+            constraint_id: constraint_id.to_string(),
+            action: "restore".into(),
+            shelf_path: shelf_path.display().to_string(),
+            status: "restored_from_history".into(),
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let mutation_path = self
+            .runtime_root
+            .join("constraint_shelf_mutations")
+            .join(format!("restore-{}.json", sanitize_filename_like(constraint_id)));
+        persist_json_pretty(&mutation_path, &mutation)?;
+
+        Ok(HostActionResult {
+            summary: "Restored approved constraint from shelf history".into(),
+            details: vec![
+                format!("constraint_id={constraint_id}"),
+                format!("shelf={}", shelf_path.display()),
+                format!("history={}", history_path.display()),
+                format!("mutation_receipt={}", mutation_path.display()),
+            ],
+            browser_state: None,
             runtime_refresh: None,
             execution_result: None,
             fallback_result: None,
@@ -1366,6 +2206,11 @@ impl HostBridge {
                 kind: "helper_run".into(),
                 request_id,
                 project_name: project_name.to_string(),
+                starter_override_id: None,
+                starter_override_summary: None,
+                recommended_starter_id: None,
+                recommended_starter_summary: None,
+                starter_recommendation_comparison: None,
                 family_id: spec.family_id.clone().map(|id| id.as_str().to_string()),
                 tool_kind: spec.tool_kind.clone(),
                 patch_kind: None,
@@ -1462,6 +2307,11 @@ impl HostBridge {
                 kind: "helper_status".into(),
                 request_id: "helper-status".into(),
                 project_name: project_name.to_string(),
+                starter_override_id: None,
+                starter_override_summary: None,
+                recommended_starter_id: None,
+                recommended_starter_summary: None,
+                starter_recommendation_comparison: None,
                 family_id: spec.family_id.clone().map(|id| id.as_str().to_string()),
                 tool_kind: spec.tool_kind.clone(),
                 patch_kind: None,
@@ -1547,6 +2397,11 @@ impl HostBridge {
                 kind: "cross_family_helper_monitoring_compare".into(),
                 request_id: receipt.receipt_id.clone(),
                 project_name: format!("{left_project_name},{right_project_name}"),
+                starter_override_id: None,
+                starter_override_summary: None,
+                recommended_starter_id: None,
+                recommended_starter_summary: None,
+                starter_recommendation_comparison: None,
                 family_id: None,
                 tool_kind: Some("dashboard".into()),
                 patch_kind: None,
@@ -2267,6 +3122,9 @@ impl HostBridge {
         let refresh_status_path =
             persist_project_patch_readiness_refresh_status(&self.runtime_root, &refresh_status)?;
         let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
+        let family_usage_summary_path =
+            refresh_family_usage_summary(&self.output_root, &self.runtime_root)?;
+        let starter_usage_summary_path = refresh_starter_usage_summary(&self.runtime_root)?;
         let blocker_project_counts =
             count_projects_with_risky_or_historical_blockers(&self.runtime_root);
         details.push(format!("refreshed_entries={refreshed}"));
@@ -2277,6 +3135,14 @@ impl HostBridge {
             blocker_project_counts.1
         ));
         details.push(format!("refresh_status={}", refresh_status_path.display()));
+        details.push(format!(
+            "family_usage_summary={}",
+            family_usage_summary_path.display()
+        ));
+        details.push(format!(
+            "starter_usage_summary={}",
+            starter_usage_summary_path.display()
+        ));
         Ok(HostActionResult {
             summary: "Project patch readiness refreshed".into(),
             details,
@@ -2451,9 +3317,18 @@ impl HostBridge {
         };
         let refresh_status_path =
             persist_family_governance_refresh_status(&self.runtime_root, &refresh_status)?;
+        let usage_summary = derive_family_usage_summary(&self.output_root)?;
+        let usage_summary_path = persist_family_usage_summary(&self.runtime_root, &usage_summary)?;
+        let starter_usage_summary_path = refresh_starter_usage_summary(&self.runtime_root)?;
         details.push(format!("refreshed_entries={refreshed}"));
         details.push(format!("skipped_entries={skipped}"));
         details.push(format!("refresh_status={}", refresh_status_path.display()));
+        details.push(format!("family_usage_summary={}", usage_summary_path.display()));
+        details.push(format!(
+            "starter_usage_summary={}",
+            starter_usage_summary_path.display()
+        ));
+        details.push(format!("family_usage_projects={}", usage_summary.total_projects));
         Ok(HostActionResult {
             summary: "Family governance registry refreshed".into(),
             details,
@@ -4072,6 +4947,30 @@ impl HostBridge {
         Ok(result)
     }
 
+    pub fn build_request_with_starter_override(
+        &self,
+        raw_request: &str,
+        starter_override_id: Option<&str>,
+        planner: &HostPlannerOptions,
+    ) -> Result<HostActionResult> {
+        let starter_override = match starter_override_id {
+            Some(value) => Some(resolve_build_starter_override(value).ok_or_else(|| {
+                let known = build_starter_choices()
+                    .iter()
+                    .map(|choice| choice.id)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                anyhow::anyhow!(
+                    "unknown build starter '{}'; known starters: {}",
+                    value,
+                    known
+                )
+            })?),
+            None => None,
+        };
+        self.build_request_inner(raw_request, starter_override, planner)
+    }
+
     pub fn resolve_followup_route(
         &self,
         raw_request: &str,
@@ -4267,13 +5166,36 @@ impl HostBridge {
         }
     }
 
-    pub fn build_request(
+    pub fn build_request(&self, raw_request: &str, planner: &HostPlannerOptions) -> Result<HostActionResult> {
+        self.build_request_inner(raw_request, None, planner)
+    }
+
+    fn build_request_inner(
         &self,
         raw_request: &str,
+        starter_override: Option<BuildStarterOverride>,
         planner: &HostPlannerOptions,
     ) -> Result<HostActionResult> {
         let control = ControlPlane::milestone_one();
-        let request = normalize_request(raw_request);
+        let mut request = normalize_request(raw_request);
+        let recommendation_request = request.clone();
+        let mut recommended_plan = derive_request_plan(&recommendation_request, None);
+        apply_adapter_aware_family_preference_for_build(&recommendation_request, &mut recommended_plan);
+        let recommended_starter_id = recommended_plan
+            .inferred_family_candidates
+            .first()
+            .map(starter_id_for_family_id)
+            .map(str::to_string);
+        let recommended_starter_summary = recommended_starter_id.as_ref().map(|starter_id| {
+            format!(
+                "normal routing would choose: {} [{}]",
+                build_starter_label(starter_id),
+                starter_id
+            )
+        });
+        if let Some(starter_override) = starter_override.as_ref() {
+            apply_build_starter_override(&mut request, starter_override.clone());
+        }
         persist_json_pretty(
             &self
                 .runtime_root
@@ -4283,6 +5205,9 @@ impl HostBridge {
         )?;
 
         let mut plan = derive_request_plan(&request, None);
+        if let Some(starter_override) = starter_override.as_ref() {
+            apply_build_starter_override_to_plan(&mut plan, starter_override.clone());
+        }
         if plan.needs_llm_review {
             self.maybe_run_auto_planner(&request, &mut plan, None, planner)?;
         }
@@ -4395,6 +5320,12 @@ impl HostBridge {
             Some(FamilyId::ChattycogNativeWindowModule) => {
                 build_chattycog_native_window_module(&self.output_root, &inputs)?
             }
+            Some(FamilyId::ChattyeduNativeWindowModule) => {
+                build_chattyedu_native_window_module(&self.output_root, &inputs)?
+            }
+            Some(FamilyId::ChattycogChattyeduNativeWindowModule) => {
+                build_chattycog_chattyedu_native_window_module(&self.output_root, &inputs)?
+            }
             Some(FamilyId::ChattycogWorkspaceModule) => {
                 build_chattycog_workspace_module(&self.output_root, &inputs)?
             }
@@ -4447,12 +5378,42 @@ impl HostBridge {
         composition_notes.extend(composition_review_notes);
 
         apply_request_plan_enrichments(&artifacts.project_dir, &plan)?;
-        let execution_status = run_execution_safety(
+        let execution_status = match run_execution_safety(
             &self.runtime_root,
             &request.request_id,
             &self.output_root,
             &artifacts.project_dir,
-        )?;
+        ) {
+            Ok(status) => status,
+            Err(error) => {
+                let refreshed_spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(
+                    artifacts.project_dir.join("ProjectSpec.json"),
+                )?)?;
+                let _ = persist_post_build_failure_learning(
+                    &self.runtime_root,
+                    &request,
+                    &plan,
+                    &inputs.project_name,
+                    refreshed_spec.family_id.clone(),
+                    refreshed_spec.tool_kind.as_deref(),
+                    route
+                        .selected_family_id
+                        .as_ref()
+                        .map(FamilyId::as_str)
+                        .unwrap_or("deterministic_build"),
+                    "execution_smoke_failed_after_build",
+                    "do not ship a generated build when execution smoke fails after scaffold emission",
+                    &error.to_string(),
+                );
+                return emit_fallback_result(
+                    &self.runtime_root,
+                    &request,
+                    &plan,
+                    None,
+                    "Deterministic build execution smoke failed after scaffold emission",
+                );
+            }
+        };
         persist_project_grounding(
             &self.runtime_root,
             &request.request_id,
@@ -4503,8 +5464,62 @@ impl HostBridge {
             &selected_composition_patch_kinds,
         );
         persist_composable_route_plan(&self.runtime_root, &composable_route_plan)?;
-        verify_build_artifacts(&self.runtime_root, &request.request_id, &artifacts)?;
-        let receipt = build_receipt(&request.request_id, &inputs, &artifacts);
+        if let Err(error) =
+            verify_build_artifacts(&self.runtime_root, &request.request_id, &artifacts)
+        {
+            let refreshed_spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(
+                artifacts.project_dir.join("ProjectSpec.json"),
+            )?)?;
+            let _ = persist_post_build_failure_learning(
+                &self.runtime_root,
+                &request,
+                &plan,
+                &inputs.project_name,
+                refreshed_spec.family_id.clone(),
+                refreshed_spec.tool_kind.as_deref(),
+                route
+                    .selected_family_id
+                    .as_ref()
+                    .map(FamilyId::as_str)
+                    .unwrap_or("deterministic_build"),
+                "acceptance_plan_failed_after_build",
+                "do not treat emitted build artifacts as shippable when acceptance verification fails",
+                &error.to_string(),
+            );
+            return emit_fallback_result(
+                &self.runtime_root,
+                &request,
+                &plan,
+                None,
+                "Deterministic build verification failed after scaffold emission",
+            );
+        }
+        let starter_override_summary = starter_override
+            .as_ref()
+            .map(build_starter_override_summary);
+        let starter_recommendation_comparison = match (
+            starter_override.as_ref().map(|value| value.family_id.as_str()),
+            recommended_starter_id.as_deref(),
+        ) {
+            (Some(selected), Some(recommended)) if selected == recommended => {
+                Some("matched_normal_routing".to_string())
+            }
+            (Some(_), Some(_)) => Some("overrode_normal_routing".to_string()),
+            (None, Some(_)) => Some("auto_followed_normal_routing".to_string()),
+            _ => None,
+        };
+        let receipt = build_receipt(
+            &request.request_id,
+            &inputs,
+            &artifacts,
+            starter_override
+                .as_ref()
+                .map(|value| value.family_id.as_str().to_string()),
+            starter_override_summary.clone(),
+            recommended_starter_id.clone(),
+            recommended_starter_summary.clone(),
+            starter_recommendation_comparison.clone(),
+        );
         persist_json_pretty(
             &self
                 .runtime_root
@@ -4533,27 +5548,51 @@ impl HostBridge {
             &receipt.project_name,
         );
         let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
+        let family_usage_summary_path =
+            refresh_family_usage_summary(&self.output_root, &self.runtime_root)?;
+        let starter_usage_summary_path = refresh_starter_usage_summary(&self.runtime_root)?;
         let acceptance_status = load_acceptance_status(&self.runtime_root, &request.request_id);
         let family = receipt.family_id.as_ref().map(FamilyId::as_str).unwrap_or("unknown_family");
         Ok(HostActionResult {
             summary: "Build request finished".into(),
-            details: vec![
-                format!("project={}", receipt.project_name),
-                format!("family={family}"),
-                format!(
-                    "composition_route_class={}",
-                    composition_route_class_label(&composition_route_class)
-                ),
-                format!("plan_confidence={} ({})", plan.confidence_score, plan.confidence_band),
-                format!("execution_smoke={execution_status}"),
-                format!("files={}", receipt.emitted_files.len()),
-            ],
+            details: {
+                let mut details = vec![
+                    format!("project={}", receipt.project_name),
+                    format!("family={family}"),
+                    format!(
+                        "composition_route_class={}",
+                        composition_route_class_label(&composition_route_class)
+                    ),
+                    format!("plan_confidence={} ({})", plan.confidence_score, plan.confidence_band),
+                    format!("execution_smoke={execution_status}"),
+                    format!("files={}", receipt.emitted_files.len()),
+                    format!("family_usage_summary={}", family_usage_summary_path.display()),
+                    format!("starter_usage_summary={}", starter_usage_summary_path.display()),
+                ];
+                if let Some(summary) = &starter_override_summary {
+                    details.push(format!("starter_override={summary}"));
+                }
+                if let Some(summary) = &recommended_starter_summary {
+                    details.push(format!("starter_recommendation={summary}"));
+                }
+                if let Some(comparison) = &starter_recommendation_comparison {
+                    details.push(format!("starter_recommendation_comparison={comparison}"));
+                }
+                details
+            },
             browser_state: Some(browser_state),
             runtime_refresh: None,
             execution_result: Some(HostExecutionResult {
                 kind: "build".into(),
                 request_id: receipt.request_id,
                 project_name: receipt.project_name,
+                starter_override_id: starter_override
+                    .as_ref()
+                    .map(|value| value.family_id.as_str().to_string()),
+                starter_override_summary: starter_override_summary.clone(),
+                recommended_starter_id: recommended_starter_id.clone(),
+                recommended_starter_summary: recommended_starter_summary.clone(),
+                starter_recommendation_comparison: starter_recommendation_comparison.clone(),
                 family_id: receipt.family_id.map(|id| id.as_str().to_string()),
                 tool_kind: receipt.tool_kind,
                 patch_kind: None,
@@ -4569,6 +5608,17 @@ impl HostBridge {
                 route_notes: {
                     let mut notes = route.decision_reasons;
                     notes.extend(composition_notes);
+                    if let Some(summary) = &starter_override_summary {
+                        notes.push(summary.clone());
+                    }
+                    if let Some(summary) = &recommended_starter_summary {
+                        notes.push(summary.clone());
+                    }
+                    if let Some(comparison) = &starter_recommendation_comparison {
+                        notes.push(format!(
+                            "starter recommendation comparison: {comparison}"
+                        ));
+                    }
                     notes.push(format!(
                         "primitive execution plan persisted: {}",
                         primitive_execution_plan_path.display()
@@ -4658,13 +5708,68 @@ impl HostBridge {
 
         let patch_diagnosis = derive_project_patch_diagnosis(&request, &plan, &project_dir, &spec)?;
         let patch_diagnosis_path = persist_project_patch_diagnosis(&self.runtime_root, &patch_diagnosis)?;
-        let patch_intent_freeze = derive_patch_intent_freeze(&request, &plan, &spec, &patch_diagnosis);
+        let patch_intent_freeze =
+            derive_patch_intent_freeze(&request, &plan, &spec, &patch_diagnosis);
+        let (patch_plan_review, reviewed_patch_intent_freeze) = review_patch_intent_freeze(
+            &project_dir,
+            &spec,
+            &patch_diagnosis,
+            &patch_intent_freeze,
+        );
+        let patch_plan_review_path =
+            persist_patch_plan_review(&self.runtime_root, &patch_plan_review)?;
+        let patch_constraint_review = review_patch_implementation_constraints(
+            &project_dir,
+            &spec,
+            &reviewed_patch_intent_freeze,
+            &patch_plan_review,
+        );
+        let patch_constraint_review_path =
+            persist_constraint_review_receipt(&self.runtime_root, &patch_constraint_review)?;
         let patch_intent_freeze_path =
-            persist_patch_intent_freeze(&self.runtime_root, &patch_intent_freeze)?;
+            persist_patch_intent_freeze(&self.runtime_root, &reviewed_patch_intent_freeze)?;
+        if let Some(reason) = constraint_review_block_reason(&patch_constraint_review) {
+            return emit_patch_freeze_skip_result(
+                &self.runtime_root,
+                &self.output_root,
+                &request,
+                &plan,
+                &spec,
+                &reviewed_patch_intent_freeze,
+                &patch_diagnosis_path,
+                &patch_plan_review_path,
+                &patch_constraint_review,
+                &patch_constraint_review_path,
+                &patch_intent_freeze_path,
+                &reason,
+            );
+        }
+        if patch_plan_review.reviewed_replacement_bundle_status.as_deref() == Some("already_present")
+        {
+            let bundle = patch_plan_review.recommended_replacement_patch_kinds.join(", ");
+            let reason = format!(
+                "modern replacement bundle `{bundle}` already has all provided features present; self-review blocked duplicate historical patch execution"
+            );
+            return emit_patch_freeze_skip_result(
+                &self.runtime_root,
+                &self.output_root,
+                &request,
+                &plan,
+                &spec,
+                &reviewed_patch_intent_freeze,
+                &patch_diagnosis_path,
+                &patch_plan_review_path,
+                &patch_constraint_review,
+                &patch_constraint_review_path,
+                &patch_intent_freeze_path,
+                &reason,
+            );
+        }
         if let Some(reason) = patch_intent_freeze_preflight(
             &project_dir,
             &spec,
-            &patch_intent_freeze,
+            &reviewed_patch_intent_freeze,
+            &patch_plan_review,
             raw_request,
         ) {
             return emit_patch_freeze_skip_result(
@@ -4673,15 +5778,34 @@ impl HostBridge {
                 &request,
                 &plan,
                 &spec,
-                &patch_intent_freeze,
+                &reviewed_patch_intent_freeze,
                 &patch_diagnosis_path,
+                &patch_plan_review_path,
+                &patch_constraint_review,
+                &patch_constraint_review_path,
                 &patch_intent_freeze_path,
                 &reason,
             );
         }
-        let mut composition_patch_kinds = derive_bounded_patch_composition_patch_kinds(&request, &spec);
-        let prefer_composed_patch =
-            request_prefers_bounded_patch_composition(&request, &composition_patch_kinds);
+        let mut composition_patch_kinds =
+            if patch_plan_review.reviewed_replacement_bundle_status.as_deref()
+                == Some("ready_for_composition")
+            {
+                patch_plan_review
+                    .reviewed_replacement_bundle_patch_kinds
+                    .clone()
+            } else {
+                derive_bounded_patch_composition_patch_kinds(&request, &spec)
+            };
+        let prefer_composed_patch = if patch_plan_review
+            .reviewed_replacement_bundle_status
+            .as_deref()
+            == Some("ready_for_composition")
+        {
+            true
+        } else {
+            request_prefers_bounded_patch_composition(&request, &composition_patch_kinds)
+        };
         let patch_out = if prefer_composed_patch {
             None
         } else {
@@ -4692,7 +5816,7 @@ impl HostBridge {
             raw_request,
             &spec,
             &plan.planner_patch_recipe_ids,
-            plan.intended_patch_kind.as_deref(),
+            reviewed_patch_intent_freeze.intended_patch_kind.as_deref(),
         )?
         };
         if patch_out.is_some() {
@@ -4705,6 +5829,22 @@ impl HostBridge {
         );
         let mut composition_review_notes = Vec::new();
         let mut composition_review_receipt_path = None;
+        if patch_plan_review.reviewed_replacement_bundle_status.as_deref()
+            == Some("ready_for_composition")
+        {
+            composition_review_notes.push(format!(
+                "self-review redirected historical patch intent into modern replacement bundle: {}",
+                patch_plan_review.recommended_replacement_patch_kinds.join(", ")
+            ));
+            if !patch_plan_review.reviewed_replacement_bundle_patch_kinds.is_empty() {
+                composition_review_notes.push(format!(
+                    "self-review selected still-needed modern lanes for composition execution: {}",
+                    patch_plan_review
+                        .reviewed_replacement_bundle_patch_kinds
+                        .join(", ")
+                ));
+            }
+        }
         if patch_out.is_none() && !composition_patch_kinds.is_empty() {
             let review = self.review_bounded_composition_candidates(
                 &request,
@@ -4960,6 +6100,14 @@ impl HostBridge {
                     patch_diagnosis_postcheck_path.display()
                 ),
                 format!(
+                    "patch_plan_review={}",
+                    patch_plan_review_path.display()
+                ),
+                format!(
+                    "patch_constraint_review={}",
+                    patch_constraint_review_path.display()
+                ),
+                format!(
                     "patch_intent_freeze={}",
                     patch_intent_freeze_path.display()
                 ),
@@ -4972,6 +6120,11 @@ impl HostBridge {
                 kind: "patch".into(),
                 request_id: receipt.request_id,
                 project_name: receipt.project_name,
+                starter_override_id: None,
+                starter_override_summary: None,
+                recommended_starter_id: None,
+                recommended_starter_summary: None,
+                starter_recommendation_comparison: None,
                 family_id: receipt.family_id.map(|id| id.as_str().to_string()),
                 tool_kind: spec.tool_kind,
                 patch_kind: Some(receipt.patch_kind),
@@ -4992,6 +6145,8 @@ impl HostBridge {
                         .collect::<Vec<_>>();
                     files.push(patch_diagnosis_path.display().to_string());
                     files.push(patch_diagnosis_postcheck_path.display().to_string());
+                    files.push(patch_plan_review_path.display().to_string());
+                    files.push(patch_constraint_review_path.display().to_string());
                     files.push(patch_intent_freeze_path.display().to_string());
                     files.push(primitive_execution_plan_path.display().to_string());
                     files
@@ -4999,6 +6154,8 @@ impl HostBridge {
                     let mut files = receipt.modified_files.clone();
                     files.push(patch_diagnosis_path.display().to_string());
                     files.push(patch_diagnosis_postcheck_path.display().to_string());
+                    files.push(patch_plan_review_path.display().to_string());
+                    files.push(patch_constraint_review_path.display().to_string());
                     files.push(patch_intent_freeze_path.display().to_string());
                     files
                 },
@@ -7521,6 +8678,562 @@ fn derive_patch_intent_freeze(
     }
 }
 
+fn review_patch_intent_freeze(
+    project_dir: &Path,
+    _spec: &ProjectSpec,
+    diagnosis: &ProjectPatchDiagnosis,
+    freeze: &PatchIntentFreeze,
+) -> (PatchPlanReview, PatchIntentFreeze) {
+    let mut reviewed_freeze = freeze.clone();
+    let mut findings = Vec::new();
+    let mut blocked_reasons = Vec::new();
+    let mut promoted_candidate_patch_kinds = Vec::new();
+    let mut reviewed_replacement_bundle_patch_kinds = Vec::new();
+    let mut reviewed_replacement_bundle_status = None;
+
+    let original_target_files = freeze.diagnosed_target_files.clone();
+    let original_insertion_points = freeze.diagnosed_insertion_points.clone();
+
+    if !freeze.superseded_by_patch_kinds.is_empty() {
+        for replacement in &freeze.superseded_by_patch_kinds {
+            if !reviewed_freeze
+                .candidate_patch_kinds
+                .iter()
+                .any(|kind| kind == replacement)
+            {
+                reviewed_freeze
+                    .candidate_patch_kinds
+                    .push(replacement.clone());
+                promoted_candidate_patch_kinds.push(replacement.clone());
+            }
+        }
+        if !promoted_candidate_patch_kinds.is_empty() {
+            findings.push(format!(
+                "self-review promoted modern replacement candidates into the frozen patch set: {}",
+                promoted_candidate_patch_kinds.join(", ")
+            ));
+        }
+    }
+
+    if let Some(replacement_patch_kind) =
+        redirect_replacement_patch_kind(project_dir, _spec, freeze)
+    {
+        if reviewed_freeze
+            .intended_patch_kind
+            .as_deref()
+            != Some(replacement_patch_kind.as_str())
+        {
+            findings.push(format!(
+                "self-review redirected the surgical plan from `{}` to modern replacement `{}`",
+                freeze
+                    .intended_patch_kind
+                    .as_deref()
+                    .unwrap_or("unknown_patch"),
+                replacement_patch_kind
+            ));
+            retarget_reviewed_freeze_to_patch_kind(
+                project_dir,
+                _spec,
+                diagnosis,
+                &mut reviewed_freeze,
+                &replacement_patch_kind,
+            );
+        }
+    }
+
+    if let Some((selected_bundle_patch_kinds, bundle_status)) =
+        reviewed_replacement_patch_bundle(project_dir, _spec, freeze)
+    {
+        let full_bundle = freeze.superseded_by_patch_kinds.join(", ");
+        reviewed_replacement_bundle_patch_kinds = selected_bundle_patch_kinds;
+        reviewed_replacement_bundle_status = Some(bundle_status.clone());
+        match bundle_status.as_str() {
+            "already_present" => findings.push(format!(
+                "self-review confirmed the historical patch intent is already covered by the modern replacement bundle: {full_bundle}"
+            )),
+            "ready_for_composition" => findings.push(format!(
+                "self-review redirected the historical patch intent into a modern replacement bundle: {full_bundle}"
+            )),
+            _ => {}
+        }
+    }
+
+    if !freeze.declared_surface_groups.is_empty() {
+        let narrowed_target_files =
+            reviewed_target_files_for_declared_surface_groups(diagnosis, &freeze.declared_surface_groups);
+        if !narrowed_target_files.is_empty() && narrowed_target_files != reviewed_freeze.diagnosed_target_files
+        {
+            let dropped_target_files = reviewed_freeze
+                .diagnosed_target_files
+                .iter()
+                .filter(|path| !narrowed_target_files.iter().any(|kept| kept == *path))
+                .cloned()
+                .collect::<Vec<_>>();
+            reviewed_freeze.diagnosed_target_files = narrowed_target_files.clone();
+            reviewed_freeze.diagnosed_insertion_points =
+                reviewed_insertion_points_for_target_files(&reviewed_freeze.diagnosed_insertion_points, &narrowed_target_files);
+            findings.push(format!(
+                "self-review narrowed the surgical file set to the declared patch surface groups: {}",
+                freeze.declared_surface_groups.join(", ")
+            ));
+            if !dropped_target_files.is_empty() {
+                findings.push(format!(
+                    "self-review removed out-of-surface target files from the patch plan: {}",
+                    dropped_target_files.join(", ")
+                ));
+            }
+        }
+    }
+
+    if reviewed_freeze.diagnosed_target_files.is_empty() {
+        blocked_reasons.push(
+            "self-review eliminated every candidate target file while narrowing the plan to the declared patch surface contract"
+                .into(),
+        );
+    }
+
+    if !freeze.declared_surface_groups.is_empty() && reviewed_freeze.confirmed_surface_groups.is_empty() {
+        blocked_reasons.push(
+            "self-review could not confirm any declared patch surface groups, so the plan should not proceed unchanged"
+                .into(),
+        );
+    }
+
+    let decision = if !blocked_reasons.is_empty() {
+        "blocked_pending_replan"
+    } else if promoted_candidate_patch_kinds.is_empty()
+        && reviewed_replacement_bundle_patch_kinds.is_empty()
+        && reviewed_freeze.diagnosed_target_files == original_target_files
+        && reviewed_freeze.diagnosed_insertion_points == original_insertion_points
+    {
+        "proceed_with_original_plan"
+    } else {
+        "proceed_with_refined_plan"
+    };
+
+    reviewed_freeze.freeze_notes.push(format!(
+        "self-review decision: {decision}"
+    ));
+    for finding in &findings {
+        reviewed_freeze
+            .freeze_notes
+            .push(format!("self-review finding: {finding}"));
+    }
+    for reason in &blocked_reasons {
+        reviewed_freeze
+            .freeze_notes
+            .push(format!("self-review blocked reason: {reason}"));
+    }
+
+    let review = PatchPlanReview {
+        review_id: chatty_factory_core::timestamp_id("patch-plan-review"),
+        request_id: freeze.request_id.clone(),
+        project_name: freeze.project_name.clone(),
+        diagnosis_id: diagnosis.diagnosis_id.clone(),
+        freeze_id: freeze.freeze_id.clone(),
+        original_intended_patch_kind: freeze.intended_patch_kind.clone(),
+        reviewed_intended_patch_kind: reviewed_freeze.intended_patch_kind.clone(),
+        decision: decision.into(),
+        promoted_candidate_patch_kinds,
+        original_target_files,
+        reviewed_target_files: reviewed_freeze.diagnosed_target_files.clone(),
+        dropped_target_files: freeze
+            .diagnosed_target_files
+            .iter()
+            .filter(|path| !reviewed_freeze.diagnosed_target_files.iter().any(|kept| kept == *path))
+            .cloned()
+            .collect(),
+        original_insertion_points,
+        reviewed_insertion_points: reviewed_freeze.diagnosed_insertion_points.clone(),
+        recommended_replacement_patch_kinds: freeze.superseded_by_patch_kinds.clone(),
+        reviewed_replacement_bundle_patch_kinds,
+        reviewed_replacement_bundle_status,
+        findings,
+        blocked_reasons,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+
+    (review, reviewed_freeze)
+}
+
+fn derive_patch_implementation_constraints(
+    project_dir: &Path,
+    spec: &ProjectSpec,
+    freeze: &PatchIntentFreeze,
+) -> Vec<ImplementationConstraint> {
+    let mut constraints = Vec::new();
+    let Some(patch_kind) = freeze.intended_patch_kind.as_deref() else {
+        return constraints;
+    };
+    let missing_required_markers =
+        missing_required_anchor_markers(project_dir, &freeze.required_anchor_markers);
+    let constraint_origin = freeze
+        .structural_guard_source
+        .clone()
+        .unwrap_or_else(|| "patch_structural_guard".into());
+
+    if !freeze.present_conflicting_anchor_markers.is_empty() {
+        constraints.push(ImplementationConstraint {
+            constraint_id: chatty_factory_core::timestamp_id("implementation-constraint"),
+            constraint_scope: "family".into(),
+            constraint_origin: constraint_origin.clone(),
+            family_id: spec.family_id.clone(),
+            tool_kind: spec.tool_kind.clone(),
+            language_id: Some(spec.substrate.clone()),
+            constraint_kind: "stale_structural_shape".into(),
+            forbidden_method_summary: format!(
+                "do not execute patch lane `{patch_kind}` through its stale legacy structural shape"
+            ),
+            forbidden_markers: freeze.present_conflicting_anchor_markers.clone(),
+            required_markers: freeze.required_anchor_markers.clone(),
+            forbidden_surface_groups: freeze.declared_surface_groups.clone(),
+            violation_reason_template: format!(
+                "patch lane `{patch_kind}` conflicts with evolved structural markers and should not run through its legacy method shape"
+            ),
+            replacement_guidance: freeze.replacement_guidance_summary.clone(),
+            severity: "block".into(),
+            active: true,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        });
+    }
+
+    if !missing_required_markers.is_empty() {
+        constraints.push(ImplementationConstraint {
+            constraint_id: chatty_factory_core::timestamp_id("implementation-constraint"),
+            constraint_scope: "family".into(),
+            constraint_origin,
+            family_id: spec.family_id.clone(),
+            tool_kind: spec.tool_kind.clone(),
+            language_id: Some(spec.substrate.clone()),
+            constraint_kind: "missing_required_legacy_anchor".into(),
+            forbidden_method_summary: format!(
+                "do not execute patch lane `{patch_kind}` when its required legacy anchors are missing"
+            ),
+            forbidden_markers: Vec::new(),
+            required_markers: freeze.required_anchor_markers.clone(),
+            forbidden_surface_groups: freeze.declared_surface_groups.clone(),
+            violation_reason_template: format!(
+                "patch lane `{patch_kind}` requires legacy anchors that are missing in the current project shape"
+            ),
+            replacement_guidance: freeze.replacement_guidance_summary.clone(),
+            severity: "block".into(),
+            active: true,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        });
+    }
+
+    constraints
+}
+
+fn missing_required_anchor_markers(project_dir: &Path, required_markers: &[String]) -> Vec<String> {
+    if required_markers.is_empty() {
+        return Vec::new();
+    }
+    let present = present_anchor_markers_for_patch_diagnosis(project_dir, required_markers);
+    required_markers
+        .iter()
+        .filter(|marker| !present.iter().any(|present_marker| present_marker == *marker))
+        .cloned()
+        .collect()
+}
+
+fn review_patch_implementation_constraints(
+    project_dir: &Path,
+    spec: &ProjectSpec,
+    freeze: &PatchIntentFreeze,
+    plan_review: &PatchPlanReview,
+) -> ConstraintReviewReceipt {
+    let selected_constraints = derive_patch_implementation_constraints(project_dir, spec, freeze);
+    let mut violations = Vec::new();
+    let mut blocked_methods = Vec::new();
+
+    for constraint in &selected_constraints {
+        let matched_markers = if constraint.forbidden_markers.is_empty() {
+            Vec::new()
+        } else {
+            present_anchor_markers_for_patch_diagnosis(project_dir, &constraint.forbidden_markers)
+        };
+        let missing_required_markers =
+            missing_required_anchor_markers(project_dir, &constraint.required_markers);
+        if matched_markers.is_empty() && missing_required_markers.is_empty() {
+            continue;
+        }
+        blocked_methods.push(constraint.forbidden_method_summary.clone());
+        violations.push(ConstraintViolation {
+            constraint_id: constraint.constraint_id.clone(),
+            constraint_kind: constraint.constraint_kind.clone(),
+            scope: constraint.constraint_scope.clone(),
+            matched_markers,
+            missing_required_markers,
+            violated_surface_groups: constraint.forbidden_surface_groups.clone(),
+            reason: constraint.violation_reason_template.clone(),
+            replacement_guidance: constraint.replacement_guidance.clone(),
+        });
+    }
+
+    let mut surviving_patch_kinds = Vec::new();
+    if let Some(reviewed_patch_kind) = plan_review.reviewed_intended_patch_kind.clone() {
+        surviving_patch_kinds.push(reviewed_patch_kind);
+    }
+
+    let surviving_composition_patch_kinds =
+        plan_review.reviewed_replacement_bundle_patch_kinds.clone();
+    let mut recommended_replacements = freeze.superseded_by_patch_kinds.clone();
+    if recommended_replacements.is_empty() {
+        recommended_replacements = plan_review.recommended_replacement_patch_kinds.clone();
+    }
+
+    let mut findings = Vec::new();
+    let decision = if violations.is_empty() {
+        findings.push("constraint review found no active forbidden implementation methods for the reviewed patch plan".into());
+        "allow_current_plan"
+    } else if plan_review.reviewed_replacement_bundle_status.as_deref() == Some("already_present") {
+        findings.push("constraint review accepted the modern replacement bundle as already present, so execution should skip the historical method".into());
+        "allow_bundle_already_present_skip"
+    } else if !surviving_composition_patch_kinds.is_empty() {
+        findings.push(format!(
+            "constraint review preserved only the modern replacement bundle execution set: {}",
+            surviving_composition_patch_kinds.join(", ")
+        ));
+        "allow_composed_replacement_bundle"
+    } else if freeze.intended_patch_kind != plan_review.reviewed_intended_patch_kind
+        && plan_review.reviewed_intended_patch_kind.is_some()
+    {
+        if let Some(reviewed_patch_kind) = plan_review.reviewed_intended_patch_kind.as_deref() {
+            findings.push(format!(
+                "constraint review rejected the original method and preserved the refined patch kind `{reviewed_patch_kind}`"
+            ));
+        }
+        "allow_refined_patch_kind"
+    } else {
+        findings.push("constraint review found forbidden implementation methods and no surviving refined execution path".into());
+        "block_execution"
+    };
+
+    ConstraintReviewReceipt {
+        review_id: chatty_factory_core::timestamp_id("constraint-review"),
+        request_id: freeze.request_id.clone(),
+        project_name: freeze.project_name.clone(),
+        family_id: spec.family_id.clone(),
+        tool_kind: spec.tool_kind.clone(),
+        review_subject: freeze
+            .intended_patch_kind
+            .clone()
+            .unwrap_or_else(|| "patch_execution".into()),
+        original_intended_patch_kind: freeze.intended_patch_kind.clone(),
+        reviewed_intended_patch_kind: plan_review.reviewed_intended_patch_kind.clone(),
+        selected_constraints,
+        violations,
+        surviving_patch_kinds,
+        surviving_composition_patch_kinds,
+        blocked_methods,
+        recommended_replacements,
+        decision: decision.into(),
+        findings,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn constraint_review_block_reason(review: &ConstraintReviewReceipt) -> Option<String> {
+    if review.decision != "block_execution" {
+        return None;
+    }
+    let first_violation = review.violations.first()?;
+    let mut reason = format!("constraint review blocked execution: {}", first_violation.reason);
+    if let Some(guidance) = &first_violation.replacement_guidance {
+        reason.push_str(&format!("; {guidance}"));
+    }
+    Some(reason)
+}
+
+fn reviewed_target_files_for_declared_surface_groups(
+    diagnosis: &ProjectPatchDiagnosis,
+    declared_surface_groups: &[String],
+) -> Vec<String> {
+    let mut allowed = BTreeSet::new();
+    for group_name in declared_surface_groups {
+        if let Some(paths) = diagnosis.diagnosed_artifact_groups.get(group_name) {
+            for path in paths {
+                allowed.insert(path.clone());
+            }
+        }
+    }
+    diagnosis
+        .candidate_target_files
+        .iter()
+        .filter(|path| allowed.contains(*path))
+        .cloned()
+        .collect()
+}
+
+fn reviewed_insertion_points_for_target_files(
+    insertion_points: &[String],
+    target_files: &[String],
+) -> Vec<String> {
+    insertion_points
+        .iter()
+        .filter(|point| {
+            target_files.iter().any(|file| {
+                point == &file.as_str()
+                    || point.starts_with(&format!("{file} ->"))
+                    || point.starts_with(&format!("{file}:"))
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+fn redirect_replacement_patch_kind(
+    project_dir: &Path,
+    spec: &ProjectSpec,
+    freeze: &PatchIntentFreeze,
+) -> Option<String> {
+    if freeze.superseded_by_patch_kinds.len() != 1 {
+        return None;
+    }
+    if freeze.present_conflicting_anchor_markers.is_empty() {
+        return None;
+    }
+    let replacement_patch_kind = freeze.superseded_by_patch_kinds.first()?.clone();
+    let lane = spec
+        .patch_lanes
+        .iter()
+        .find(|lane| lane.patch_kind == replacement_patch_kind)?;
+    let readiness = lane.effective_preflight_readiness.as_str();
+    if readiness != "ready" && readiness != "already_present" {
+        return None;
+    }
+    let replacement_required_markers = patch_required_anchor_markers(
+        spec.family_id.as_ref(),
+        spec.tool_kind.as_deref(),
+        &replacement_patch_kind,
+    );
+    if !replacement_required_markers.is_empty() {
+        let present =
+            present_anchor_markers_for_patch_diagnosis(project_dir, &replacement_required_markers);
+        if !replacement_required_markers
+            .iter()
+            .all(|marker| present.iter().any(|present_marker| present_marker == marker))
+        {
+            return None;
+        }
+    }
+    Some(replacement_patch_kind)
+}
+
+fn reviewed_replacement_patch_bundle(
+    project_dir: &Path,
+    spec: &ProjectSpec,
+    freeze: &PatchIntentFreeze,
+) -> Option<(Vec<String>, String)> {
+    if freeze.superseded_by_patch_kinds.len() < 2 {
+        return None;
+    }
+    let original_patch_kind = freeze.intended_patch_kind.as_deref()?;
+    let original_lane = spec
+        .patch_lanes
+        .iter()
+        .find(|lane| lane.patch_kind == original_patch_kind)?;
+    if original_lane.effective_preflight_readiness != "structurally_blocked"
+        && freeze.present_conflicting_anchor_markers.is_empty()
+    {
+        return None;
+    }
+
+    let mut executable_bundle_patch_kinds = Vec::new();
+    let mut all_already_present = true;
+    for replacement_patch_kind in &freeze.superseded_by_patch_kinds {
+        let lane = spec
+            .patch_lanes
+            .iter()
+            .find(|lane| lane.patch_kind == *replacement_patch_kind)?;
+        let readiness = lane.effective_preflight_readiness.as_str();
+        if readiness != "ready" && readiness != "already_present" {
+            return None;
+        }
+        let replacement_required_markers = patch_required_anchor_markers(
+            spec.family_id.as_ref(),
+            spec.tool_kind.as_deref(),
+            replacement_patch_kind,
+        );
+        if !replacement_required_markers.is_empty() {
+            let present =
+                present_anchor_markers_for_patch_diagnosis(project_dir, &replacement_required_markers);
+            if !replacement_required_markers
+                .iter()
+                .all(|marker| present.iter().any(|present_marker| present_marker == marker))
+            {
+                return None;
+            }
+        }
+        if readiness == "ready" {
+            all_already_present = false;
+            executable_bundle_patch_kinds.push(replacement_patch_kind.clone());
+        }
+    }
+
+    if all_already_present {
+        Some((Vec::new(), "already_present".into()))
+    } else if executable_bundle_patch_kinds.is_empty() {
+        None
+    } else {
+        Some((executable_bundle_patch_kinds, "ready_for_composition".into()))
+    }
+}
+
+fn retarget_reviewed_freeze_to_patch_kind(
+    project_dir: &Path,
+    spec: &ProjectSpec,
+    diagnosis: &ProjectPatchDiagnosis,
+    freeze: &mut PatchIntentFreeze,
+    patch_kind: &str,
+) {
+    freeze.intended_patch_kind = Some(patch_kind.to_string());
+
+    let declared_surface_groups = patch_expected_artifact_groups(
+        spec.family_id.as_ref(),
+        spec.tool_kind.as_deref(),
+        patch_kind,
+    );
+    if !declared_surface_groups.is_empty() {
+        freeze.declared_surface_groups = declared_surface_groups;
+    }
+    freeze.confirmed_surface_groups = freeze
+        .declared_surface_groups
+        .iter()
+        .filter(|group| diagnosis.diagnosed_artifact_groups.contains_key(*group))
+        .cloned()
+        .collect();
+
+    let required_anchor_markers = patch_required_anchor_markers(
+        spec.family_id.as_ref(),
+        spec.tool_kind.as_deref(),
+        patch_kind,
+    );
+    freeze.required_anchor_markers = required_anchor_markers.clone();
+    freeze.confirmed_anchor_markers =
+        present_anchor_markers_for_patch_diagnosis(project_dir, &required_anchor_markers);
+
+    let conflicting_anchor_markers = patch_conflicting_anchor_markers(
+        spec.family_id.as_ref(),
+        spec.tool_kind.as_deref(),
+        patch_kind,
+    );
+    freeze.conflicting_anchor_markers = conflicting_anchor_markers.clone();
+    freeze.present_conflicting_anchor_markers =
+        present_anchor_markers_for_patch_diagnosis(project_dir, &conflicting_anchor_markers);
+
+    freeze.declared_ownership_boundaries = patch_ownership_boundaries(
+        spec.family_id.as_ref(),
+        spec.tool_kind.as_deref(),
+        patch_kind,
+    );
+    freeze.patch_surgical_maturity = patch_surgical_maturity_for_kind(spec, patch_kind);
+    freeze.structural_guard_source = structural_guard_source_for_patch_kind(spec, patch_kind);
+    freeze.contract_confidence_summary =
+        patch_contract_confidence_summary_for_freeze(freeze.patch_surgical_maturity.as_deref());
+}
+
 fn patch_superseded_replacements_for_plan(
     spec: &ProjectSpec,
     plan: &chatty_factory_core::RequestPlan,
@@ -7556,6 +9269,56 @@ fn patch_surgical_maturity_for_plan(
     )
 }
 
+fn patch_surgical_maturity_for_kind(spec: &ProjectSpec, patch_kind: &str) -> Option<String> {
+    let project_spec_maturity = spec
+        .patch_lanes
+        .iter()
+        .find(|lane| lane.patch_kind == patch_kind)
+        .map(|lane| lane.surgical_maturity.clone())
+        .filter(|maturity| !maturity.trim().is_empty());
+    if project_spec_maturity.is_some() {
+        return project_spec_maturity;
+    }
+    chatty_factory_families::patch_surgical_maturity(
+        spec.family_id.as_ref(),
+        spec.tool_kind.as_deref(),
+        patch_kind,
+    )
+}
+
+fn structural_guard_source_for_patch_kind(spec: &ProjectSpec, patch_kind: &str) -> Option<String> {
+    let has_required = !patch_required_anchor_markers(
+        spec.family_id.as_ref(),
+        spec.tool_kind.as_deref(),
+        patch_kind,
+    )
+    .is_empty();
+    let has_conflicting = !patch_conflicting_anchor_markers(
+        spec.family_id.as_ref(),
+        spec.tool_kind.as_deref(),
+        patch_kind,
+    )
+    .is_empty();
+    let has_surface_groups = !patch_expected_artifact_groups(
+        spec.family_id.as_ref(),
+        spec.tool_kind.as_deref(),
+        patch_kind,
+    )
+    .is_empty();
+    if has_required || has_conflicting || has_surface_groups {
+        Some(format!(
+            "patch_recipe_structural_guard:{}:{}",
+            spec.family_id
+                .as_ref()
+                .map(FamilyId::as_str)
+                .unwrap_or("unknown_family"),
+            patch_kind
+        ))
+    } else {
+        None
+    }
+}
+
 fn persist_patch_intent_freeze(
     runtime_root: &Path,
     freeze: &PatchIntentFreeze,
@@ -7567,12 +9330,41 @@ fn persist_patch_intent_freeze(
     Ok(path)
 }
 
+fn persist_patch_plan_review(
+    runtime_root: &Path,
+    review: &PatchPlanReview,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("patch_plan_reviews")
+        .join(format!("{}-review.json", review.request_id));
+    persist_json_pretty(&path, review)?;
+    Ok(path)
+}
+
+fn persist_constraint_review_receipt(
+    runtime_root: &Path,
+    review: &ConstraintReviewReceipt,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("patch_constraint_reviews")
+        .join(format!("{}-constraint-review.json", review.request_id));
+    persist_json_pretty(&path, review)?;
+    Ok(path)
+}
+
 fn patch_intent_freeze_preflight(
     project_dir: &Path,
     spec: &ProjectSpec,
     freeze: &PatchIntentFreeze,
+    review: &PatchPlanReview,
     raw_request: &str,
 ) -> Option<String> {
+    let bundle_redirect_active = matches!(
+        review.reviewed_replacement_bundle_status.as_deref(),
+        Some("already_present" | "ready_for_composition")
+    ) && (!review.reviewed_replacement_bundle_patch_kinds.is_empty()
+        || review.reviewed_replacement_bundle_status.as_deref() == Some("already_present"));
+
     if freeze.diagnosed_target_files.is_empty() {
         return Some(
             "patch diagnosis found no candidate target files, so patch execution was blocked"
@@ -7593,7 +9385,8 @@ fn patch_intent_freeze_preflight(
         ));
     }
 
-    if let Some(intended_patch_kind) = freeze.intended_patch_kind.as_deref() {
+    if !bundle_redirect_active {
+        if let Some(intended_patch_kind) = freeze.intended_patch_kind.as_deref() {
         if !freeze.candidate_patch_kinds.is_empty()
             && !freeze
                 .candidate_patch_kinds
@@ -7630,6 +9423,7 @@ fn patch_intent_freeze_preflight(
             }
         }
     }
+    }
 
     if !freeze.declared_surface_groups.is_empty() {
         let diagnosed_groups =
@@ -7648,30 +9442,33 @@ fn patch_intent_freeze_preflight(
         }
     }
 
-    let expected_anchor_markers = expected_anchor_markers_for_patch_intent_freeze(spec, freeze);
-    if !expected_anchor_markers.is_empty() {
-        let present_anchor_markers =
-            present_anchor_markers_for_patch_diagnosis(project_dir, &expected_anchor_markers);
-        let missing_anchor_markers = expected_anchor_markers
-            .iter()
-            .filter(|marker| !present_anchor_markers.iter().any(|present| present == *marker))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !missing_anchor_markers.is_empty() {
-            return Some(format!(
-                "diagnosis freeze could not confirm required insertion anchors: {}",
-                missing_anchor_markers.join(", ")
-            ));
+    if !bundle_redirect_active {
+        let expected_anchor_markers = expected_anchor_markers_for_patch_intent_freeze(spec, freeze);
+        if !expected_anchor_markers.is_empty() {
+            let present_anchor_markers =
+                present_anchor_markers_for_patch_diagnosis(project_dir, &expected_anchor_markers);
+            let missing_anchor_markers = expected_anchor_markers
+                .iter()
+                .filter(|marker| !present_anchor_markers.iter().any(|present| present == *marker))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing_anchor_markers.is_empty() {
+                return Some(format!(
+                    "diagnosis freeze could not confirm required insertion anchors: {}",
+                    missing_anchor_markers.join(", ")
+                ));
+            }
         }
     }
 
-    if let Some(reason) = patch_kind_specific_structural_conflict_reason(
-        project_dir,
-        spec,
-        freeze.intended_patch_kind.as_deref(),
-    )
-    {
-        return Some(reason);
+    if !bundle_redirect_active {
+        if let Some(reason) = patch_kind_specific_structural_conflict_reason(
+            project_dir,
+            spec,
+            freeze.intended_patch_kind.as_deref(),
+        ) {
+            return Some(reason);
+        }
     }
 
     None
@@ -7717,6 +9514,9 @@ fn emit_patch_freeze_skip_result(
     spec: &ProjectSpec,
     patch_intent_freeze: &PatchIntentFreeze,
     patch_diagnosis_path: &Path,
+    patch_plan_review_path: &Path,
+    patch_constraint_review: &ConstraintReviewReceipt,
+    patch_constraint_review_path: &Path,
     patch_intent_freeze_path: &Path,
     reason: &str,
 ) -> Result<HostActionResult> {
@@ -7739,9 +9539,50 @@ fn emit_patch_freeze_skip_result(
         format!("family={family}"),
         format!("reason={reason}"),
         format!("patch_diagnosis={}", patch_diagnosis_path.display()),
+        format!("patch_plan_review={}", patch_plan_review_path.display()),
+        format!(
+            "patch_constraint_review={}",
+            patch_constraint_review_path.display()
+        ),
         format!("patch_intent_freeze={}", patch_intent_freeze_path.display()),
     ];
     let mut route_notes = vec![reason.to_string()];
+    if !patch_constraint_review.violations.is_empty() {
+        route_notes.push(format!(
+            "constraint review decision={} violations={}",
+            patch_constraint_review.decision,
+            patch_constraint_review
+                .violations
+                .iter()
+                .map(|violation| violation.constraint_kind.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if patch_intent_freeze
+        .freeze_notes
+        .iter()
+        .any(|note| note.contains("self-review redirected the surgical plan"))
+    {
+        if let Some(original_patch_kind) = spec
+            .patch_lanes
+            .iter()
+            .find(|lane| {
+                lane.superseded_by_patch_kinds.iter().any(|replacement| {
+                    patch_intent_freeze.intended_patch_kind.as_deref() == Some(replacement.as_str())
+                })
+            })
+            .map(|lane| lane.patch_kind.clone())
+        {
+            if let Some(reviewed_patch_kind) = patch_intent_freeze.intended_patch_kind.as_deref() {
+                let summary = format!(
+                    "self-review redirected historical patch intent from `{original_patch_kind}` to modern replacement `{reviewed_patch_kind}` before preflight"
+                );
+                details.push(format!("patch_plan_redirect={summary}"));
+                route_notes.push(summary);
+            }
+        }
+    }
     if let Some(summary) = &patch_intent_freeze.replacement_guidance_summary {
         details.push(format!("replacement_guidance={summary}"));
         route_notes.push(summary.clone());
@@ -7755,9 +9596,14 @@ fn emit_patch_freeze_skip_result(
             kind: "patch_skip".into(),
             request_id: request.request_id.clone(),
             project_name: spec.project_name.clone(),
+            starter_override_id: None,
+            starter_override_summary: None,
+            recommended_starter_id: None,
+            recommended_starter_summary: None,
+            starter_recommendation_comparison: None,
             family_id: spec.family_id.as_ref().map(|id| id.as_str().to_string()),
             tool_kind: spec.tool_kind.clone(),
-            patch_kind: plan.intended_patch_kind.clone(),
+            patch_kind: patch_intent_freeze.intended_patch_kind.clone(),
             composition_route_class: Some("direct_deterministic_lane".into()),
             composable_route_plan_path: None,
             composition_review_receipt_path: None,
@@ -7770,6 +9616,8 @@ fn emit_patch_freeze_skip_result(
             route_notes,
             file_paths: vec![
                 patch_diagnosis_path.display().to_string(),
+                patch_plan_review_path.display().to_string(),
+                patch_constraint_review_path.display().to_string(),
                 patch_intent_freeze_path.display().to_string(),
             ],
             patch_lanes: spec.patch_lanes.clone(),
@@ -10045,6 +11893,10 @@ fn parse_family_id_label(value: &str) -> Option<FamilyId> {
         "static_web_dashboard" => Some(FamilyId::StaticWebDashboard),
         "chattycog_webview_module" => Some(FamilyId::ChattycogWebviewModule),
         "chattycog_native_window_module" => Some(FamilyId::ChattycogNativeWindowModule),
+        "chattyedu_native_window_module" => Some(FamilyId::ChattyeduNativeWindowModule),
+        "chattycog_chattyedu_native_window_module" => {
+            Some(FamilyId::ChattycogChattyeduNativeWindowModule)
+        }
         "chattycog_workspace_module" => Some(FamilyId::ChattycogWorkspaceModule),
         "python_cli_tool" => Some(FamilyId::PythonCliTool),
         "rust_cli_tool" => Some(FamilyId::RustCliTool),
@@ -10227,6 +12079,21 @@ fn merge_execution_artifacts(
     }
     if let Some(status) = updated.acceptance_status {
         base.acceptance_status = Some(status);
+    }
+    if let Some(starter_override_id) = updated.starter_override_id {
+        base.starter_override_id = Some(starter_override_id);
+    }
+    if let Some(starter_override_summary) = updated.starter_override_summary {
+        base.starter_override_summary = Some(starter_override_summary);
+    }
+    if let Some(recommended_starter_id) = updated.recommended_starter_id {
+        base.recommended_starter_id = Some(recommended_starter_id);
+    }
+    if let Some(recommended_starter_summary) = updated.recommended_starter_summary {
+        base.recommended_starter_summary = Some(recommended_starter_summary);
+    }
+    if let Some(starter_recommendation_comparison) = updated.starter_recommendation_comparison {
+        base.starter_recommendation_comparison = Some(starter_recommendation_comparison);
     }
     base.route_notes.extend(updated.route_notes);
     base
@@ -10463,6 +12330,682 @@ fn persist_composable_route_plan(
     Ok(path)
 }
 
+fn derive_build_fallback_failure_mode(
+    summary: &str,
+    request: &RequestRecord,
+    plan: &RequestPlan,
+) -> (&'static str, &'static str, FailureClass, &'static str, &'static str) {
+    if plan.inferred_family_candidates.is_empty() {
+        (
+            "no_deterministic_family_match",
+            "do not force a nearest deterministic family when no family candidate survives request interpretation",
+            FailureClass::UnsupportedFamilyCapability,
+            "deterministic_build_routing",
+            "implement or route to a new deterministic family/extension lane before retrying this build",
+        )
+    } else if plan.needs_llm_review {
+        (
+            "clarification_required_before_deterministic_build",
+            "do not commit a deterministic build while interpreted goal or planner review remains unresolved",
+            FailureClass::RouteSelectionMismatch,
+            "deterministic_build_clarification",
+            "collect clarification or planner guidance before retrying this deterministic build",
+        )
+    } else if matches!(request.mode, Some(RequestMode::NewBuild))
+        && summary.contains("Bounded composition review did not approve")
+    {
+        (
+            "bounded_build_composition_review_denied",
+            "do not execute a host-composed build work-order when bounded composition review rejected the layer set",
+            FailureClass::StructuredCodeGenerationMismatch,
+            "bounded_build_composition",
+            "narrow the composition layer set or add the missing deterministic primitive before retrying",
+        )
+    } else {
+        (
+            "deterministic_build_fallback_required",
+            "do not pretend the current deterministic build route can satisfy this request without additional structure",
+            FailureClass::BuildFailure,
+            "deterministic_build_fallback",
+            "inspect the fallback build spec and implement the missing deterministic coverage before retrying",
+        )
+    }
+}
+
+fn derive_build_verification_receipt(
+    runtime_root: &Path,
+    request: &RequestRecord,
+    plan: &RequestPlan,
+    build_spec: &FallbackBuildSpec,
+    reasons: &[String],
+    summary: &str,
+) -> BuildVerificationReceipt {
+    let (
+        failure_mode,
+        blocked_method,
+        failure_class,
+        review_subject,
+        replacement_guidance,
+    ) = derive_build_fallback_failure_mode(summary, request, plan);
+    let approved_constraints = matching_approved_build_constraints(
+        runtime_root,
+        review_subject,
+        build_spec.suggested_family_id.as_ref(),
+        build_spec.suggested_tool_kind.as_deref(),
+        failure_mode,
+    );
+    let mut findings = vec![summary.to_string()];
+    if !build_spec.missing_family_build_primitive_classes.is_empty() {
+        findings.push(format!(
+            "missing family build primitive classes: {}",
+            build_spec
+                .missing_family_build_primitive_classes
+                .join(", ")
+        ));
+    }
+    if !build_spec.missing_patch_primitive_classes.is_empty() {
+        findings.push(format!(
+            "missing patch primitive classes: {}",
+            build_spec.missing_patch_primitive_classes.join(", ")
+        ));
+    }
+    if !build_spec.missing_helper_primitive_kinds.is_empty() {
+        findings.push(format!(
+            "missing helper primitive kinds: {}",
+            build_spec.missing_helper_primitive_kinds.join(", ")
+        ));
+    }
+    if !build_spec.recommended_next_step.trim().is_empty() {
+        findings.push(format!(
+            "recommended next step: {}",
+            build_spec.recommended_next_step
+        ));
+    }
+    findings.push(format!("replacement guidance: {replacement_guidance}"));
+    if !approved_constraints.is_empty() {
+        findings.push(format!(
+            "approved shelf already contains matching build constraints: {}",
+            approved_constraints
+                .iter()
+                .map(|constraint| constraint.constraint_id.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    BuildVerificationReceipt {
+        verification_id: chatty_factory_core::timestamp_id("build-verification"),
+        request_id: request.request_id.clone(),
+        review_subject: review_subject.to_string(),
+        interpreted_goal: plan.interpreted_goal.clone(),
+        candidate_family_ids: plan.inferred_family_candidates.clone(),
+        suggested_family_id: build_spec.suggested_family_id.clone(),
+        suggested_tool_kind: build_spec.suggested_tool_kind.clone(),
+        suggested_extension_kind: build_spec.suggested_extension_kind.clone(),
+        failure_class,
+        failure_mode: failure_mode.to_string(),
+        matched_approved_constraint_ids: approved_constraints
+            .iter()
+            .map(|constraint| constraint.constraint_id.clone())
+            .collect(),
+        matched_approved_constraint_summaries: approved_constraints
+            .iter()
+            .map(|constraint| constraint.forbidden_method_summary.clone())
+            .collect(),
+        reasons: reasons.to_vec(),
+        blocked_methods: vec![blocked_method.to_string()],
+        findings,
+        decision: if approved_constraints.is_empty() {
+            "fallback_required".into()
+        } else {
+            "fallback_required_with_approved_constraint".into()
+        },
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn resolve_build_starter_override(value: &str) -> Option<BuildStarterOverride> {
+    match value.trim() {
+        "" | "auto" => None,
+        "chattycog_native_window_module" => Some(BuildStarterOverride {
+            family_id: FamilyId::ChattycogNativeWindowModule,
+            desired_surface: DesiredSurface::Desktop,
+            exoskeleton_target: ExoskeletonTarget::ChattyCog,
+            tool_kind: "native_window_starter",
+            rationale: "starter override locked build routing to the standalone Rust dashboard Chatty-Cog native-window skeleton",
+        }),
+        "chattyedu_native_window_module" => Some(BuildStarterOverride {
+            family_id: FamilyId::ChattyeduNativeWindowModule,
+            desired_surface: DesiredSurface::Desktop,
+            exoskeleton_target: ExoskeletonTarget::None,
+            tool_kind: "native_window_starter",
+            rationale: "starter override locked build routing to the standalone Rust dashboard Chatty-EDU native-window skeleton",
+        }),
+        "chattycog_chattyedu_native_window_module" => Some(BuildStarterOverride {
+            family_id: FamilyId::ChattycogChattyeduNativeWindowModule,
+            desired_surface: DesiredSurface::Desktop,
+            exoskeleton_target: ExoskeletonTarget::None,
+            tool_kind: "native_window_starter",
+            rationale: "starter override locked build routing to the standalone Rust dashboard dual-host native-window skeleton for Chatty-Cog and Chatty-EDU",
+        }),
+        "chattycog_webview_module" => Some(BuildStarterOverride {
+            family_id: FamilyId::ChattycogWebviewModule,
+            desired_surface: DesiredSurface::Web,
+            exoskeleton_target: ExoskeletonTarget::ChattyCog,
+            tool_kind: "module_starter",
+            rationale: "starter override locked build routing to the Chatty-Cog webview module starter",
+        }),
+        "chattycog_workspace_module" => Some(BuildStarterOverride {
+            family_id: FamilyId::ChattycogWorkspaceModule,
+            desired_surface: DesiredSurface::Unknown,
+            exoskeleton_target: ExoskeletonTarget::ChattyCog,
+            tool_kind: "workspace_module",
+            rationale: "starter override locked build routing to the Chatty-Cog workspace module starter",
+        }),
+        "static_web_dashboard" => Some(BuildStarterOverride {
+            family_id: FamilyId::StaticWebDashboard,
+            desired_surface: DesiredSurface::Web,
+            exoskeleton_target: ExoskeletonTarget::None,
+            tool_kind: "dashboard",
+            rationale: "starter override locked build routing to the standalone static web dashboard starter",
+        }),
+        "rust_cli_tool" => Some(BuildStarterOverride {
+            family_id: FamilyId::RustCliTool,
+            desired_surface: DesiredSurface::Cli,
+            exoskeleton_target: ExoskeletonTarget::None,
+            tool_kind: "directory_audit",
+            rationale: "starter override locked build routing to the standalone Rust CLI starter",
+        }),
+        "python_cli_tool" => Some(BuildStarterOverride {
+            family_id: FamilyId::PythonCliTool,
+            desired_surface: DesiredSurface::Cli,
+            exoskeleton_target: ExoskeletonTarget::None,
+            tool_kind: "directory_audit",
+            rationale: "starter override locked build routing to the standalone Python CLI starter",
+        }),
+        _ => None,
+    }
+}
+
+fn apply_build_starter_override(
+    request: &mut RequestRecord,
+    starter_override: BuildStarterOverride,
+) {
+    request.candidate_family_ids = vec![starter_override.family_id.clone()];
+    request.desired_surface = Some(starter_override.desired_surface);
+    request.exoskeleton_target = Some(starter_override.exoskeleton_target);
+    request
+        .ambiguity_flags
+        .retain(|flag| flag != "surface_unclear");
+}
+
+fn apply_build_starter_override_to_plan(
+    plan: &mut RequestPlan,
+    starter_override: BuildStarterOverride,
+) {
+    plan.inferred_family_candidates = vec![starter_override.family_id];
+    plan.inferred_tool_kind = Some(starter_override.tool_kind.to_string());
+    plan
+        .constraints
+        .retain(|item| item != "surface_unclear");
+    if !plan
+        .rationale
+        .iter()
+        .any(|item| item == starter_override.rationale)
+    {
+        plan.rationale.push(starter_override.rationale.into());
+    }
+    plan.confidence_score = plan.confidence_score.max(80);
+    if plan.confidence_score >= 80 {
+        plan.confidence_band = "starter_override".into();
+        plan.escalation_reasons.clear();
+        plan.needs_llm_review = false;
+    }
+}
+
+fn build_starter_override_summary(starter_override: &BuildStarterOverride) -> String {
+    format!(
+        "starter override enforced: {} ({})",
+        starter_override.family_id.as_str(),
+        starter_override.rationale
+    )
+}
+
+fn derive_proposed_constraint_receipt(
+    verification: &BuildVerificationReceipt,
+) -> ProposedConstraintReceipt {
+    let replacement_guidance = verification
+        .findings
+        .iter()
+        .find_map(|finding| {
+            finding
+                .strip_prefix("replacement guidance: ")
+                .map(|value| value.to_string())
+        })
+        .or_else(|| {
+            verification
+                .blocked_methods
+                .first()
+                .map(|_| "implement the missing deterministic coverage before retrying".to_string())
+        });
+    ProposedConstraintReceipt {
+        proposal_id: chatty_factory_core::timestamp_id("constraint-proposal"),
+        request_id: verification.request_id.clone(),
+        source_verification_id: verification.verification_id.clone(),
+        status: "proposed_unapproved".into(),
+        rationale: {
+            let mut rationale = verification.reasons.clone();
+            rationale.extend(verification.findings.clone());
+            rationale
+        },
+        proposed_constraint: ImplementationConstraint {
+            constraint_id: format!(
+                "proposed-build-constraint:{}:{}",
+                verification.review_subject, verification.failure_mode
+            ),
+            constraint_scope: verification.review_subject.clone(),
+            constraint_origin: "build_verification_failure".into(),
+            family_id: verification.suggested_family_id.clone(),
+            tool_kind: verification.suggested_tool_kind.clone(),
+            language_id: None,
+            constraint_kind: verification.failure_mode.clone(),
+            forbidden_method_summary: verification
+                .blocked_methods
+                .first()
+                .cloned()
+                .unwrap_or_else(|| {
+                    "do not proceed with the current deterministic build method".into()
+                }),
+            forbidden_markers: Vec::new(),
+            required_markers: Vec::new(),
+            forbidden_surface_groups: Vec::new(),
+            violation_reason_template: verification
+                .reasons
+                .first()
+                .cloned()
+                .unwrap_or_else(|| {
+                    "the current deterministic build route is known to fail for this shape"
+                        .into()
+                }),
+            replacement_guidance,
+            severity: "error".into(),
+            active: false,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        },
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn persist_build_verification_receipt(
+    runtime_root: &Path,
+    receipt: &BuildVerificationReceipt,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("build_verification_receipts")
+        .join(format!("{}-build-verification.json", receipt.request_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_proposed_constraint_receipt(
+    runtime_root: &Path,
+    receipt: &ProposedConstraintReceipt,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("proposed_constraint_receipts")
+        .join(format!("{}-proposed-constraint.json", receipt.request_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn resolve_proposed_constraint_path(runtime_root: &Path, request_id_or_path: &str) -> Result<PathBuf> {
+    let candidate = PathBuf::from(request_id_or_path);
+    if candidate.exists() {
+        return Ok(candidate);
+    }
+    let path = runtime_root
+        .join("proposed_constraint_receipts")
+        .join(format!("{request_id_or_path}-proposed-constraint.json"));
+    if path.exists() {
+        Ok(path)
+    } else {
+        anyhow::bail!(
+            "proposed constraint receipt `{}` was not found as a direct path or runtime receipt id",
+            request_id_or_path
+        )
+    }
+}
+
+fn load_approved_constraint_shelf(path: &Path) -> Result<ApprovedConstraintShelf> {
+    if path.exists() {
+        Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
+    } else {
+        Ok(ApprovedConstraintShelf {
+            shelf_id: "approved-negative-constraint-shelf".into(),
+            constraints: Vec::new(),
+            updated_at: Some(chatty_factory_core::timestamp_id("created")),
+        })
+    }
+}
+
+fn load_constraint_shelf_history(path: &Path) -> Result<ConstraintShelfHistory> {
+    if path.exists() {
+        Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
+    } else {
+        Ok(ConstraintShelfHistory {
+            history_id: "approved-negative-constraint-shelf-history".into(),
+            archived_constraints: Vec::new(),
+            updated_at: Some(chatty_factory_core::timestamp_id("created")),
+        })
+    }
+}
+
+fn sanitize_filename_like(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch,
+            _ => '_',
+        })
+        .collect()
+}
+
+fn load_active_approved_constraints(runtime_root: &Path) -> Result<Vec<ImplementationConstraint>> {
+    let shelf = load_approved_constraint_shelf(&runtime_root.join("approved_constraint_shelf.json"))?;
+    Ok(shelf
+        .constraints
+        .into_iter()
+        .filter(|constraint| constraint.active)
+        .collect())
+}
+
+fn matches_optional_str(expected: Option<&str>, actual: Option<&str>) -> bool {
+    match expected {
+        Some(expected) => actual == Some(expected),
+        None => true,
+    }
+}
+
+fn matching_approved_build_constraints(
+    runtime_root: &Path,
+    review_subject: &str,
+    family_id: Option<&FamilyId>,
+    tool_kind: Option<&str>,
+    failure_mode: &str,
+) -> Vec<ImplementationConstraint> {
+    load_active_approved_constraints(runtime_root)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|constraint| constraint.constraint_scope == review_subject)
+        .filter(|constraint| constraint.constraint_kind == failure_mode)
+        .filter(|constraint| {
+            matches_optional_str(
+                constraint.family_id.as_ref().map(FamilyId::as_str),
+                family_id.map(FamilyId::as_str),
+            )
+        })
+        .filter(|constraint| {
+            matches_optional_str(constraint.tool_kind.as_deref(), tool_kind)
+        })
+        .collect()
+}
+
+fn approved_constraint_match_counts_from_runtime(runtime_root: &Path) -> BTreeMap<String, usize> {
+    let receipts_root = runtime_root.join("build_verification_receipts");
+    let Ok(entries) = fs::read_dir(receipts_root) else {
+        return BTreeMap::new();
+    };
+    let mut counts = BTreeMap::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if extension != "json" {
+            continue;
+        }
+        let Ok(contents) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(receipt) = serde_json::from_str::<BuildVerificationReceipt>(&contents) else {
+            continue;
+        };
+        for constraint_id in receipt.matched_approved_constraint_ids {
+            *counts.entry(constraint_id).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+fn load_existing_build_verification_receipt(
+    runtime_root: &Path,
+    request_id: &str,
+) -> Option<(BuildVerificationReceipt, PathBuf)> {
+    let path = runtime_root
+        .join("build_verification_receipts")
+        .join(format!("{request_id}-build-verification.json"));
+    let contents = fs::read_to_string(&path).ok()?;
+    let receipt = serde_json::from_str::<BuildVerificationReceipt>(&contents).ok()?;
+    Some((receipt, path))
+}
+
+fn load_existing_proposed_constraint_receipt(
+    runtime_root: &Path,
+    request_id: &str,
+) -> Option<(ProposedConstraintReceipt, PathBuf)> {
+    let path = runtime_root
+        .join("proposed_constraint_receipts")
+        .join(format!("{request_id}-proposed-constraint.json"));
+    let contents = fs::read_to_string(&path).ok()?;
+    let receipt = serde_json::from_str::<ProposedConstraintReceipt>(&contents).ok()?;
+    Some((receipt, path))
+}
+
+fn persist_post_build_failure_learning(
+    runtime_root: &Path,
+    request: &RequestRecord,
+    plan: &RequestPlan,
+    project_name: &str,
+    family_id: Option<FamilyId>,
+    tool_kind: Option<&str>,
+    suggested_extension_kind: &str,
+    failure_mode: &str,
+    blocked_method: &str,
+    summary: &str,
+) -> Result<(BuildVerificationReceipt, PathBuf, ProposedConstraintReceipt, PathBuf)> {
+    let failure_class = classify_failure(summary);
+    let (
+        review_subject,
+        specific_failure_mode,
+        specific_blocked_method,
+        replacement_guidance,
+    ) = derive_post_build_failure_details(failure_mode, blocked_method, summary);
+    let approved_constraints = matching_approved_build_constraints(
+        runtime_root,
+        &review_subject,
+        family_id.as_ref(),
+        tool_kind,
+        &specific_failure_mode,
+    );
+    let verification = BuildVerificationReceipt {
+        verification_id: chatty_factory_core::timestamp_id("build-verification"),
+        request_id: request.request_id.clone(),
+        review_subject: review_subject.to_string(),
+        interpreted_goal: plan.interpreted_goal.clone(),
+        candidate_family_ids: plan.inferred_family_candidates.clone(),
+        suggested_family_id: family_id.clone(),
+        suggested_tool_kind: tool_kind.map(str::to_string),
+        suggested_extension_kind: suggested_extension_kind.to_string(),
+        failure_class,
+        failure_mode: specific_failure_mode.to_string(),
+        matched_approved_constraint_ids: approved_constraints
+            .iter()
+            .map(|constraint| constraint.constraint_id.clone())
+            .collect(),
+        matched_approved_constraint_summaries: approved_constraints
+            .iter()
+            .map(|constraint| constraint.forbidden_method_summary.clone())
+            .collect(),
+        reasons: vec![summary.to_string()],
+        blocked_methods: vec![specific_blocked_method.to_string()],
+        findings: {
+            let mut findings = vec![
+                format!("project_name={project_name}"),
+                format!(
+                    "family_id={}",
+                    family_id
+                        .as_ref()
+                        .map(FamilyId::as_str)
+                        .unwrap_or("unknown_family")
+                ),
+                "built artifacts exist but host verification did not approve them".into(),
+                format!("replacement guidance: {replacement_guidance}"),
+            ];
+            if !approved_constraints.is_empty() {
+                findings.push(format!(
+                    "approved shelf already contains matching build constraints: {}",
+                    approved_constraints
+                        .iter()
+                        .map(|constraint| constraint.constraint_id.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            findings
+        },
+        decision: if approved_constraints.is_empty() {
+            "fallback_required_after_build_verification".into()
+        } else {
+            "fallback_required_after_build_verification_with_approved_constraint".into()
+        },
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let verification_path = persist_build_verification_receipt(runtime_root, &verification)?;
+    let proposed_constraint = ProposedConstraintReceipt {
+        proposal_id: chatty_factory_core::timestamp_id("constraint-proposal"),
+        request_id: request.request_id.clone(),
+        source_verification_id: verification.verification_id.clone(),
+        status: "proposed_unapproved".into(),
+        rationale: vec![
+            summary.to_string(),
+            "capture this post-build failure as a negative rule candidate before retrying the same generation method".into(),
+            format!("replacement guidance: {replacement_guidance}"),
+        ],
+        proposed_constraint: ImplementationConstraint {
+            constraint_id: format!(
+                "proposed-post-build-constraint:{}:{}",
+                project_name, specific_failure_mode
+            ),
+            constraint_scope: review_subject.into(),
+            constraint_origin: "build_verification_failure".into(),
+            family_id,
+            tool_kind: tool_kind.map(str::to_string),
+            language_id: None,
+            constraint_kind: specific_failure_mode.to_string(),
+            forbidden_method_summary: specific_blocked_method.to_string(),
+            forbidden_markers: Vec::new(),
+            required_markers: Vec::new(),
+            forbidden_surface_groups: Vec::new(),
+            violation_reason_template: summary.to_string(),
+            replacement_guidance: Some(replacement_guidance.into()),
+            severity: "error".into(),
+            active: false,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        },
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let proposed_constraint_path =
+        persist_proposed_constraint_receipt(runtime_root, &proposed_constraint)?;
+    Ok((
+        verification,
+        verification_path,
+        proposed_constraint,
+        proposed_constraint_path,
+    ))
+}
+
+fn derive_post_build_failure_details(
+    broad_failure_mode: &str,
+    default_blocked_method: &str,
+    summary: &str,
+) -> (String, String, String, String) {
+    let lower = summary.to_ascii_lowercase();
+    if lower.contains("missing main.py")
+        || lower.contains("missing main.rs")
+        || lower.contains("missing index.html")
+        || lower.contains("missing src/main.rs")
+    {
+        (
+            "post_build_entrypoint_contract".into(),
+            "missing_entrypoint_after_build".into(),
+            "do not mark a generated build as shippable when its primary entrypoint is missing after scaffold emission".into(),
+            "rebuild or repair primary entrypoint emission before retrying this generated build".into(),
+        )
+    } else if lower.contains("chattycog module contract failed")
+        || lower.contains("chattycog visual load contract failed")
+        || lower.contains("chattycog bridge contract failed")
+    {
+        (
+            "post_build_chattycog_contract".into(),
+            "chattycog_contract_failed_after_build".into(),
+            "do not ship a chattycog build when module, bridge, or visual-load contract artifacts are incomplete or inconsistent".into(),
+            "repair the generated chattycog contract surfaces before retrying this build".into(),
+        )
+    } else if lower.contains("helper summary surface contract failed")
+        || lower.contains("helper processed")
+        || lower.contains("helper service spec")
+        || lower.contains("helper status snapshot")
+        || lower.contains("helper summary snapshot")
+    {
+        (
+            "post_build_helper_contract".into(),
+            "helper_contract_failed_after_build".into(),
+            "do not ship a generated helper-backed build when helper contracts or surfaced helper artifacts fail verification".into(),
+            "repair helper contract emission or helper-facing UI glue before retrying this build".into(),
+        )
+    } else if lower.contains("cargo check failed") {
+        (
+            "post_build_compile_contract".into(),
+            "cargo_check_failed_after_build".into(),
+            "do not accept a generated rust build when cargo check fails after scaffold emission".into(),
+            "repair rust compile-time structure before retrying this build".into(),
+        )
+    } else if lower.contains("cargo run failed") {
+        (
+            "post_build_execution_smoke".into(),
+            "cargo_run_failed_after_build".into(),
+            "do not ship a generated rust build when cargo run fails during execution smoke".into(),
+            "repair runnable rust execution structure before retrying this build".into(),
+        )
+    } else if lower.contains("unable to execute python command")
+        || lower.contains("not found in python output")
+    {
+        (
+            "post_build_execution_smoke".into(),
+            "python_execution_failed_after_build".into(),
+            "do not ship a generated python build when the primary python execution path fails during verification".into(),
+            "repair the generated python entrypoint or runtime glue before retrying this build".into(),
+        )
+    } else {
+        let review_subject = if broad_failure_mode == "execution_smoke_failed_after_build" {
+            "post_build_execution_smoke"
+        } else {
+            "post_build_verification"
+        };
+        let replacement_guidance = if broad_failure_mode == "execution_smoke_failed_after_build" {
+            "repair runtime execution smoke before retrying this generated build"
+        } else {
+            "revise the generated build method or add a deterministic negative rule before retrying"
+        };
+        (
+            review_subject.into(),
+            broad_failure_mode.to_string(),
+            default_blocked_method.to_string(),
+            replacement_guidance.into(),
+        )
+    }
+}
+
 fn emit_fallback_result(
     runtime_root: &Path,
     request: &chatty_factory_core::RequestRecord,
@@ -10627,15 +13170,63 @@ fn emit_fallback_result(
         .join(format!("{}-fallback.json", request.request_id));
     persist_json_pretty(&receipt_path, &receipt)?;
 
+    let (build_verification, build_verification_path, proposed_constraint, proposed_constraint_path) =
+        if matches!(request.mode, Some(RequestMode::NewBuild)) {
+            if let Some((verification, verification_path)) =
+                load_existing_build_verification_receipt(runtime_root, &request.request_id)
+            {
+                let proposed = load_existing_proposed_constraint_receipt(
+                    runtime_root,
+                    &request.request_id,
+                );
+                (
+                    Some(verification),
+                    Some(verification_path),
+                    proposed.as_ref().map(|(receipt, _)| receipt.clone()),
+                    proposed.map(|(_, path)| path),
+                )
+            } else {
+                let verification = derive_build_verification_receipt(
+                    runtime_root,
+                    request,
+                    plan,
+                    &build_spec,
+                    &reasons,
+                    summary,
+                );
+                let verification_path =
+                    persist_build_verification_receipt(runtime_root, &verification)?;
+                let proposed_constraint = derive_proposed_constraint_receipt(&verification);
+                let proposed_constraint_path =
+                    persist_proposed_constraint_receipt(runtime_root, &proposed_constraint)?;
+                (
+                    Some(verification),
+                    Some(verification_path),
+                    Some(proposed_constraint),
+                    Some(proposed_constraint_path),
+                )
+            }
+        } else {
+            (None, None, None, None)
+        };
+
+    let mut details = vec![
+        format!("clarification={}", clarification_path.display()),
+        format!("fallback_build_spec={}", build_spec_path.display()),
+        format!("planner_handoff={}", planner_handoff_path.display()),
+        format!("composable_route_plan={}", composable_route_plan_path.display()),
+        format!("fallback_receipt={}", receipt_path.display()),
+    ];
+    if let Some(path) = &build_verification_path {
+        details.push(format!("build_verification={}", path.display()));
+    }
+    if let Some(path) = &proposed_constraint_path {
+        details.push(format!("proposed_constraint={}", path.display()));
+    }
+
     Ok(HostActionResult {
         summary: summary.into(),
-        details: vec![
-            format!("clarification={}", clarification_path.display()),
-            format!("fallback_build_spec={}", build_spec_path.display()),
-            format!("planner_handoff={}", planner_handoff_path.display()),
-            format!("composable_route_plan={}", composable_route_plan_path.display()),
-            format!("fallback_receipt={}", receipt_path.display()),
-        ],
+        details,
         browser_state: None,
         runtime_refresh: None,
         execution_result: None,
@@ -10702,6 +13293,35 @@ fn emit_fallback_result(
             build_spec_path: Some(build_spec_path.display().to_string()),
             planner_handoff_path: Some(planner_handoff_path.display().to_string()),
             stub_bundle_path: Some(stub_bundle_path.display().to_string()),
+            build_failure_class: build_verification
+                .as_ref()
+                .map(|verification| format!("{:?}", verification.failure_class)),
+            build_failure_mode: build_verification
+                .as_ref()
+                .map(|verification| verification.failure_mode.clone()),
+            matched_approved_constraint_ids: build_verification
+                .as_ref()
+                .map(|verification| verification.matched_approved_constraint_ids.clone())
+                .unwrap_or_default(),
+            matched_approved_constraint_summaries: build_verification
+                .as_ref()
+                .map(|verification| verification.matched_approved_constraint_summaries.clone())
+                .unwrap_or_default(),
+            build_verification_path: build_verification_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            proposed_constraint_path: proposed_constraint_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            proposed_constraint_summary: proposed_constraint.as_ref().map(|receipt| {
+                receipt
+                    .proposed_constraint
+                    .forbidden_method_summary
+                    .clone()
+            }),
+            proposed_constraint_replacement_guidance: proposed_constraint.as_ref().and_then(
+                |receipt| receipt.proposed_constraint.replacement_guidance.clone(),
+            ),
             receipt_path: Some(receipt_path.display().to_string()),
         }),
         followup_route: None,
@@ -11561,6 +14181,10 @@ fn proof_family_label(family_id: &FamilyId) -> String {
         FamilyId::StaticWebDashboard => "static web dashboard".into(),
         FamilyId::ChattycogWebviewModule => "ChattyCog webview module".into(),
         FamilyId::ChattycogNativeWindowModule => "ChattyCog native window module".into(),
+        FamilyId::ChattyeduNativeWindowModule => "Chatty-EDU native window module".into(),
+        FamilyId::ChattycogChattyeduNativeWindowModule => {
+            "ChattyCog + Chatty-EDU native window module".into()
+        }
         FamilyId::ChattycogWorkspaceModule => "ChattyCog workspace module".into(),
         FamilyId::PythonCliTool => "python cli tool".into(),
         FamilyId::RustCliTool => "rust cli tool".into(),
@@ -12436,6 +15060,34 @@ fn persist_family_governance_refresh_status(
     Ok(path)
 }
 
+fn persist_family_usage_summary(
+    runtime_root: &Path,
+    summary: &FamilyUsageSummaryReceipt,
+) -> Result<PathBuf> {
+    let path = runtime_root.join("family_usage_summary.json");
+    persist_json_pretty(&path, summary)?;
+    Ok(path)
+}
+
+fn persist_starter_usage_summary(
+    runtime_root: &Path,
+    summary: &StarterUsageSummaryReceipt,
+) -> Result<PathBuf> {
+    let path = runtime_root.join("starter_usage_summary.json");
+    persist_json_pretty(&path, summary)?;
+    Ok(path)
+}
+
+fn refresh_family_usage_summary(output_root: &Path, runtime_root: &Path) -> Result<PathBuf> {
+    let summary = derive_family_usage_summary(output_root)?;
+    persist_family_usage_summary(runtime_root, &summary)
+}
+
+fn refresh_starter_usage_summary(runtime_root: &Path) -> Result<PathBuf> {
+    let summary = derive_starter_usage_summary(runtime_root)?;
+    persist_starter_usage_summary(runtime_root, &summary)
+}
+
 fn persist_template_governance_receipt(
     runtime_root: &Path,
     receipt: &TemplateGovernanceReceipt,
@@ -12770,12 +15422,16 @@ fn refresh_family_manifest_governance(
     let receipt = FamilyGovernanceReceipt {
         receipt_id: chatty_factory_core::timestamp_id("family-governance"),
         family_id: manifest.family_id.as_str().to_string(),
+        family_display_name: governance_family_display_name(&manifest.family_id),
+        family_ecosystem: governance_family_ecosystem(&manifest.family_id),
         manifest_path: Some(
             family_manifest_path_for(workspace_root, &manifest.family_id)
                 .display()
                 .to_string(),
         ),
         primary_substrate: manifest.primary_substrate.clone(),
+        lifecycle_status: manifest.lifecycle_status.clone(),
+        lifecycle_notes: manifest.lifecycle_notes.clone(),
         supported_tool_kinds: manifest.supported_tool_kinds.clone(),
         provided_build_primitive_classes: manifest.provided_build_primitive_classes.clone(),
         primitive_adapter_ids: manifest
@@ -13240,11 +15896,70 @@ fn project_patch_superseded_blocked_lane_replacements(
     replacements
 }
 
+fn project_patch_decomposable_historical_blocker_bundles(
+    spec: &ProjectSpec,
+) -> BTreeMap<String, ProjectHistoricalBlockerBundle> {
+    let mut bundles = BTreeMap::new();
+    for lane in &spec.patch_lanes {
+        match lane.effective_preflight_readiness.as_str() {
+            "dependency_blocked" | "structurally_blocked" | "surface_mismatch" => {
+                if lane.superseded_by_patch_kinds.is_empty() {
+                    continue;
+                }
+                let mut ready_replacements = Vec::new();
+                let mut already_present_replacements = Vec::new();
+                let mut unsupported = false;
+                for replacement in &lane.superseded_by_patch_kinds {
+                    let Some(replacement_lane) = spec
+                        .patch_lanes
+                        .iter()
+                        .find(|candidate| candidate.patch_kind == *replacement)
+                    else {
+                        unsupported = true;
+                        break;
+                    };
+                    match replacement_lane.effective_preflight_readiness.as_str() {
+                        "ready" => ready_replacements.push(replacement.clone()),
+                        "already_present" => {
+                            already_present_replacements.push(replacement.clone())
+                        }
+                        _ => {
+                            unsupported = true;
+                            break;
+                        }
+                    }
+                }
+                let bundle_status = if unsupported {
+                    "not_decomposable".to_string()
+                } else if !ready_replacements.is_empty() {
+                    "ready_for_composition".to_string()
+                } else if !already_present_replacements.is_empty() {
+                    "already_present".to_string()
+                } else {
+                    "not_decomposable".to_string()
+                };
+                bundles.insert(
+                    lane.patch_kind.clone(),
+                    ProjectHistoricalBlockerBundle {
+                        replacement_patch_kinds: lane.superseded_by_patch_kinds.clone(),
+                        ready_replacement_patch_kinds: ready_replacements,
+                        already_present_replacement_patch_kinds: already_present_replacements,
+                        bundle_status,
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+    bundles
+}
+
 fn project_patch_blocker_type_counts(
     spec: &ProjectSpec,
-) -> (usize, usize) {
+) -> (usize, usize, usize) {
     let mut risky = 0usize;
     let mut historical = 0usize;
+    let mut decomposable_historical = 0usize;
     for lane in &spec.patch_lanes {
         match lane.effective_preflight_readiness.as_str() {
             "dependency_blocked" | "structurally_blocked" | "surface_mismatch" => {
@@ -13252,12 +15967,33 @@ fn project_patch_blocker_type_counts(
                     risky += 1;
                 } else {
                     historical += 1;
+                    let mut supported = true;
+                    for replacement in &lane.superseded_by_patch_kinds {
+                        let Some(replacement_lane) = spec
+                            .patch_lanes
+                            .iter()
+                            .find(|candidate| candidate.patch_kind == *replacement)
+                        else {
+                            supported = false;
+                            break;
+                        };
+                        match replacement_lane.effective_preflight_readiness.as_str() {
+                            "ready" | "already_present" => {}
+                            _ => {
+                                supported = false;
+                                break;
+                            }
+                        }
+                    }
+                    if supported {
+                        decomposable_historical += 1;
+                    }
                 }
             }
             _ => {}
         }
     }
-    (risky, historical)
+    (risky, historical, decomposable_historical)
 }
 
 fn blocked_patch_lane_total(counts: &BTreeMap<String, usize>) -> usize {
@@ -13268,13 +16004,14 @@ fn blocked_patch_lane_total(counts: &BTreeMap<String, usize>) -> usize {
 
 fn count_projects_with_risky_or_historical_blockers(
     runtime_root: &Path,
-) -> (usize, usize) {
+) -> (usize, usize, usize) {
     let receipts_dir = runtime_root.join("project_patch_readiness_receipts");
     let Ok(entries) = fs::read_dir(receipts_dir) else {
-        return (0, 0);
+        return (0, 0, 0);
     };
     let mut risky_projects = 0usize;
     let mut historical_projects = 0usize;
+    let mut decomposable_historical_projects = 0usize;
     for entry in entries.flatten() {
         let Ok(contents) = fs::read_to_string(entry.path()) else {
             continue;
@@ -13288,8 +16025,15 @@ fn count_projects_with_risky_or_historical_blockers(
         if receipt.historical_blocked_lane_count > 0 {
             historical_projects += 1;
         }
+        if receipt.decomposable_historical_blocker_count > 0 {
+            decomposable_historical_projects += 1;
+        }
     }
-    (risky_projects, historical_projects)
+    (
+        risky_projects,
+        historical_projects,
+        decomposable_historical_projects,
+    )
 }
 
 fn classify_project_patchability_change(
@@ -13380,6 +16124,8 @@ fn refresh_project_patch_readiness_receipt_for_project(
     let blocked_lane_reasons = project_patch_blocked_lane_reasons(&spec);
     let superseded_blocked_lane_replacements =
         project_patch_superseded_blocked_lane_replacements(&spec);
+    let decomposable_historical_blocker_bundles =
+        project_patch_decomposable_historical_blocker_bundles(&spec);
     let blocker_type_counts = project_patch_blocker_type_counts(&spec);
     let project_spec_path = project_dir.join("ProjectSpec.json");
     let project_spec_hash = stable_json_content_hash(&spec);
@@ -13388,6 +16134,7 @@ fn refresh_project_patch_readiness_receipt_for_project(
         &maturity_counts,
         &blocked_lane_reasons,
         &superseded_blocked_lane_replacements,
+        &decomposable_historical_blocker_bundles,
     ));
     let previous_receipt = load_existing_project_patch_readiness_receipt(runtime_root, project_name);
     let baseline = classify_project_patchability_change(
@@ -13400,6 +16147,11 @@ fn refresh_project_patch_readiness_receipt_for_project(
         receipt_id: chatty_factory_core::timestamp_id("project-patch-readiness"),
         project_name: project_name.to_string(),
         family_id: spec.family_id.as_ref().map(|id| id.as_str().to_string()),
+        family_display_name: spec
+            .family_id
+            .as_ref()
+            .map(governance_family_display_name),
+        family_ecosystem: spec.family_id.as_ref().and_then(governance_family_ecosystem),
         tool_kind: spec.tool_kind.clone(),
         request_summary: spec.request_summary.clone(),
         project_spec_path: project_spec_path.display().to_string(),
@@ -13410,8 +16162,10 @@ fn refresh_project_patch_readiness_receipt_for_project(
         patch_surgical_maturity_counts: maturity_counts,
         blocked_lane_reasons,
         superseded_blocked_lane_replacements,
+        decomposable_historical_blocker_bundles,
         risky_blocked_lane_count: blocker_type_counts.0,
         historical_blocked_lane_count: blocker_type_counts.1,
+        decomposable_historical_blocker_count: blocker_type_counts.2,
         change_since_patchability_baseline_status: baseline.0,
         change_since_patchability_baseline_notes: baseline.1,
         baseline_readiness_signature_hash: baseline.2,

@@ -10,17 +10,23 @@ pub mod project_browser;
 pub mod registries;
 pub mod runtime;
 pub mod snapshot;
+pub mod starters;
 
 pub use contracts::{
     AcceptanceCheck, AcceptancePlan, AcceptanceRecipeStatus, BuildReceipt,
     CapabilityTransition, ChattyCogBridgeCapabilities, ChattyCogBridgeSpec,
-    ChattyCogCommandSpec, ChattyCogModuleSpec, ChattyCogVisualLoadSpec, ClarificationRequest,
+    ChattyCogCommandSpec, ChattyCogModuleSpec, ChattyCogVisualLoadSpec, ChattyEduModuleSpec,
+    ClarificationRequest,
     ComposableRoutePlan, CompositionRouteClass, ContextBundle, DesiredSurface, DiscoveredModel, ExecutionPolicy, ExecutionReceipt,
     ExecutionSmokeCheck, ExoskeletonTarget, FailureClass, FailureReport, FailureReportEvidence,
     FamilyCapabilityManifest, FamilyPrimitiveAdapter, FallbackBuildSpec, FallbackPlanReceipt, HelperAcceptancePlan,
     HelperLaunchPolicy, HelperPrimitiveSpec, HelperRuntimeReceipt, HelperServiceSpec, HelperStatusSnapshot,
+    ApprovedConstraintShelf, BuildVerificationReceipt, ConstraintApprovalReceipt,
+    ConstraintReviewReceipt, ConstraintShelfHistory, ConstraintShelfHistoryEntry,
+    ConstraintShelfMutationReceipt, ConstraintViolation, ImplementationConstraint,
+    ProposedConstraintReceipt,
     OperatorBundleStatus, PatchLaneStatus, PatchReceipt, PlannerDispatchReceipt, PlannerExecutionReceipt,
-    PatchIntentFreeze, ProjectPatchDiagnosis,
+    PatchIntentFreeze, PatchPlanReview, ProjectPatchDiagnosis,
     PlannerHandoff, PlannerResponse, ProjectBrowserState, ProjectCatalogEntry, ProjectSession,
     ProjectSnapshot, ProjectSpec, RequestMode, RequestPlan, RequestRecord, RouteDecision,
     PrimitiveExecutionPlan, PrimitiveExecutionStep, PrimitiveProofEnrichmentBinding,
@@ -44,8 +50,8 @@ pub use heuristics::{
     infer_cli_tool_kind_from_text, infer_explicit_stack_from_text, infer_patch_kind_from_text,
     infer_request_tool_kind_from_text, request_has_cli_shape, request_has_dashboard_shape,
     request_has_explicit_build_shape, request_has_vague_improvement, request_has_web_shape,
-    request_looks_like_followup_action, request_mentions_chattycog, request_mentions_python,
-    request_mentions_rust, should_route_followup_via_planner_text,
+    request_looks_like_followup_action, request_mentions_chattycog, request_mentions_chattyedu,
+    request_mentions_python, request_mentions_rust, should_route_followup_via_planner_text,
     supported_chattycog_bridge_capabilities,
 };
 pub use ids::{FamilyId, OperatorId, WrapperId};
@@ -80,4 +86,8 @@ pub use runtime::{
 };
 pub use snapshot::{
     build_context_bundle, build_project_snapshot, gate_patch_project_snapshot,
+};
+pub use starters::{
+    build_starter_best_for, build_starter_choices, build_starter_label, build_starter_lifecycle,
+    build_starter_picker_label, is_known_build_starter_id, BuildStarterChoice,
 };

@@ -182,14 +182,76 @@ Why:
   - and intentionally historical blocked lanes with known modern replacements
 
 Current notable fields:
+- `family_id`
+- `family_display_name`
+- `family_ecosystem`
 - `readiness_counts`
 - `patch_surgical_maturity_counts`
 - `blocked_lane_reasons`
 - `superseded_blocked_lane_replacements`
+- `decomposable_historical_blocker_bundles`
 - `risky_blocked_lane_count`
 - `historical_blocked_lane_count`
+- `decomposable_historical_blocker_count`
 - `change_since_patchability_baseline_status`
 - `change_since_patchability_baseline_notes`
+
+### `FamilyGovernanceReceipt`
+
+Purpose:
+- persist host-owned governance state for one family manifest over time
+
+Why:
+- family governance should carry product-facing family identity, not just raw ids, so ecosystem-native adoption and drift can be discussed in operator language
+
+Current notable fields:
+- `family_id`
+- `family_display_name`
+- `family_ecosystem`
+- `primary_substrate`
+- `lifecycle_status`
+- `supported_tool_kinds`
+- `provided_build_primitive_classes`
+- `primitive_adapter_ids`
+- `drift_status`
+- `change_since_last_live_status`
+
+### `FamilyUsageSummaryReceipt`
+
+Purpose:
+- summarize which governed families and ecosystems are actually represented in built projects
+
+Why:
+- starter and family governance should be able to answer not just what exists, but what is being used over time in product-facing terms
+
+Current notable fields:
+- `total_projects`
+- `ecosystem_project_counts`
+- `families`
+- `families[].family_id`
+- `families[].family_display_name`
+- `families[].family_ecosystem`
+- `families[].project_count`
+
+### `StarterUsageSummaryReceipt`
+
+Purpose:
+- summarize how often builds were run with an explicit mechanical starter override versus adaptive routing
+
+Why:
+- family adoption and starter adoption are related but not identical, and governance should distinguish deliberate starter choice from the family that ended up on disk
+
+Current notable fields:
+- `total_build_receipts`
+- `explicit_override_builds`
+- `auto_routed_builds`
+- `matched_recommendation_builds`
+- `overridden_recommendation_builds`
+- `starters`
+- `starters[].starter_id`
+- `starters[].starter_label`
+- `starters[].starter_lifecycle`
+- `starters[].build_count`
 
 ## Family-Specific Early Contracts
 
@@ -362,6 +424,7 @@ Suggested fields:
 - `declared_surface_groups`
 - `confirmed_surface_groups`
 - `patch_surgical_maturity`
+- `superseded_by_patch_kinds`
 - `structural_guard_source`
 - `required_anchor_markers`
 - `confirmed_anchor_markers`
@@ -370,7 +433,209 @@ Suggested fields:
 - `preserve_invariants`
 - `risk_notes`
 - `contract_confidence_summary`
+- `replacement_guidance_summary`
 - `freeze_notes`
+- `created_at`
+
+### `PatchPlanReview`
+
+Purpose:
+- host-owned self-review receipt for one frozen patch plan before preflight and execution
+
+Why:
+- diagnosis and freeze are stronger when the host can critique the first draft, narrow the surgical surface, and record whether it proceeded with the original or refined plan
+
+Suggested fields:
+- `review_id`
+- `request_id`
+- `project_name`
+- `diagnosis_id`
+- `freeze_id`
+- `original_intended_patch_kind`
+- `reviewed_intended_patch_kind`
+- `decision`
+- `promoted_candidate_patch_kinds`
+- `original_target_files`
+- `reviewed_target_files`
+- `dropped_target_files`
+- `original_insertion_points`
+- `reviewed_insertion_points`
+- `recommended_replacement_patch_kinds`
+- `reviewed_replacement_bundle_patch_kinds`
+- `reviewed_replacement_bundle_status`
+- `findings`
+- `blocked_reasons`
+- `created_at`
+
+### `ImplementationConstraint`
+
+Purpose:
+- host-owned negative rule describing one implementation method that should not survive planning or self-review
+
+Why:
+- scaling toward broader language and codebase coverage is more realistic when the host can reject known bad implementation methods instead of only trying to enumerate perfect positive lanes
+
+Suggested fields:
+- `constraint_id`
+- `constraint_scope`
+- `constraint_origin`
+- `family_id`
+- `tool_kind`
+- `language_id`
+- `constraint_kind`
+- `forbidden_method_summary`
+- `forbidden_markers`
+- `required_markers`
+- `forbidden_surface_groups`
+- `violation_reason_template`
+- `replacement_guidance`
+- `severity`
+- `active`
+- `created_at`
+
+### `ConstraintReviewReceipt`
+
+Purpose:
+- host-owned review receipt for the constraint shelf stage between patch self-review and execution
+
+Why:
+- diagnosis and self-review should not be the final arbiters of what proceeds; the host should be able to record which forbidden implementation methods were detected and what safer survivors remained
+
+Suggested fields:
+- `review_id`
+- `request_id`
+- `project_name`
+- `family_id`
+- `tool_kind`
+- `review_subject`
+- `original_intended_patch_kind`
+- `reviewed_intended_patch_kind`
+- `selected_constraints`
+- `violations`
+- `surviving_patch_kinds`
+- `surviving_composition_patch_kinds`
+- `blocked_methods`
+- `recommended_replacements`
+- `decision`
+- `findings`
+- `created_at`
+
+### `BuildVerificationReceipt`
+
+Purpose:
+- host-owned verification receipt for deterministic build requests that fall back before a trustworthy build can complete
+
+Why:
+- the negative bookshelf needs a typed way to say not just that a build failed, but what method the factory should stop attempting for this failure class
+
+Suggested fields:
+- `verification_id`
+- `request_id`
+- `review_subject`
+- `interpreted_goal`
+- `candidate_family_ids`
+- `suggested_family_id`
+- `suggested_tool_kind`
+- `suggested_extension_kind`
+- `failure_class`
+- `failure_mode`
+- `reasons`
+- `blocked_methods`
+- `findings`
+- `decision`
+- `created_at`
+
+### `ProposedConstraintReceipt`
+
+Purpose:
+- host-owned proposal artifact for a new negative-rule candidate derived from a failed or fallbacked build verification
+
+Why:
+- the factory should improve from real failures in a reviewable way instead of silently mutating the active shelf
+
+Suggested fields:
+- `proposal_id`
+- `request_id`
+- `source_verification_id`
+- `status`
+- `rationale`
+- `proposed_constraint`
+- `created_at`
+
+### `ApprovedConstraintShelf`
+
+Purpose:
+- host-owned on-disk bookshelf of approved negative constraints that were deliberately promoted from proposals
+
+Why:
+- proposed constraints should not silently become active knowledge; the factory needs a reviewed shelf with stable persistence and auditable contents
+
+Suggested fields:
+- `shelf_id`
+- `constraints`
+- `updated_at`
+
+### `ConstraintShelfHistory`
+
+Purpose:
+- host-owned history file for approved negative constraints that have been retired from the active shelf
+
+Why:
+- shelf cleanup should not erase reliability history; retired rules still deserve provenance even when they no longer belong in the active managed set
+
+Suggested fields:
+- `history_id`
+- `archived_constraints`
+- `updated_at`
+
+### `ConstraintShelfHistoryEntry`
+
+Purpose:
+- one archived approved constraint plus the reason it was retired from the active shelf
+
+Why:
+- a history file is only useful if each archived rule preserves both its content and the retirement context
+
+Suggested fields:
+- `constraint`
+- `archived_reason`
+- `archived_from_shelf_id`
+- `archived_match_count`
+- `archived_at`
+
+### `ConstraintApprovalReceipt`
+
+Purpose:
+- host-owned approval audit receipt for promoting one proposed constraint into the approved shelf
+
+Why:
+- the negative bookshelf becomes trustworthy when each promotion has provenance, not just a mutated proposal file
+
+Suggested fields:
+- `approval_id`
+- `request_id`
+- `proposal_id`
+- `approved_constraint_id`
+- `status`
+- `shelf_path`
+- `proposal_path`
+- `rationale`
+- `created_at`
+
+### `ConstraintShelfMutationReceipt`
+
+Purpose:
+- host-owned audit receipt for activating or deactivating one approved negative constraint in the shelf
+
+Why:
+- once the shelf becomes editable, state changes should be traceable instead of silently mutating the active rule set
+
+Suggested fields:
+- `mutation_id`
+- `constraint_id`
+- `action`
+- `shelf_path`
+- `status`
 - `created_at`
 
 ### `PatchDiagnosisPostcheckReceipt`

@@ -7,6 +7,8 @@ pub enum FamilyId {
     #[serde(alias = "chattycog_basic_dashboard")]
     ChattycogWebviewModule,
     ChattycogNativeWindowModule,
+    ChattyeduNativeWindowModule,
+    ChattycogChattyeduNativeWindowModule,
     ChattycogWorkspaceModule,
     PythonCliTool,
     RustCliTool,
@@ -18,6 +20,10 @@ impl FamilyId {
             Self::StaticWebDashboard => "static_web_dashboard",
             Self::ChattycogWebviewModule => "chattycog_webview_module",
             Self::ChattycogNativeWindowModule => "chattycog_native_window_module",
+            Self::ChattyeduNativeWindowModule => "chattyedu_native_window_module",
+            Self::ChattycogChattyeduNativeWindowModule => {
+                "chattycog_chattyedu_native_window_module"
+            }
             Self::ChattycogWorkspaceModule => "chattycog_workspace_module",
             Self::PythonCliTool => "python_cli_tool",
             Self::RustCliTool => "rust_cli_tool",

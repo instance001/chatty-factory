@@ -49,6 +49,66 @@ pub fn base_environment() -> Result<Environment<'static>> {
         include_str!("../../../templates/families/rust_cli_tool/README.md.j2"),
     )?;
     env.add_template(
+        "families/chattycog_native_window_module/Cargo.toml",
+        include_str!("../../../templates/families/chattycog_native_window_module/Cargo.toml.j2"),
+    )?;
+    env.add_template(
+        "families/chattycog_native_window_module/main.rs",
+        include_str!("../../../templates/families/chattycog_native_window_module/main.rs.j2"),
+    )?;
+    env.add_template(
+        "families/chattycog_native_window_module/README.md",
+        include_str!("../../../templates/families/chattycog_native_window_module/README.md.j2"),
+    )?;
+    env.add_template(
+        "families/chattycog_native_window_module/STATE_TEMPLATE.md",
+        include_str!("../../../templates/families/chattycog_native_window_module/STATE_TEMPLATE.md.j2"),
+    )?;
+    env.add_template(
+        "families/chattycog_native_window_module/network_capabilities.json",
+        include_str!("../../../templates/families/chattycog_native_window_module/network_capabilities.json.j2"),
+    )?;
+    env.add_template(
+        "families/chattyedu_native_window_module/Cargo.toml",
+        include_str!("../../../templates/families/chattyedu_native_window_module/Cargo.toml.j2"),
+    )?;
+    env.add_template(
+        "families/chattyedu_native_window_module/main.rs",
+        include_str!("../../../templates/families/chattyedu_native_window_module/main.rs.j2"),
+    )?;
+    env.add_template(
+        "families/chattyedu_native_window_module/README.md",
+        include_str!("../../../templates/families/chattyedu_native_window_module/README.md.j2"),
+    )?;
+    env.add_template(
+        "families/chattyedu_native_window_module/STATE_TEMPLATE.md",
+        include_str!("../../../templates/families/chattyedu_native_window_module/STATE_TEMPLATE.md.j2"),
+    )?;
+    env.add_template(
+        "families/chattyedu_native_window_module/network_capabilities.json",
+        include_str!("../../../templates/families/chattyedu_native_window_module/network_capabilities.json.j2"),
+    )?;
+    env.add_template(
+        "families/chattycog_chattyedu_native_window_module/Cargo.toml",
+        include_str!("../../../templates/families/chattycog_chattyedu_native_window_module/Cargo.toml.j2"),
+    )?;
+    env.add_template(
+        "families/chattycog_chattyedu_native_window_module/main.rs",
+        include_str!("../../../templates/families/chattycog_chattyedu_native_window_module/main.rs.j2"),
+    )?;
+    env.add_template(
+        "families/chattycog_chattyedu_native_window_module/README.md",
+        include_str!("../../../templates/families/chattycog_chattyedu_native_window_module/README.md.j2"),
+    )?;
+    env.add_template(
+        "families/chattycog_chattyedu_native_window_module/STATE_TEMPLATE.md",
+        include_str!("../../../templates/families/chattycog_chattyedu_native_window_module/STATE_TEMPLATE.md.j2"),
+    )?;
+    env.add_template(
+        "families/chattycog_chattyedu_native_window_module/network_capabilities.json",
+        include_str!("../../../templates/families/chattycog_chattyedu_native_window_module/network_capabilities.json.j2"),
+    )?;
+    env.add_template(
         "wrappers/chattycog/manifest.json",
         include_str!("../../../templates/wrappers/chattycog/manifest.json.j2"),
     )?;

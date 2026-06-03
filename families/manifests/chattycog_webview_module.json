@@ -1,6 +1,11 @@
 {
   "family_id": "chattycog_webview_module",
   "primary_substrate": "web",
+  "lifecycle_status": "frozen",
+  "lifecycle_notes": [
+    "Historical Chatty-Cog webview starter retained as a regression and compatibility surface.",
+    "Do not expand this family by default; prefer the native-window skeleton for new Chatty-Cog module work."
+  ],
   "supports_standalone": true,
   "supports_chattycog_wrapper": true,
   "supported_stack_ids": ["chattycog", "module", "web"],

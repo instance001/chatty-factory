@@ -5,9 +5,9 @@ use anyhow::{bail, Result};
 use chatty_factory_core::{
     AcceptanceCheck, AcceptancePlan, BuildReceipt, ChattyCogBridgeCapabilities,
     ChattyCogBridgeSpec, ChattyCogCommandSpec, ChattyCogModuleSpec, ChattyCogVisualLoadSpec,
-    DesiredSurface, ExoskeletonTarget, FamilyId, HelperLaunchPolicy, HelperPrimitiveSpec,
-    HelperServiceSpec, HelperStatusSnapshot, PatchLaneStatus, PatchReceipt, ProjectSpec,
-    RequestPlan, ScaffoldInputs,
+    ChattyEduModuleSpec, DesiredSurface, ExoskeletonTarget, FamilyId, HelperLaunchPolicy,
+    HelperPrimitiveSpec, HelperServiceSpec, HelperStatusSnapshot, PatchLaneStatus, PatchReceipt,
+    ProjectSpec, RequestPlan, ScaffoldInputs,
 };
 use chatty_factory_templates::render_named;
 use serde_json::to_string_pretty;
@@ -87,6 +87,22 @@ pub fn built_in_families() -> Vec<FamilyDescriptor> {
         },
         FamilyDescriptor {
             id: FamilyId::ChattycogNativeWindowModule,
+            status: "planned",
+            priority: FamilyPriority::Tier1,
+            primary_substrate: DesiredSurface::Desktop,
+            supports_chattycog_wrapper: true,
+            supports_standalone: true,
+        },
+        FamilyDescriptor {
+            id: FamilyId::ChattyeduNativeWindowModule,
+            status: "planned",
+            priority: FamilyPriority::Tier1,
+            primary_substrate: DesiredSurface::Desktop,
+            supports_chattycog_wrapper: false,
+            supports_standalone: true,
+        },
+        FamilyDescriptor {
+            id: FamilyId::ChattycogChattyeduNativeWindowModule,
             status: "planned",
             priority: FamilyPriority::Tier1,
             primary_substrate: DesiredSurface::Desktop,
@@ -1349,27 +1365,44 @@ pub fn build_chattycog_native_window_module(
     let title = title_or_default(inputs, "ChattyCog Native Window Module");
     let summary = summary_or_default(
         inputs,
-        "A deterministic ChattyCog-compatible native-window module starter emitted by the ChattyFactory rebuild.",
+        "A deterministic standalone Rust GUI dashboard with removable Chatty-Cog compatibility plug files emitted by the ChattyFactory rebuild.",
     );
     let display_name = title.to_string();
     let module_id = inputs.project_name.replace('-', "_");
-
-    let main_py = format!(
-        "import tkinter as tk\n\nTITLE = {title:?}\n\nroot = tk.Tk()\nroot.title(TITLE)\nroot.geometry('900x620')\n\nheader = tk.Label(root, text=TITLE, font=('Segoe UI', 20, 'bold'))\nheader.pack(pady=(24, 8))\nsummary = tk.Label(root, text={summary:?}, wraplength=760, justify='left')\nsummary.pack(padx=24)\nstatus = tk.Label(root, text='Native module starter ready for deterministic follow-up work.', fg='#1f6f50')\nstatus.pack(pady=18)\nframe = tk.Frame(root, padx=16, pady=16, bd=1, relief='solid')\nframe.pack(fill='both', expand=True, padx=24, pady=16)\ntext = tk.Text(frame, wrap='word')\ntext.insert('1.0', 'Use this standalone window as the real module UI.\\n\\nNext good moves:\\n- add focused controls\\n- add bridge updates\\n- add real module logic')\ntext.pack(fill='both', expand=True)\nroot.mainloop()\n"
-    );
+    let self_test_message = format!("{} native_window_self_test_ok", module_id);
+    let package_name = inputs.project_name.clone();
+    let executable_name = format!("{}.exe", package_name);
+    let executable_path = format!("target/debug/{}", executable_name);
+    let native_context = serde_json::json!({
+        "package_name": package_name,
+        "title": title,
+        "summary": summary,
+        "module_id": module_id,
+        "display_name": display_name,
+        "title_literal": serde_json::to_string(title)?,
+        "summary_literal": serde_json::to_string(summary)?,
+        "module_id_literal": serde_json::to_string(&module_id)?,
+        "display_name_literal": serde_json::to_string(&display_name)?,
+        "self_test_message_literal": serde_json::to_string(&self_test_message)?,
+        "self_test_message": self_test_message,
+    });
 
     let visual_load = ChattyCogVisualLoadSpec {
         kind: "native_window".into(),
         auto_launch: true,
         title: Some(display_name.clone()),
-        notes: Some("ChattyFactory rebuild native window module".into()),
+        notes: Some("ChattyFactory rebuild native Rust dashboard module".into()),
         file: None,
         url: None,
         window_title_contains: Some(display_name.clone()),
-        build_command: None,
+        build_command: Some(ChattyCogCommandSpec {
+            program: "cargo".into(),
+            args: vec!["build".into()],
+            cwd: Some(".".into()),
+        }),
         launch_command: Some(ChattyCogCommandSpec {
-            program: "py".into(),
-            args: vec!["-3".into(), "src/main.py".into()],
+            program: executable_path.clone(),
+            args: Vec::new(),
             cwd: Some(".".into()),
         }),
         serve_command: None,
@@ -1383,7 +1416,7 @@ pub fn build_chattycog_native_window_module(
         description: summary.to_string(),
         visual_kind: "native_window".into(),
         visual_title: display_name.clone(),
-        visual_file: "src/main.py".into(),
+        visual_file: executable_path.clone(),
         handshake_path: "HANDSHAKE.md".into(),
         manifest_path: "manifest.json".into(),
         visual_load_path: Some("visual_load.json".into()),
@@ -1415,12 +1448,15 @@ pub fn build_chattycog_native_window_module(
         spec_id: "chattyfactory.project_spec.v2".into(),
         project_name: inputs.project_name.clone(),
         family_id: Some(FamilyId::ChattycogNativeWindowModule),
-        substrate: "python_native_window_with_chattycog_wrapper".into(),
+        substrate: "rust_native_window_with_chattycog_wrapper".into(),
         tool_kind: Some("native_window_starter".into()),
         request_summary: Some(inputs.summary.clone()),
-        entrypoints: vec!["src/main.py".into()],
+        entrypoints: vec!["Cargo.toml".into(), "src/main.rs".into()],
         expected_files: vec![
-            "src/main.py".into(),
+            "Cargo.toml".into(),
+            "src/main.rs".into(),
+            "README.md".into(),
+            "STATE_TEMPLATE.md".into(),
             "manifest.json".into(),
             "visual_load.json".into(),
             "HANDSHAKE.md".into(),
@@ -1430,13 +1466,32 @@ pub fn build_chattycog_native_window_module(
             "bridge/shared_room_events.json".into(),
             "bridge/outgoing_room_events.json".into(),
             "bridge/incoming_assets/module_assets/.keep".into(),
+            "network_capabilities.json".into(),
             "ChattyCogModuleSpec.json".into(),
             "ProjectSpec.json".into(),
             "AcceptancePlan.json".into(),
         ],
         features: inputs.feature_tokens.clone(),
-        acceptance_commands: vec!["python_module_syntax".into()],
+        acceptance_commands: vec!["cargo_check".into(), "cargo_run_native_window_self_test".into()],
         acceptance_checks: vec![
+            AcceptanceCheck {
+                check_id: "native-cargo-manifest".into(),
+                kind: "exists".into(),
+                target: "Cargo.toml".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "native-main-entrypoint".into(),
+                kind: "exists".into(),
+                target: "src/main.rs".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "native-self-test-marker".into(),
+                kind: "contains".into(),
+                target: "src/main.rs".into(),
+                expected: Some("native_window_self_test_ok".into()),
+            },
             AcceptanceCheck {
                 check_id: "native-module-contract".into(),
                 kind: "chattycog_module_contract".into(),
@@ -1466,6 +1521,7 @@ pub fn build_chattycog_native_window_module(
             "bridge/shared_room_events.json".into(),
             "bridge/outgoing_room_events.json".into(),
             "bridge/incoming_assets/module_assets/.keep".into(),
+            "network_capabilities.json".into(),
             "ChattyCogModuleSpec.json".into(),
         ],
         chattycog_hosting_mode: Some("hosted_native_window".into()),
@@ -1485,11 +1541,58 @@ pub fn build_chattycog_native_window_module(
         acceptance_id: format!("acceptance-{}", inputs.project_name),
         request_id: format!("request-{}", inputs.project_name),
         family_id: Some(FamilyId::ChattycogNativeWindowModule),
-        checks: project_spec.acceptance_checks.clone(),
+        checks: vec![
+            AcceptanceCheck {
+                check_id: "cargo-exists".into(),
+                kind: "exists".into(),
+                target: "Cargo.toml".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "main-exists".into(),
+                kind: "exists".into(),
+                target: "src/main.rs".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "cargo-check".into(),
+                kind: "cargo_check".into(),
+                target: ".".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "native-self-test".into(),
+                kind: "cargo_run_output_contains".into(),
+                target: "-- --self-test".into(),
+                expected: Some(self_test_message.clone()),
+            },
+            AcceptanceCheck {
+                check_id: "module-contract".into(),
+                kind: "chattycog_module_contract".into(),
+                target: "ChattyCogModuleSpec.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "visual-load-contract".into(),
+                kind: "chattycog_visual_load_contract".into(),
+                target: "visual_load.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "bridge-contract".into(),
+                kind: "chattycog_bridge_contract".into(),
+                target: "ChattyCogModuleSpec.json".into(),
+                expected: None,
+            },
+        ],
         required_files: project_spec.expected_files.clone(),
-        required_markers: vec!["tk.Tk()".into()],
-        commands: vec!["python_module_syntax".into()],
-        expected_outputs: vec!["visual_load.json".into(), "src/main.py".into()],
+        required_markers: vec![
+            "native_window_self_test_ok".into(),
+            "// bridge_status_panel_anchor".into(),
+            "// ready_toggle_anchor".into(),
+        ],
+        commands: vec!["cargo_check".into(), "cargo_run_native_window_self_test".into()],
+        expected_outputs: vec!["visual_load.json".into(), "src/main.rs".into()],
         helper_checks: Vec::new(),
         schema_checks: Vec::new(),
     };
@@ -1499,12 +1602,42 @@ pub fn build_chattycog_native_window_module(
         "display_name": display_name,
         "icon": "window",
         "description": summary,
-        "visual_notes": "ChattyFactory rebuild native window module",
-        "handshake_notes": "This family emits a standalone Python native-window starter that ChattyCog can dock through visual_load metadata.",
+        "visual_notes": "ChattyFactory rebuild native Rust dashboard module",
+        "handshake_notes": "This family emits a standalone Rust GUI dashboard with removable Chatty-Cog compatibility files and a native-window hosting contract.",
     });
+    let handshake_md = format!(
+        "# {display_name}\n\nThis module was built by the ChattyFactory rebuild as a standalone Rust GUI dashboard with removable Chatty-Cog compatibility files.\n\n## Module identity\n\n- **module_id**: `{module_id}`\n- **display_name**: `{display_name}`\n\n## What this module is for\n\n{summary}\n\n## Inputs this module expects\n\n- plain-language module or dashboard requests\n- follow-up feature and patch requests\n- optional hosted Chatty-Cog bridge state when the module is docked inside Chatty-Cog\n\n## Outputs this module produces\n\n- a standalone Rust GUI dashboard\n- Chatty-Cog discovery and hosting metadata\n- a portable bridge status lane\n- deterministic project and acceptance contracts\n\n## Module Surface\n\n- standalone native window UI\n- Chatty-Cog manifest and visual load plug files\n- bridge stubs for status and room/event handoff\n- project contract and acceptance lane\n\n## Suspend rundown template\n\n> **Status:** blank native Rust dashboard shell is live and ready for feature work\n> **What changed:** standalone GUI substrate and Chatty-Cog compatibility plug files were emitted\n> **Open questions:** confirm the next module capability or patch lane to add\n> **Next action:** apply the next accepted deterministic patch or module feature bundle\n> **Artifacts:** `ProjectSpec.json`, `AcceptancePlan.json`, `bridge/status.json`, `network_capabilities.json`\n\n## Notes\n\nRemove the Chatty-Cog plug files if you want to keep the dashboard standalone-only.\n"
+    );
 
     let files = vec![
-        ("src/main.py", main_py),
+        (
+            "Cargo.toml",
+            render_named(
+                "families/chattycog_native_window_module/Cargo.toml",
+                &native_context,
+            )?,
+        ),
+        (
+            "src/main.rs",
+            render_named(
+                "families/chattycog_native_window_module/main.rs",
+                &native_context,
+            )?,
+        ),
+        (
+            "README.md",
+            render_named(
+                "families/chattycog_native_window_module/README.md",
+                &native_context,
+            )?,
+        ),
+        (
+            "STATE_TEMPLATE.md",
+            render_named(
+                "families/chattycog_native_window_module/STATE_TEMPLATE.md",
+                &native_context,
+            )?,
+        ),
         (
             "manifest.json",
             render_named("wrappers/chattycog/manifest.json", &wrapper_context)?,
@@ -1517,12 +1650,12 @@ pub fn build_chattycog_native_window_module(
         ),
         (
             "HANDSHAKE.md",
-            render_named("wrappers/chattycog/HANDSHAKE.md", &wrapper_context)?,
+            handshake_md,
         ),
         (
             "bridge/status.json",
             format!(
-                "{{\n  \"module_id\": \"{}\",\n  \"event_type\": \"suspend_rundown\",\n  \"summary\": \"\",\n  \"snapshot\": \"\",\n  \"tags\": [\"native_window\"],\n  \"payload\": {{}},\n  \"updated_at_unix_ms\": 0\n}}\n",
+                "{{\n  \"module_id\": \"{}\",\n  \"event_type\": \"suspend_rundown\",\n  \"summary\": \"Native Rust dashboard shell is ready for patch layering.\",\n  \"snapshot\": \"Hosted bridge contract is seeded and waiting for real module state.\",\n  \"tags\": [\"native_window\", \"rust_dashboard\"],\n  \"payload\": {{}},\n  \"updated_at_unix_ms\": 0\n}}\n",
                 module_id
             ),
         ),
@@ -1543,7 +1676,686 @@ pub fn build_chattycog_native_window_module(
             "bridge/incoming_assets/module_assets/.keep",
             "module_assets inbox lane\n".into(),
         ),
+        (
+            "network_capabilities.json",
+            render_named(
+                "families/chattycog_native_window_module/network_capabilities.json",
+                &native_context,
+            )?,
+        ),
         ("ChattyCogModuleSpec.json", to_string_pretty(&module_spec)?),
+        ("ProjectSpec.json", to_string_pretty(&project_spec)?),
+        ("AcceptancePlan.json", to_string_pretty(&acceptance_plan)?),
+    ];
+
+    write_project_files(&project_dir, files)
+}
+
+pub fn build_chattyedu_native_window_module(
+    output_root: &Path,
+    inputs: &ScaffoldInputs,
+) -> Result<BuildArtifacts> {
+    if !matches!(
+        inputs.family_id,
+        Some(FamilyId::ChattyeduNativeWindowModule)
+    ) {
+        bail!(
+            "chattyedu native window builder requires family_id chattyedu_native_window_module"
+        );
+    }
+
+    let project_dir = output_root.join(&inputs.project_name);
+    fs::create_dir_all(project_dir.join("src"))?;
+    fs::create_dir_all(project_dir.join("bridge"))?;
+
+    let title = title_or_default(inputs, "Chatty-EDU Native Rust Module");
+    let summary = summary_or_default(
+        inputs,
+        "A deterministic standalone Rust GUI dashboard with removable Chatty-EDU compatibility plug files emitted by ChattyFactory.",
+    );
+    let display_name = title.to_string();
+    let module_id = inputs.project_name.replace('-', "_");
+    let self_test_message = format!("{} native_window_self_test_ok", module_id);
+    let package_name = inputs.project_name.clone();
+    let executable_name = format!("{}.exe", package_name);
+    let executable_path = format!("target/debug/{}", executable_name);
+    let native_context = serde_json::json!({
+        "package_name": package_name,
+        "title": title,
+        "summary": summary,
+        "module_id": module_id,
+        "display_name": display_name,
+        "title_literal": serde_json::to_string(title)?,
+        "summary_literal": serde_json::to_string(summary)?,
+        "module_id_literal": serde_json::to_string(&module_id)?,
+        "display_name_literal": serde_json::to_string(&display_name)?,
+        "self_test_message_literal": serde_json::to_string(&self_test_message)?,
+        "self_test_message": self_test_message,
+    });
+
+    let project_spec = ProjectSpec {
+        spec_id: "chattyfactory.project_spec.v2".into(),
+        project_name: inputs.project_name.clone(),
+        family_id: Some(FamilyId::ChattyeduNativeWindowModule),
+        substrate: "rust_native_window_with_chattyedu_wrapper".into(),
+        tool_kind: Some("native_window_starter".into()),
+        request_summary: Some(inputs.summary.clone()),
+        entrypoints: vec!["Cargo.toml".into(), "src/main.rs".into()],
+        expected_files: vec![
+            "Cargo.toml".into(),
+            "src/main.rs".into(),
+            "README.md".into(),
+            "STATE_TEMPLATE.md".into(),
+            "manifest.json".into(),
+            "visual_load.json".into(),
+            "HANDSHAKE.md".into(),
+            "bridge/.gitkeep".into(),
+            "network_capabilities.json".into(),
+            "ChattyEduModuleSpec.json".into(),
+            "ProjectSpec.json".into(),
+            "AcceptancePlan.json".into(),
+        ],
+        features: inputs.feature_tokens.clone(),
+        acceptance_commands: vec!["cargo_check".into(), "cargo_run_native_window_self_test".into()],
+        acceptance_checks: vec![
+            AcceptanceCheck {
+                check_id: "native-cargo-manifest".into(),
+                kind: "exists".into(),
+                target: "Cargo.toml".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "native-main-entrypoint".into(),
+                kind: "exists".into(),
+                target: "src/main.rs".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "native-self-test-marker".into(),
+                kind: "contains".into(),
+                target: "src/main.rs".into(),
+                expected: Some("native_window_self_test_ok".into()),
+            },
+            AcceptanceCheck {
+                check_id: "chattyedu-bridge-env".into(),
+                kind: "contains".into(),
+                target: "src/main.rs".into(),
+                expected: Some("CHATTYEDU_BRIDGE_STATUS".into()),
+            },
+            AcceptanceCheck {
+                check_id: "visual-load-native-window".into(),
+                kind: "contains".into(),
+                target: "visual_load.json".into(),
+                expected: Some("\"kind\": \"native_window\"".into()),
+            },
+        ],
+        wrapper_metadata: vec![
+            "manifest.json".into(),
+            "visual_load.json".into(),
+            "HANDSHAKE.md".into(),
+            "bridge/.gitkeep".into(),
+            "network_capabilities.json".into(),
+            "ChattyEduModuleSpec.json".into(),
+        ],
+        chattycog_hosting_mode: None,
+        chattycog_ui_owner: None,
+        chattycog_bridge_capabilities: None,
+        helper_services: Vec::new(),
+        supported_patch_kinds: vec!["bridge_status_panel".into(), "ready_toggle".into()],
+        patch_lanes: Vec::new(),
+        acceptance_recipes: Vec::new(),
+        operator_bundles: Vec::new(),
+        updated_at: None,
+    };
+    let mut project_spec = project_spec;
+    refresh_project_contract_views(&mut project_spec);
+
+    let module_spec = ChattyEduModuleSpec {
+        module_spec_id: "chattyfactory.chattyedu_module_spec.v1".into(),
+        project_name: inputs.project_name.clone(),
+        module_id: module_id.clone(),
+        display_name: display_name.clone(),
+        description: summary.to_string(),
+        visual_kind: "native_window".into(),
+        visual_title: display_name.clone(),
+        visual_file: executable_path.clone(),
+        handshake_path: "HANDSHAKE.md".into(),
+        manifest_path: "manifest.json".into(),
+        visual_load_path: "visual_load.json".into(),
+        network_capabilities_path: "network_capabilities.json".into(),
+        bridge_status_env_var: "CHATTYEDU_BRIDGE_STATUS".into(),
+        created_at: None,
+    };
+
+    let acceptance_plan = AcceptancePlan {
+        acceptance_id: format!("acceptance-{}", inputs.project_name),
+        request_id: format!("request-{}", inputs.project_name),
+        family_id: Some(FamilyId::ChattyeduNativeWindowModule),
+        checks: vec![
+            AcceptanceCheck {
+                check_id: "cargo-exists".into(),
+                kind: "exists".into(),
+                target: "Cargo.toml".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "main-exists".into(),
+                kind: "exists".into(),
+                target: "src/main.rs".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "manifest-exists".into(),
+                kind: "exists".into(),
+                target: "manifest.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "visual-load-exists".into(),
+                kind: "exists".into(),
+                target: "visual_load.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "chattyedu-module-contract".into(),
+                kind: "chattyedu_module_contract".into(),
+                target: "ChattyEduModuleSpec.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "chattyedu-visual-load-contract".into(),
+                kind: "chattyedu_visual_load_contract".into(),
+                target: "visual_load.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "handshake-exists".into(),
+                kind: "exists".into(),
+                target: "HANDSHAKE.md".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "cargo-check".into(),
+                kind: "cargo_check".into(),
+                target: ".".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "native-self-test".into(),
+                kind: "cargo_run_output_contains".into(),
+                target: "-- --self-test".into(),
+                expected: Some(self_test_message.clone()),
+            },
+        ],
+        required_files: project_spec.expected_files.clone(),
+        required_markers: vec![
+            "native_window_self_test_ok".into(),
+            "CHATTYEDU_BRIDGE_STATUS".into(),
+            "\"kind\": \"native_window\"".into(),
+            "// bridge_status_panel_anchor".into(),
+            "// ready_toggle_anchor".into(),
+        ],
+        commands: vec!["cargo_check".into(), "cargo_run_native_window_self_test".into()],
+        expected_outputs: vec!["visual_load.json".into(), "src/main.rs".into()],
+        helper_checks: Vec::new(),
+        schema_checks: Vec::new(),
+    };
+
+    let manifest = serde_json::json!({
+        "module_id": module_id,
+        "display_name": display_name,
+        "icon": "window",
+        "description": summary,
+    });
+    let visual_load = serde_json::json!({
+        "kind": "native_window",
+        "auto_launch": true,
+        "window_title_contains": display_name,
+        "notes": "This starter keeps native app state inside the module folder and only uses the bridge for Chatty-EDU handoff.",
+        "build": {
+            "program": "cargo",
+            "args": ["build"],
+            "cwd": "."
+        },
+        "launch": {
+            "program": executable_path,
+            "cwd": "."
+        }
+    });
+    let handshake_md = format!(
+        "# {display_name} Handshake\n\n- **module_id**: `{module_id}`\n- **display_name**: `{display_name}`\n\n## What this module is for\n\n{summary}\n\n## Inputs this module expects\n\n- plain-language education or classroom workflow requests\n- follow-up feature and patch requests\n- optional hosted Chatty-EDU bridge state when the module is docked inside Chatty-EDU\n\n## Outputs this module produces\n\n- a standalone Rust GUI dashboard\n- Chatty-EDU discovery and hosting metadata\n- a portable bridge handoff lane through `CHATTYEDU_BRIDGE_STATUS`\n- deterministic project and acceptance contracts\n\n## Suspend rundown template\n\n> **Status:** current state in one sentence\n> **What changed:** short summary of recent progress\n> **Open questions:** anything still unresolved\n> **Next action:** the next useful move\n> **Artifacts:** files or outputs to revisit\n\n## Portable bridge note\n\nThis starter checks `CHATTYEDU_BRIDGE_STATUS` when hosted inside Chatty-EDU and writes a short handoff there. Outside Chatty-EDU it simply ignores the bridge and runs normally.\n"
+    );
+
+    let files = vec![
+        (
+            "Cargo.toml",
+            render_named(
+                "families/chattyedu_native_window_module/Cargo.toml",
+                &native_context,
+            )?,
+        ),
+        (
+            "src/main.rs",
+            render_named(
+                "families/chattyedu_native_window_module/main.rs",
+                &native_context,
+            )?,
+        ),
+        (
+            "README.md",
+            render_named(
+                "families/chattyedu_native_window_module/README.md",
+                &native_context,
+            )?,
+        ),
+        (
+            "STATE_TEMPLATE.md",
+            render_named(
+                "families/chattyedu_native_window_module/STATE_TEMPLATE.md",
+                &native_context,
+            )?,
+        ),
+        ("manifest.json", to_string_pretty(&manifest)?),
+        ("visual_load.json", to_string_pretty(&visual_load)?),
+        ("HANDSHAKE.md", handshake_md),
+        (
+            "network_capabilities.json",
+            render_named(
+                "families/chattyedu_native_window_module/network_capabilities.json",
+                &native_context,
+            )?,
+        ),
+        ("bridge/.gitkeep", "".into()),
+        ("ChattyEduModuleSpec.json", to_string_pretty(&module_spec)?),
+        ("ProjectSpec.json", to_string_pretty(&project_spec)?),
+        ("AcceptancePlan.json", to_string_pretty(&acceptance_plan)?),
+    ];
+
+    write_project_files(&project_dir, files)
+}
+
+pub fn build_chattycog_chattyedu_native_window_module(
+    output_root: &Path,
+    inputs: &ScaffoldInputs,
+) -> Result<BuildArtifacts> {
+    if !matches!(
+        inputs.family_id,
+        Some(FamilyId::ChattycogChattyeduNativeWindowModule)
+    ) {
+        bail!(
+            "chattycog/chattyedu native window builder requires family_id chattycog_chattyedu_native_window_module"
+        );
+    }
+
+    let project_dir = output_root.join(&inputs.project_name);
+    fs::create_dir_all(project_dir.join("src"))?;
+
+    let title = title_or_default(inputs, "Chatty-Cog + Chatty-EDU Native Rust Module");
+    let summary = summary_or_default(
+        inputs,
+        "A deterministic standalone Rust GUI dashboard with both Chatty-Cog and Chatty-EDU compatibility plug files emitted by ChattyFactory.",
+    );
+    let display_name = title.to_string();
+    let module_id = inputs.project_name.replace('-', "_");
+    let self_test_message = format!("{} native_window_self_test_ok", module_id);
+    let package_name = inputs.project_name.clone();
+    let executable_name = format!("{}.exe", package_name);
+    let executable_path = format!("target/debug/{}", executable_name);
+    let native_context = serde_json::json!({
+        "package_name": package_name,
+        "title": title,
+        "summary": summary,
+        "module_id": module_id,
+        "display_name": display_name,
+        "title_literal": serde_json::to_string(title)?,
+        "summary_literal": serde_json::to_string(summary)?,
+        "module_id_literal": serde_json::to_string(&module_id)?,
+        "display_name_literal": serde_json::to_string(&display_name)?,
+        "self_test_message_literal": serde_json::to_string(&self_test_message)?,
+        "self_test_message": self_test_message,
+    });
+
+    let visual_load = ChattyCogVisualLoadSpec {
+        kind: "native_window".into(),
+        auto_launch: true,
+        title: Some(display_name.clone()),
+        notes: Some(
+            "ChattyFactory rebuild native Rust dashboard that can be hosted by either Chatty-Cog or Chatty-EDU.".into(),
+        ),
+        file: None,
+        url: None,
+        window_title_contains: Some(display_name.clone()),
+        build_command: Some(ChattyCogCommandSpec {
+            program: "cargo".into(),
+            args: vec!["build".into()],
+            cwd: Some(".".into()),
+        }),
+        launch_command: Some(ChattyCogCommandSpec {
+            program: executable_path.clone(),
+            args: Vec::new(),
+            cwd: Some(".".into()),
+        }),
+        serve_command: None,
+        serve_wait_ms: None,
+    };
+    let chattycog_module_spec = ChattyCogModuleSpec {
+        module_spec_id: "chattyfactory.chattycog_module_spec.v1".into(),
+        project_name: inputs.project_name.clone(),
+        module_id: module_id.clone(),
+        display_name: display_name.clone(),
+        description: summary.to_string(),
+        visual_kind: "native_window".into(),
+        visual_title: display_name.clone(),
+        visual_file: executable_path.clone(),
+        handshake_path: "HANDSHAKE.md".into(),
+        manifest_path: "manifest.json".into(),
+        visual_load_path: Some("visual_load.json".into()),
+        visual_load: Some(visual_load.clone()),
+        bridge: ChattyCogBridgeSpec {
+            status_path: "bridge/status.json".into(),
+            script_path: None,
+            log_sources_path: Some("bridge/log_sources.json".into()),
+            capabilities: ChattyCogBridgeCapabilities {
+                status_enabled: true,
+                log_sources_enabled: true,
+                shared_room_state_enabled: true,
+                shared_room_events_enabled: true,
+                outgoing_room_events_enabled: true,
+                incoming_asset_lanes: vec!["module_assets".into()],
+            },
+            recommended_runtime_files: vec![
+                "bridge/status.json".into(),
+                "bridge/log_sources.json".into(),
+                "bridge/shared_room_state.json".into(),
+                "bridge/shared_room_events.json".into(),
+                "bridge/outgoing_room_events.json".into(),
+                "bridge/incoming_assets/module_assets".into(),
+            ],
+        },
+        created_at: None,
+    };
+    let chattyedu_module_spec = ChattyEduModuleSpec {
+        module_spec_id: "chattyfactory.chattyedu_module_spec.v1".into(),
+        project_name: inputs.project_name.clone(),
+        module_id: module_id.clone(),
+        display_name: display_name.clone(),
+        description: summary.to_string(),
+        visual_kind: "native_window".into(),
+        visual_title: display_name.clone(),
+        visual_file: executable_path.clone(),
+        handshake_path: "HANDSHAKE.md".into(),
+        manifest_path: "manifest.json".into(),
+        visual_load_path: "visual_load.json".into(),
+        network_capabilities_path: "network_capabilities.json".into(),
+        bridge_status_env_var: "CHATTYEDU_BRIDGE_STATUS".into(),
+        created_at: None,
+    };
+
+    let project_spec = ProjectSpec {
+        spec_id: "chattyfactory.project_spec.v2".into(),
+        project_name: inputs.project_name.clone(),
+        family_id: Some(FamilyId::ChattycogChattyeduNativeWindowModule),
+        substrate: "rust_native_window_with_chattycog_and_chattyedu_wrappers".into(),
+        tool_kind: Some("native_window_starter".into()),
+        request_summary: Some(inputs.summary.clone()),
+        entrypoints: vec!["Cargo.toml".into(), "src/main.rs".into()],
+        expected_files: vec![
+            "Cargo.toml".into(),
+            "src/main.rs".into(),
+            "README.md".into(),
+            "STATE_TEMPLATE.md".into(),
+            "manifest.json".into(),
+            "visual_load.json".into(),
+            "HANDSHAKE.md".into(),
+            "bridge/status.json".into(),
+            "bridge/log_sources.json".into(),
+            "bridge/shared_room_state.json".into(),
+            "bridge/shared_room_events.json".into(),
+            "bridge/outgoing_room_events.json".into(),
+            "bridge/incoming_assets/module_assets/.keep".into(),
+            "network_capabilities.json".into(),
+            "ChattyCogModuleSpec.json".into(),
+            "ChattyEduModuleSpec.json".into(),
+            "ProjectSpec.json".into(),
+            "AcceptancePlan.json".into(),
+        ],
+        features: inputs.feature_tokens.clone(),
+        acceptance_commands: vec!["cargo_check".into(), "cargo_run_native_window_self_test".into()],
+        acceptance_checks: vec![
+            AcceptanceCheck {
+                check_id: "native-cargo-manifest".into(),
+                kind: "exists".into(),
+                target: "Cargo.toml".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "native-main-entrypoint".into(),
+                kind: "exists".into(),
+                target: "src/main.rs".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "native-self-test-marker".into(),
+                kind: "contains".into(),
+                target: "src/main.rs".into(),
+                expected: Some("native_window_self_test_ok".into()),
+            },
+            AcceptanceCheck {
+                check_id: "dual-chattycog-module-contract".into(),
+                kind: "chattycog_module_contract".into(),
+                target: "ChattyCogModuleSpec.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "dual-chattycog-bridge-contract".into(),
+                kind: "chattycog_bridge_contract".into(),
+                target: "ChattyCogModuleSpec.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "dual-chattyedu-module-contract".into(),
+                kind: "chattyedu_module_contract".into(),
+                target: "ChattyEduModuleSpec.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "dual-chattyedu-bridge-env".into(),
+                kind: "contains".into(),
+                target: "src/main.rs".into(),
+                expected: Some("CHATTYEDU_BRIDGE_STATUS".into()),
+            },
+        ],
+        wrapper_metadata: vec![
+            "manifest.json".into(),
+            "visual_load.json".into(),
+            "HANDSHAKE.md".into(),
+            "bridge/status.json".into(),
+            "bridge/log_sources.json".into(),
+            "bridge/shared_room_state.json".into(),
+            "bridge/shared_room_events.json".into(),
+            "bridge/outgoing_room_events.json".into(),
+            "bridge/incoming_assets/module_assets/.keep".into(),
+            "network_capabilities.json".into(),
+            "ChattyCogModuleSpec.json".into(),
+            "ChattyEduModuleSpec.json".into(),
+        ],
+        chattycog_hosting_mode: Some("hosted_native_window".into()),
+        chattycog_ui_owner: Some("module".into()),
+        chattycog_bridge_capabilities: Some(chattycog_module_spec.bridge.capabilities.clone()),
+        helper_services: Vec::new(),
+        supported_patch_kinds: vec!["bridge_status_panel".into(), "ready_toggle".into()],
+        patch_lanes: Vec::new(),
+        acceptance_recipes: Vec::new(),
+        operator_bundles: Vec::new(),
+        updated_at: None,
+    };
+    let mut project_spec = project_spec;
+    refresh_project_contract_views(&mut project_spec);
+
+    let acceptance_plan = AcceptancePlan {
+        acceptance_id: format!("acceptance-{}", inputs.project_name),
+        request_id: format!("request-{}", inputs.project_name),
+        family_id: Some(FamilyId::ChattycogChattyeduNativeWindowModule),
+        checks: vec![
+            AcceptanceCheck {
+                check_id: "cargo-exists".into(),
+                kind: "exists".into(),
+                target: "Cargo.toml".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "main-exists".into(),
+                kind: "exists".into(),
+                target: "src/main.rs".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "cargo-check".into(),
+                kind: "cargo_check".into(),
+                target: ".".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "native-self-test".into(),
+                kind: "cargo_run_output_contains".into(),
+                target: "-- --self-test".into(),
+                expected: Some(self_test_message.clone()),
+            },
+            AcceptanceCheck {
+                check_id: "chattycog-module-contract".into(),
+                kind: "chattycog_module_contract".into(),
+                target: "ChattyCogModuleSpec.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "chattycog-visual-load-contract".into(),
+                kind: "chattycog_visual_load_contract".into(),
+                target: "visual_load.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "chattycog-bridge-contract".into(),
+                kind: "chattycog_bridge_contract".into(),
+                target: "ChattyCogModuleSpec.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "chattyedu-module-contract".into(),
+                kind: "chattyedu_module_contract".into(),
+                target: "ChattyEduModuleSpec.json".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
+                check_id: "chattyedu-visual-load-contract".into(),
+                kind: "chattyedu_visual_load_contract".into(),
+                target: "visual_load.json".into(),
+                expected: None,
+            },
+        ],
+        required_files: project_spec.expected_files.clone(),
+        required_markers: vec![
+            "native_window_self_test_ok".into(),
+            "CHATTYEDU_BRIDGE_STATUS".into(),
+            "\"kind\": \"native_window\"".into(),
+            "// bridge_status_panel_anchor".into(),
+            "// ready_toggle_anchor".into(),
+        ],
+        commands: vec!["cargo_check".into(), "cargo_run_native_window_self_test".into()],
+        expected_outputs: vec!["visual_load.json".into(), "src/main.rs".into()],
+        helper_checks: Vec::new(),
+        schema_checks: Vec::new(),
+    };
+
+    let wrapper_context = serde_json::json!({
+        "module_id": module_id,
+        "display_name": display_name,
+        "icon": "window",
+        "description": summary,
+    });
+    let handshake_md = format!(
+        "# {display_name}\n\nThis module was built by ChattyFactory as a standalone Rust GUI dashboard that can be dropped into either Chatty-Cog or Chatty-EDU.\n\n## Module identity\n\n- **module_id**: `{module_id}`\n- **display_name**: `{display_name}`\n\n## What this module is for\n\n{summary}\n\n## Host compatibility\n\n- standalone by default\n- prefilled Chatty-Cog native-window plug files\n- prefilled Chatty-EDU bridge contract support through `CHATTYEDU_BRIDGE_STATUS`\n- shared `manifest.json`, `visual_load.json`, and `HANDSHAKE.md`\n\n## Outputs this module produces\n\n- a standalone Rust GUI dashboard ready for deterministic patch layering\n- Chatty-Cog discovery and bridge metadata\n- Chatty-EDU discovery and bridge metadata\n- deterministic project and acceptance contracts\n\n## Suspend rundown template\n\n> **Status:** blank dual-host native dashboard shell is live and ready for feature work\n> **What changed:** standalone GUI substrate and both host compatibility layers were emitted\n> **Open questions:** confirm the next module capability or patch bundle to add\n> **Next action:** apply the next accepted deterministic patch or feature bundle\n> **Artifacts:** `ProjectSpec.json`, `AcceptancePlan.json`, `bridge/status.json`, `network_capabilities.json`\n\n## Notes\n\nRemove whichever host plug files you do not need if you want to keep the dashboard bound to only one ecosystem or fully standalone.\n"
+    );
+
+    let manifest_json =
+        render_named("wrappers/chattycog/manifest.json", &wrapper_context)?;
+    let visual_load_json = render_chattycog_visual_load_json(
+        chattycog_module_spec
+            .visual_load
+            .as_ref()
+            .expect("dual-host native visual load"),
+    )?;
+
+    let files = vec![
+        (
+            "Cargo.toml",
+            render_named(
+                "families/chattycog_chattyedu_native_window_module/Cargo.toml",
+                &native_context,
+            )?,
+        ),
+        (
+            "src/main.rs",
+            render_named(
+                "families/chattycog_chattyedu_native_window_module/main.rs",
+                &native_context,
+            )?,
+        ),
+        (
+            "README.md",
+            render_named(
+                "families/chattycog_chattyedu_native_window_module/README.md",
+                &native_context,
+            )?,
+        ),
+        (
+            "STATE_TEMPLATE.md",
+            render_named(
+                "families/chattycog_chattyedu_native_window_module/STATE_TEMPLATE.md",
+                &native_context,
+            )?,
+        ),
+        ("manifest.json", manifest_json),
+        ("visual_load.json", visual_load_json),
+        ("HANDSHAKE.md", handshake_md),
+        (
+            "bridge/status.json",
+            format!(
+                "{{\n  \"module_id\": \"{}\",\n  \"event_type\": \"suspend_rundown\",\n  \"summary\": \"Dual-host native Rust dashboard shell is ready for patch layering.\",\n  \"snapshot\": \"Shared Chatty-Cog bridge contract is seeded and Chatty-EDU bridge env support is live.\",\n  \"tags\": [\"native_window\", \"rust_dashboard\", \"chattycog\", \"chattyedu\"],\n  \"payload\": {{\n    \"dual_host\": true,\n    \"chattyedu_bridge_env\": \"CHATTYEDU_BRIDGE_STATUS\"\n  }},\n  \"updated_at_unix_ms\": 0\n}}\n",
+                module_id
+            ),
+        ),
+        ("bridge/log_sources.json", "{\n  \"sources\": []\n}\n".into()),
+        (
+            "bridge/shared_room_state.json",
+            "{\n  \"room_active\": false,\n  \"room_policy\": \"general\"\n}\n".into(),
+        ),
+        (
+            "bridge/shared_room_events.json",
+            "{\n  \"events\": []\n}\n".into(),
+        ),
+        (
+            "bridge/outgoing_room_events.json",
+            "{\n  \"events\": []\n}\n".into(),
+        ),
+        (
+            "bridge/incoming_assets/module_assets/.keep",
+            "module_assets inbox lane\n".into(),
+        ),
+        (
+            "network_capabilities.json",
+            render_named(
+                "families/chattycog_chattyedu_native_window_module/network_capabilities.json",
+                &native_context,
+            )?,
+        ),
+        (
+            "ChattyCogModuleSpec.json",
+            to_string_pretty(&chattycog_module_spec)?,
+        ),
+        (
+            "ChattyEduModuleSpec.json",
+            to_string_pretty(&chattyedu_module_spec)?,
+        ),
         ("ProjectSpec.json", to_string_pretty(&project_spec)?),
         ("AcceptancePlan.json", to_string_pretty(&acceptance_plan)?),
     ];
@@ -2655,11 +3467,21 @@ pub fn build_receipt(
     request_id: &str,
     inputs: &ScaffoldInputs,
     artifacts: &BuildArtifacts,
+    starter_override_id: Option<String>,
+    starter_override_summary: Option<String>,
+    recommended_starter_id: Option<String>,
+    recommended_starter_summary: Option<String>,
+    starter_recommendation_comparison: Option<String>,
 ) -> BuildReceipt {
     BuildReceipt {
         receipt_id: format!("build-{}", request_id),
         request_id: request_id.to_string(),
         family_id: inputs.family_id.clone(),
+        starter_override_id,
+        starter_override_summary,
+        recommended_starter_id,
+        recommended_starter_summary,
+        starter_recommendation_comparison,
         project_name: inputs.project_name.clone(),
         project_dir: artifacts.project_dir.display().to_string(),
         tool_kind: config_value(&inputs.entrypoint_config, "tool_kind").map(|v| v.to_string()),
@@ -7928,7 +8750,7 @@ pub fn patch_chattycog_native_bridge_status_panel(
     request_id: &str,
     request_summary: &str,
 ) -> Result<(PatchArtifacts, PatchReceipt)> {
-    let main_path = project_dir.join("src/main.py");
+    let main_path = project_dir.join("src/main.rs");
     let spec_path = project_dir.join("ProjectSpec.json");
     let acceptance_path = project_dir.join("AcceptancePlan.json");
 
@@ -7936,14 +8758,24 @@ pub fn patch_chattycog_native_bridge_status_panel(
     let mut spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(&spec_path)?)?;
     let mut acceptance: AcceptancePlan =
         serde_json::from_str(&fs::read_to_string(&acceptance_path)?)?;
+    let family_id = spec.family_id.clone();
 
     if !main.contains("Bridge activity panel") {
-        let needle = "text.pack(fill='both', expand=True)\nroot.mainloop()\n";
-        let insert = "text.pack(fill='both', expand=True)\n\nbridge_panel = tk.LabelFrame(root, text='Bridge activity panel', padx=12, pady=12)\nbridge_panel.pack(fill='x', padx=24, pady=(0, 18))\nbridge_status = tk.Label(\n    bridge_panel,\n    text='Hosted bridge lanes ready: shared room state, room events, outgoing events, and module_assets inbox.',\n    justify='left',\n    anchor='w'\n)\nbridge_status.pack(fill='x')\nroot.mainloop()\n";
-        if main.contains(needle) {
-            main = main.replacen(needle, insert, 1);
+        let (anchor, insert) = match family_id.as_ref() {
+            Some(FamilyId::ChattyeduNativeWindowModule)
+            | Some(FamilyId::ChattycogChattyeduNativeWindowModule) => (
+                "                // bridge_status_panel_anchor\n",
+                "                columns[1].add_space(8.0);\n                columns[1].group(|ui| {\n                    ui.strong(\"Bridge activity panel\");\n                    ui.label(\"Hosted bridge lanes ready: shared room state, room events, outgoing events, and module_assets inbox.\");\n                });\n\n                // bridge_status_panel_anchor\n",
+            ),
+            _ => (
+                "            // bridge_status_panel_anchor\n",
+                "            ui.add_space(8.0);\n            ui.group(|ui| {\n                ui.strong(\"Bridge activity panel\");\n                ui.label(\"Hosted bridge lanes ready: shared room state, room events, outgoing events, and module_assets inbox.\");\n            });\n\n            // bridge_status_panel_anchor\n",
+            ),
+        };
+        if main.contains(anchor) {
+            main = main.replacen(anchor, insert, 1);
         } else {
-            bail!("native window main.py did not match expected patch shape");
+            bail!("native window main.rs did not match expected patch shape");
         }
     }
 
@@ -7954,7 +8786,7 @@ pub fn patch_chattycog_native_bridge_status_panel(
         AcceptanceCheck {
             check_id: "bridge-status-panel-marker".into(),
             kind: "contains".into(),
-            target: "src/main.py".into(),
+            target: "src/main.rs".into(),
             expected: Some("Bridge activity panel".into()),
         },
     );
@@ -7963,7 +8795,7 @@ pub fn patch_chattycog_native_bridge_status_panel(
         AcceptanceCheck {
             check_id: "bridge-status-panel-marker".into(),
             kind: "contains".into(),
-            target: "src/main.py".into(),
+            target: "src/main.rs".into(),
             expected: Some("Bridge activity panel".into()),
         },
     );
@@ -7978,7 +8810,7 @@ pub fn patch_chattycog_native_bridge_status_panel(
     let patch_receipt = PatchReceipt {
         patch_id: format!("patch-{}", request_id),
         request_id: request_id.to_string(),
-        family_id: Some(FamilyId::ChattycogNativeWindowModule),
+        family_id,
         project_name: project_name.to_string(),
         patch_kind: "bridge_status_panel".into(),
         request_summary: request_summary.to_string(),
@@ -8005,7 +8837,7 @@ pub fn patch_chattycog_native_ready_toggle(
     request_id: &str,
     request_summary: &str,
 ) -> Result<(PatchArtifacts, PatchReceipt)> {
-    let main_path = project_dir.join("src/main.py");
+    let main_path = project_dir.join("src/main.rs");
     let spec_path = project_dir.join("ProjectSpec.json");
     let acceptance_path = project_dir.join("AcceptancePlan.json");
 
@@ -8013,18 +8845,24 @@ pub fn patch_chattycog_native_ready_toggle(
     let mut spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(&spec_path)?)?;
     let mut acceptance: AcceptancePlan =
         serde_json::from_str(&fs::read_to_string(&acceptance_path)?)?;
+    let family_id = spec.family_id.clone();
 
     if !main.contains("Ready state toggle") {
-        let panel_anchor = "bridge_status.pack(fill='x')\n";
-        let panel_insert = "bridge_status.pack(fill='x')\n\nready_state = tk.StringVar(value='Not ready')\nready_button = tk.Button(\n    bridge_panel,\n    text='Ready state toggle',\n    command=lambda: ready_state.set('Ready' if ready_state.get() != 'Ready' else 'Not ready')\n)\nready_button.pack(anchor='w', pady=(10, 0))\nready_label = tk.Label(bridge_panel, textvariable=ready_state, anchor='w')\nready_label.pack(anchor='w')\n";
-        let fallback_anchor = "text.pack(fill='both', expand=True)\nroot.mainloop()\n";
-        let fallback_insert = "text.pack(fill='both', expand=True)\n\nbridge_panel = tk.LabelFrame(root, text='Bridge activity panel', padx=12, pady=12)\nbridge_panel.pack(fill='x', padx=24, pady=(0, 18))\nbridge_status = tk.Label(\n    bridge_panel,\n    text='Hosted bridge lanes ready: shared room state, room events, outgoing events, and module_assets inbox.',\n    justify='left',\n    anchor='w'\n)\nbridge_status.pack(fill='x')\nready_state = tk.StringVar(value='Not ready')\nready_button = tk.Button(\n    bridge_panel,\n    text='Ready state toggle',\n    command=lambda: ready_state.set('Ready' if ready_state.get() != 'Ready' else 'Not ready')\n)\nready_button.pack(anchor='w', pady=(10, 0))\nready_label = tk.Label(bridge_panel, textvariable=ready_state, anchor='w')\nready_label.pack(anchor='w')\nroot.mainloop()\n";
-        if main.contains(panel_anchor) {
-            main = main.replacen(panel_anchor, panel_insert, 1);
-        } else if main.contains(fallback_anchor) {
-            main = main.replacen(fallback_anchor, fallback_insert, 1);
+        let (anchor, insert) = match family_id.as_ref() {
+            Some(FamilyId::ChattyeduNativeWindowModule)
+            | Some(FamilyId::ChattycogChattyeduNativeWindowModule) => (
+                "                // ready_toggle_anchor\n",
+                "                columns[1].add_space(8.0);\n                columns[1].group(|ui| {\n                    ui.strong(\"Ready state toggle\");\n                    if ui.button(\"Ready state toggle\").clicked() {\n                        self.ready_state = !self.ready_state;\n                    }\n                    ui.label(if self.ready_state { \"Ready\" } else { \"Not ready\" });\n                });\n\n                // ready_toggle_anchor\n",
+            ),
+            _ => (
+                "            // ready_toggle_anchor\n",
+                "            ui.add_space(8.0);\n            ui.group(|ui| {\n                ui.strong(\"Ready state toggle\");\n                if ui.button(\"Ready state toggle\").clicked() {\n                    self.ready_state = !self.ready_state;\n                }\n                ui.label(if self.ready_state { \"Ready\" } else { \"Not ready\" });\n            });\n\n            // ready_toggle_anchor\n",
+            ),
+        };
+        if main.contains(anchor) {
+            main = main.replacen(anchor, insert, 1);
         } else {
-            bail!("native window patch anchor missing in main.py");
+            bail!("native window patch anchor missing in main.rs");
         }
     }
 
@@ -8035,7 +8873,7 @@ pub fn patch_chattycog_native_ready_toggle(
         AcceptanceCheck {
             check_id: "ready-toggle-marker".into(),
             kind: "contains".into(),
-            target: "src/main.py".into(),
+            target: "src/main.rs".into(),
             expected: Some("Ready state toggle".into()),
         },
     );
@@ -8044,7 +8882,7 @@ pub fn patch_chattycog_native_ready_toggle(
         AcceptanceCheck {
             check_id: "ready-toggle-marker".into(),
             kind: "contains".into(),
-            target: "src/main.py".into(),
+            target: "src/main.rs".into(),
             expected: Some("Ready state toggle".into()),
         },
     );
@@ -8059,7 +8897,7 @@ pub fn patch_chattycog_native_ready_toggle(
     let patch_receipt = PatchReceipt {
         patch_id: format!("patch-{}", request_id),
         request_id: request_id.to_string(),
-        family_id: Some(FamilyId::ChattycogNativeWindowModule),
+        family_id,
         project_name: project_name.to_string(),
         patch_kind: "ready_toggle".into(),
         request_summary: request_summary.to_string(),

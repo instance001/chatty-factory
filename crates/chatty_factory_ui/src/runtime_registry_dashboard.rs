@@ -38,6 +38,191 @@ impl ChattyFactoryUiApp {
             ui.label("No runtime model catalog found yet.");
         }
         ui.separator();
+        ui.heading("Family Usage");
+        if let Some(summary) = load_family_usage_summary(&self.workspace_root) {
+            let canonical_shell_entries = summary
+                .families
+                .iter()
+                .filter(|entry| is_canonical_ecosystem_shell_family(&entry.family_id))
+                .collect::<Vec<_>>();
+            let canonical_shell_project_count = canonical_shell_entries
+                .iter()
+                .map(|entry| entry.project_count)
+                .sum::<usize>();
+            ui.label(format!("Built projects tracked: {}", summary.total_projects));
+            ui.label(format!(
+                "Canonical ecosystem shell projects: {} across {} family surface(s)",
+                canonical_shell_project_count,
+                canonical_shell_entries.len()
+            ));
+            if summary.ecosystem_project_counts.is_empty() {
+                ui.label("No ecosystem-native family usage recorded yet.");
+            } else {
+                for (ecosystem, count) in &summary.ecosystem_project_counts {
+                    ui.label(format!("{ecosystem}: {count} project(s)"));
+                }
+            }
+            if !canonical_shell_entries.is_empty() {
+                ui.label("Canonical ecosystem shell set");
+                for entry in canonical_shell_entries.iter().take(3) {
+                    let label = match entry.family_ecosystem.as_deref() {
+                        Some(ecosystem) => format!(
+                            "- {} [ecosystem: {}] -> {} project(s)",
+                            entry.family_display_name, ecosystem, entry.project_count
+                        ),
+                        None => format!(
+                            "- {} -> {} project(s)",
+                            entry.family_display_name, entry.project_count
+                        ),
+                    };
+                    ui.label(label);
+                }
+            }
+            if !summary.families.is_empty() {
+                ui.label("Top family usage");
+                for entry in summary.families.iter().take(5) {
+                    let label = match entry.family_ecosystem.as_deref() {
+                        Some(ecosystem) => format!(
+                            "- {} [ecosystem: {}] -> {} project(s)",
+                            entry.family_display_name, ecosystem, entry.project_count
+                        ),
+                        None => format!(
+                            "- {} -> {} project(s)",
+                            entry.family_display_name, entry.project_count
+                        ),
+                    };
+                    ui.label(label);
+                }
+            }
+            ui.horizontal_wrapped(|ui| {
+                if ui.small_button("Refresh family governance now").clicked() {
+                    self.spawn_task(UiTask::RefreshFamilyGovernance);
+                }
+                ui.separator();
+                ui.label(format!("Usage updated: {}", summary.updated_at));
+            });
+        } else {
+            ui.label("No family usage summary found yet.");
+            if ui.small_button("Refresh family governance now").clicked() {
+                self.spawn_task(UiTask::RefreshFamilyGovernance);
+            }
+        }
+        ui.separator();
+        ui.heading("Starter Usage");
+        if let Some(summary) = load_starter_usage_summary(&self.workspace_root) {
+            let recent_builds = load_recent_build_receipts(&self.workspace_root);
+            let recent_overrides = recent_builds
+                .iter()
+                .filter(|receipt| {
+                    receipt.starter_recommendation_comparison.as_deref()
+                        == Some("overrode_normal_routing")
+                })
+                .collect::<Vec<_>>();
+            ui.label(format!("Build receipts tracked: {}", summary.total_build_receipts));
+            ui.label(format!(
+                "Explicit mechanical starter builds: {}",
+                summary.explicit_override_builds
+            ));
+            ui.label(format!("Auto-routed builds: {}", summary.auto_routed_builds));
+            ui.label(format!(
+                "Matched normal recommendation: {}",
+                summary.matched_recommendation_builds
+            ));
+            ui.label(format!(
+                "Overrode normal recommendation: {}",
+                summary.overridden_recommendation_builds
+            ));
+            ui.label(format!(
+                "Recent override events in view: {}",
+                recent_overrides.len()
+            ));
+            if !summary.starters.is_empty() {
+                ui.label("Top starter usage");
+                for entry in summary.starters.iter().take(5) {
+                    ui.label(format!(
+                        "- {} [{} | {}] -> {} build(s)",
+                        entry.starter_label,
+                        entry.starter_id,
+                        entry.starter_lifecycle,
+                        entry.build_count
+                    ));
+                }
+            }
+            egui::CollapsingHeader::new("Starter Usage Deep View")
+                .default_open(false)
+                .show(ui, |ui| {
+                    if !recent_builds.is_empty() {
+                        ui.label("Recent starter decisions");
+                        for receipt in recent_builds.iter().take(5) {
+                            let chosen_starter_id =
+                                receipt.starter_override_id.as_deref().unwrap_or("auto");
+                            let chosen_label = build_starter_label(chosen_starter_id);
+                            let comparison = receipt
+                                .starter_recommendation_comparison
+                                .as_deref()
+                                .unwrap_or("unknown");
+                            let recommended_label = receipt
+                                .recommended_starter_id
+                                .as_deref()
+                                .map(build_starter_label)
+                                .unwrap_or("none");
+                            ui.label(format!(
+                                "- {} -> chosen: {} [{}] | recommended: {} | comparison: {}",
+                                receipt.project_name,
+                                chosen_label,
+                                chosen_starter_id,
+                                recommended_label,
+                                comparison
+                            ));
+                            if let Some(summary) = receipt.starter_override_summary.as_deref() {
+                                ui.label(format!("  override: {summary}"));
+                            }
+                            if let Some(summary) = receipt.recommended_starter_summary.as_deref() {
+                                ui.label(format!("  recommendation: {summary}"));
+                            }
+                        }
+                    }
+                    if !recent_overrides.is_empty() {
+                        ui.separator();
+                        ui.label("Recent overrides only");
+                        for receipt in recent_overrides.into_iter().take(5) {
+                            let chosen_starter_id =
+                                receipt.starter_override_id.as_deref().unwrap_or("auto");
+                            let chosen_label = build_starter_label(chosen_starter_id);
+                            let recommended_label = receipt
+                                .recommended_starter_id
+                                .as_deref()
+                                .map(build_starter_label)
+                                .unwrap_or("none");
+                            ui.label(format!(
+                                "- {} -> override: {} [{}] instead of {}",
+                                receipt.project_name,
+                                chosen_label,
+                                chosen_starter_id,
+                                recommended_label
+                            ));
+                            if let Some(summary) = receipt.starter_override_summary.as_deref() {
+                                ui.label(format!("  override: {summary}"));
+                            }
+                        }
+                    }
+                });
+            ui.horizontal_wrapped(|ui| {
+                if ui.small_button("Refresh family governance now").clicked() {
+                    self.spawn_task(UiTask::RefreshFamilyGovernance);
+                }
+                ui.separator();
+                ui.label(format!("Starter usage id: {}", summary.summary_id));
+                ui.separator();
+                ui.label(format!("Starter usage updated: {}", summary.updated_at));
+            });
+        } else {
+            ui.label("No starter usage summary found yet.");
+            if ui.small_button("Refresh family governance now").clicked() {
+                self.spawn_task(UiTask::RefreshFamilyGovernance);
+            }
+        }
+        ui.separator();
         ui.heading("Extension Registry");
         if let Some(registry) = self.extension_registry.clone() {
             ui.label(format!(
@@ -139,6 +324,9 @@ impl ChattyFactoryUiApp {
                     self.spawn_task(UiTask::RefreshBridgeGovernance);
                 }
             });
+            egui::CollapsingHeader::new("Extension Registry Controls and Filters")
+                .default_open(false)
+                .show(ui, |ui| {
             if ui
                 .checkbox(
                     &mut self.auto_refresh_stale_proof_governance,
@@ -428,94 +616,106 @@ impl ChattyFactoryUiApp {
                     )),
                 );
             }
-            self.render_family_governance_panel(ui);
-            self.render_template_governance_panel(ui);
+            egui::CollapsingHeader::new("Family Governance Deep View")
+                .default_open(false)
+                .show(ui, |ui| {
+                    self.render_family_governance_panel(ui);
+                });
+            egui::CollapsingHeader::new("Template Governance Deep View")
+                .default_open(false)
+                .show(ui, |ui| {
+                    self.render_template_governance_panel(ui);
+                });
             ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Filter");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.extension_registry_query)
-                        .hint_text("family, tool, patch, status..."),
-                );
-            });
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Sort");
-                ui.selectable_value(
-                    &mut self.extension_registry_sort,
-                    ExtensionRegistrySort::RecentFirst,
-                    "Recent",
-                );
-                ui.selectable_value(
-                    &mut self.extension_registry_sort,
-                    ExtensionRegistrySort::StatusFirst,
-                    "Status",
-                );
-                ui.selectable_value(
-                    &mut self.extension_registry_sort,
-                    ExtensionRegistrySort::FamilyToolPatch,
-                    "Family/Tool",
-                );
-                ui.selectable_value(
-                    &mut self.extension_registry_sort,
-                    ExtensionRegistrySort::ProofRiskFirst,
-                    "Proof risk",
-                );
-            });
-            ui.horizontal_wrapped(|ui| {
-                ui.selectable_value(
-                    &mut self.extension_registry_scope,
-                    ExtensionRegistryScope::All,
-                    "All",
-                );
-                ui.selectable_value(
-                    &mut self.extension_registry_scope,
-                    ExtensionRegistryScope::Shipped,
-                    "Shipped",
-                );
-                ui.selectable_value(
-                    &mut self.extension_registry_scope,
-                    ExtensionRegistryScope::Active,
-                    "Active",
-                );
-                ui.selectable_value(
-                    &mut self.extension_registry_scope,
-                    ExtensionRegistryScope::Archived,
-                    "Archived",
-                );
-            });
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Proof quality");
-                ui.selectable_value(
-                    &mut self.extension_proof_quality_filter,
-                    ProofQualityFilter::All,
-                    "All",
-                );
-                ui.selectable_value(
-                    &mut self.extension_proof_quality_filter,
-                    ProofQualityFilter::Passing,
-                    "Passing",
-                );
-                ui.selectable_value(
-                    &mut self.extension_proof_quality_filter,
-                    ProofQualityFilter::RunnableDiverged,
-                    "Diverged",
-                );
-                ui.selectable_value(
-                    &mut self.extension_proof_quality_filter,
-                    ProofQualityFilter::CatalogResolved,
-                    "Catalog",
-                );
-                ui.selectable_value(
-                    &mut self.extension_proof_quality_filter,
-                    ProofQualityFilter::NeedsContractFix,
-                    "Needs fix",
-                );
-                ui.selectable_value(
-                    &mut self.extension_proof_quality_filter,
-                    ProofQualityFilter::Unknown,
-                    "Unknown",
-                );
-            });
+            egui::CollapsingHeader::new("Extension Registry Deep View")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Filter");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.extension_registry_query)
+                                .hint_text("family, tool, patch, status..."),
+                        );
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Sort");
+                        ui.selectable_value(
+                            &mut self.extension_registry_sort,
+                            ExtensionRegistrySort::RecentFirst,
+                            "Recent",
+                        );
+                        ui.selectable_value(
+                            &mut self.extension_registry_sort,
+                            ExtensionRegistrySort::StatusFirst,
+                            "Status",
+                        );
+                        ui.selectable_value(
+                            &mut self.extension_registry_sort,
+                            ExtensionRegistrySort::FamilyToolPatch,
+                            "Family/Tool",
+                        );
+                        ui.selectable_value(
+                            &mut self.extension_registry_sort,
+                            ExtensionRegistrySort::ProofRiskFirst,
+                            "Proof risk",
+                        );
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.selectable_value(
+                            &mut self.extension_registry_scope,
+                            ExtensionRegistryScope::All,
+                            "All",
+                        );
+                        ui.selectable_value(
+                            &mut self.extension_registry_scope,
+                            ExtensionRegistryScope::Shipped,
+                            "Shipped",
+                        );
+                        ui.selectable_value(
+                            &mut self.extension_registry_scope,
+                            ExtensionRegistryScope::Active,
+                            "Active",
+                        );
+                        ui.selectable_value(
+                            &mut self.extension_registry_scope,
+                            ExtensionRegistryScope::Archived,
+                            "Archived",
+                        );
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Proof quality");
+                        ui.selectable_value(
+                            &mut self.extension_proof_quality_filter,
+                            ProofQualityFilter::All,
+                            "All",
+                        );
+                        ui.selectable_value(
+                            &mut self.extension_proof_quality_filter,
+                            ProofQualityFilter::Passing,
+                            "Passing",
+                        );
+                        ui.selectable_value(
+                            &mut self.extension_proof_quality_filter,
+                            ProofQualityFilter::RunnableDiverged,
+                            "Diverged",
+                        );
+                        ui.selectable_value(
+                            &mut self.extension_proof_quality_filter,
+                            ProofQualityFilter::CatalogResolved,
+                            "Catalog",
+                        );
+                        ui.selectable_value(
+                            &mut self.extension_proof_quality_filter,
+                            ProofQualityFilter::NeedsContractFix,
+                            "Needs fix",
+                        );
+                        ui.selectable_value(
+                            &mut self.extension_proof_quality_filter,
+                            ProofQualityFilter::Unknown,
+                            "Unknown",
+                        );
+                    });
+                });
             ui.horizontal_wrapped(|ui| {
                 ui.label("Proof baseline");
                 ui.selectable_value(
@@ -681,6 +881,7 @@ impl ChattyFactoryUiApp {
                     "Unknown",
                 );
             });
+                });
             let mut filtered_shipped = registry
                 .fully_live_entries
                 .iter()

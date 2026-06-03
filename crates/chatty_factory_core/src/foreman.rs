@@ -13,8 +13,9 @@ use crate::{
     infer_chattycog_hosting_mode_from_text, infer_chattycog_hosting_modes_from_text,
     infer_cli_tool_kind_from_text, infer_explicit_stack_from_text, infer_patch_kind_from_text,
     infer_request_tool_kind_from_text, request_has_cli_shape, request_has_vague_improvement,
-    request_has_web_shape, request_mentions_chattycog, supported_chattycog_bridge_capabilities,
-    request_mentions_python, request_mentions_rust, DesiredSurface, ExoskeletonTarget, FamilyId,
+    request_has_web_shape, request_mentions_chattycog, request_mentions_chattyedu,
+    supported_chattycog_bridge_capabilities, request_mentions_python, request_mentions_rust,
+    DesiredSurface, ExoskeletonTarget, FamilyId,
     OperatorId, PlannerHandoff, PlannerResponse, ProjectSpec, RequestMode, RequestPlan,
     RequestRecord, RouteDecision, ScaffoldInputs, WrapperId,
 };
@@ -45,7 +46,25 @@ pub fn normalize_request(raw_request: &str) -> RequestRecord {
     let lower = raw.to_ascii_lowercase();
     let explicit_stack = infer_explicit_stack_from_text(&lower);
 
+    let wants_chattyedu = request_mentions_chattyedu(&lower);
     let wants_chattycog = request_mentions_chattycog(&lower);
+    let wants_dual_host = wants_chattycog
+        && wants_chattyedu
+        && contains_any(
+            &lower,
+            &[
+                "both",
+                "either",
+                "dual host",
+                "dual-host",
+                "both hosts",
+                "either host",
+                "both exoskeletons",
+                "either exoskeleton",
+                "chatty-cog and chatty-edu",
+                "chattycog and chattyedu",
+            ],
+        );
     let wants_rust = request_mentions_rust(&lower);
     let wants_python = request_mentions_python(&lower);
     let requested_chattycog_modes = infer_chattycog_hosting_modes_from_text(&lower);
@@ -72,17 +91,26 @@ pub fn normalize_request(raw_request: &str) -> RequestRecord {
     } else {
         rank_family_candidates(&lower, &requested_capabilities)
     };
-    if wants_chattycog && helper_or_service_heavy {
+    if (wants_chattycog || wants_chattyedu) && helper_or_service_heavy {
         candidate_family_ids.clear();
     }
-    if wants_chattycog && !helper_or_service_heavy {
-        if contains_any(&lower, &["native window", "desktop", "tkinter"]) {
+    if wants_dual_host && !helper_or_service_heavy {
+        ensure_front(
+            &mut candidate_family_ids,
+            FamilyId::ChattycogChattyeduNativeWindowModule,
+        );
+    } else if wants_chattycog && !wants_chattyedu && !helper_or_service_heavy {
+        if contains_any(&lower, &["webview", "browser tab", "hosted webview"]) {
+            ensure_front(&mut candidate_family_ids, FamilyId::ChattycogWebviewModule);
+        } else if contains_any(&lower, &["native window", "desktop", "rust dashboard", "rust gui", "eframe", "egui", "tkinter"]) {
             ensure_front(&mut candidate_family_ids, FamilyId::ChattycogNativeWindowModule);
         } else if contains_any(&lower, &["workspace", "ui.json", "headless", "notes module"]) {
             ensure_front(&mut candidate_family_ids, FamilyId::ChattycogWorkspaceModule);
         } else {
-            ensure_front(&mut candidate_family_ids, FamilyId::ChattycogWebviewModule);
+            ensure_front(&mut candidate_family_ids, FamilyId::ChattycogNativeWindowModule);
         }
+    } else if wants_chattyedu && !wants_chattycog && !helper_or_service_heavy {
+        ensure_front(&mut candidate_family_ids, FamilyId::ChattyeduNativeWindowModule);
     } else if wants_rust && !helper_or_service_heavy {
         ensure_front(&mut candidate_family_ids, FamilyId::RustCliTool);
     } else if wants_python && !helper_or_service_heavy {
@@ -99,7 +127,7 @@ pub fn normalize_request(raw_request: &str) -> RequestRecord {
         Some(DesiredSurface::Unknown)
     };
 
-    let exoskeleton_target = if wants_chattycog {
+    let exoskeleton_target = if wants_chattycog && !wants_dual_host {
         Some(ExoskeletonTarget::ChattyCog)
     } else {
         Some(ExoskeletonTarget::None)
@@ -152,6 +180,10 @@ pub fn derive_scaffold_inputs(
             "chattycog_webview_module"
         } else if matches!(family_id, Some(FamilyId::ChattycogNativeWindowModule)) {
             "chattycog_native_window_module"
+        } else if matches!(family_id, Some(FamilyId::ChattyeduNativeWindowModule)) {
+            "chattyedu_native_window_module"
+        } else if matches!(family_id, Some(FamilyId::ChattycogChattyeduNativeWindowModule)) {
+            "chattycog_chattyedu_native_window_module"
         } else if matches!(family_id, Some(FamilyId::ChattycogWorkspaceModule)) {
             "chattycog_workspace_module"
         } else if matches!(family_id, Some(FamilyId::PythonCliTool)) {
@@ -568,9 +600,10 @@ fn infer_tool_kind(request: &RequestRecord) -> Option<String> {
     let wants_chattycog = matches!(
         request.exoskeleton_target,
         Some(ExoskeletonTarget::ChattyCog)
-    );
+    ) || request_mentions_chattycog(&lower);
+    let wants_chattyedu = request_mentions_chattyedu(&lower);
     let desired_surface_cli = matches!(request.desired_surface, Some(DesiredSurface::Cli));
-    infer_request_tool_kind_from_text(&lower, wants_chattycog, desired_surface_cli)
+    infer_request_tool_kind_from_text(&lower, wants_chattycog, wants_chattyedu, desired_surface_cli)
         .map(str::to_string)
 }
 

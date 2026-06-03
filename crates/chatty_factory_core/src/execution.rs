@@ -37,7 +37,7 @@ pub fn build_execution_policy(
     }
 
     let (allowed_commands, substrate_smoke_checks, notes) = match family_id {
-        Some(FamilyId::PythonCliTool) | Some(FamilyId::ChattycogNativeWindowModule) => (
+        Some(FamilyId::PythonCliTool) => (
             vec!["py".into(), "python".into(), "python3".into()],
             vec![
                 "project_root_confined".into(),
@@ -45,6 +45,21 @@ pub fn build_execution_policy(
                 "python_py_compile".into(),
             ],
             vec!["python-backed outputs get a deterministic syntax smoke pass".into()],
+        ),
+        Some(FamilyId::ChattycogNativeWindowModule)
+        | Some(FamilyId::ChattyeduNativeWindowModule)
+        | Some(FamilyId::ChattycogChattyeduNativeWindowModule) => (
+            vec!["cargo".into()],
+            vec![
+                "project_root_confined".into(),
+                "entrypoints_exist".into(),
+                "cargo_manifest_guardrails".into(),
+                "cargo_metadata_offline".into(),
+            ],
+            vec![
+                "native Rust dashboard outputs get nested workspace and cargo metadata guardrails"
+                    .into(),
+            ],
         ),
         Some(FamilyId::RustCliTool) => (
             vec!["cargo".into()],
@@ -93,11 +108,17 @@ pub fn run_execution_policy(policy: &ExecutionPolicy) -> Result<ExecutionReceipt
     checks.push(run_entrypoints_exist_check(&project_dir, &policy.allowed_entrypoints)?);
 
     match policy.family_id.as_ref() {
-        Some(FamilyId::PythonCliTool) | Some(FamilyId::ChattycogNativeWindowModule) => {
+        Some(FamilyId::PythonCliTool) => {
             checks.push(run_python_py_compile_check(
                 &project_dir,
                 &policy.allowed_entrypoints,
             )?);
+        }
+        Some(FamilyId::ChattycogNativeWindowModule)
+        | Some(FamilyId::ChattyeduNativeWindowModule)
+        | Some(FamilyId::ChattycogChattyeduNativeWindowModule) => {
+            checks.push(run_cargo_manifest_guardrails_check(&project_dir)?);
+            checks.push(run_cargo_metadata_offline_check(&project_dir)?);
         }
         Some(FamilyId::RustCliTool) => {
             checks.push(run_cargo_manifest_guardrails_check(&project_dir)?);

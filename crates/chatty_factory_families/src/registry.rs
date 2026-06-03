@@ -236,10 +236,15 @@ pub(crate) fn patch_structural_guard_spec(
             ],
         }),
         ("chattycog_native_window_module", "bridge_status_panel")
-        | ("chattycog_native_window_module", "ready_toggle") => Some(PatchStructuralGuardSpec {
+        | ("chattycog_native_window_module", "ready_toggle")
+        | ("chattyedu_native_window_module", "bridge_status_panel")
+        | ("chattyedu_native_window_module", "ready_toggle")
+        | ("chattycog_chattyedu_native_window_module", "bridge_status_panel")
+        | ("chattycog_chattyedu_native_window_module", "ready_toggle") => Some(PatchStructuralGuardSpec {
             required_anchor_markers: &[
-                "main.py::def build_parser()",
-                "main.py::def main() -> int:",
+                "src/main.rs::fn main() -> eframe::Result<()> {",
+                "src/main.rs::// bridge_status_panel_anchor",
+                "src/main.rs::// ready_toggle_anchor",
             ],
             conflicting_anchor_markers: &[],
             expected_artifact_groups: &["entrypoints", "contract_files", "documentation_surfaces"],
@@ -936,6 +941,58 @@ pub(crate) fn patch_recipe_registry() -> Vec<PatchRecipeSpec> {
         PatchRecipeSpec {
             recipe_id: "chattycog_native_ready_toggle",
             family_id: "chattycog_native_window_module",
+            tool_kind: Some("native_window_starter"),
+            patch_kind: "ready_toggle",
+            primitive_classes: PATCH_CLASS_SELECTION_CONTROL,
+            dependency_mode: "standalone",
+            requires_features: &[],
+            provides_features: &["ready_toggle"],
+            request_match_any: &["ready toggle", "ready button", "ready state toggle"],
+            request_match_all: &["ready", "toggle"],
+            handler: crate::patch_chattycog_native_ready_toggle,
+        },
+        PatchRecipeSpec {
+            recipe_id: "chattyedu_native_bridge_status_panel",
+            family_id: "chattyedu_native_window_module",
+            tool_kind: Some("native_window_starter"),
+            patch_kind: "bridge_status_panel",
+            primitive_classes: PATCH_CLASS_SUMMARY_SURFACE,
+            dependency_mode: "standalone",
+            requires_features: &[],
+            provides_features: &["bridge_status_panel"],
+            request_match_any: &["bridge status panel", "bridge status", "status panel"],
+            request_match_all: &["bridge", "status"],
+            handler: crate::patch_chattycog_native_bridge_status_panel,
+        },
+        PatchRecipeSpec {
+            recipe_id: "chattyedu_native_ready_toggle",
+            family_id: "chattyedu_native_window_module",
+            tool_kind: Some("native_window_starter"),
+            patch_kind: "ready_toggle",
+            primitive_classes: PATCH_CLASS_SELECTION_CONTROL,
+            dependency_mode: "standalone",
+            requires_features: &[],
+            provides_features: &["ready_toggle"],
+            request_match_any: &["ready toggle", "ready button", "ready state toggle"],
+            request_match_all: &["ready", "toggle"],
+            handler: crate::patch_chattycog_native_ready_toggle,
+        },
+        PatchRecipeSpec {
+            recipe_id: "chattycog_chattyedu_native_bridge_status_panel",
+            family_id: "chattycog_chattyedu_native_window_module",
+            tool_kind: Some("native_window_starter"),
+            patch_kind: "bridge_status_panel",
+            primitive_classes: PATCH_CLASS_SUMMARY_SURFACE,
+            dependency_mode: "standalone",
+            requires_features: &[],
+            provides_features: &["bridge_status_panel"],
+            request_match_any: &["bridge status panel", "bridge status", "status panel"],
+            request_match_all: &["bridge", "status"],
+            handler: crate::patch_chattycog_native_bridge_status_panel,
+        },
+        PatchRecipeSpec {
+            recipe_id: "chattycog_chattyedu_native_ready_toggle",
+            family_id: "chattycog_chattyedu_native_window_module",
             tool_kind: Some("native_window_starter"),
             patch_kind: "ready_toggle",
             primitive_classes: PATCH_CLASS_SELECTION_CONTROL,

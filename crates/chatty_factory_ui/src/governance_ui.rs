@@ -55,11 +55,23 @@ pub fn render_governance_metric_strip(
 ) -> bool {
     let mut clicked = false;
     ui.horizontal_wrapped(|ui| {
-        for (index, metric) in metrics.iter().enumerate() {
-            if index > 0 {
-                ui.separator();
-            }
-            ui.label(metric);
+        for metric in metrics.iter() {
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgb(224, 228, 232))
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(176, 184, 194)))
+                .rounding(6.0)
+                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(metric)
+                                .strong()
+                                .small()
+                                .color(egui::Color32::from_rgb(32, 36, 42)),
+                        )
+                        .wrap(false),
+                    );
+                });
         }
         if !metrics.is_empty() {
             ui.separator();
@@ -76,7 +88,7 @@ pub fn render_governance_refresh_state(
     summary_line: String,
     warning: Option<(egui::Color32, String)>,
 ) {
-    ui.label(summary_line);
+    ui.label(egui::RichText::new(summary_line).small().weak());
     if let Some((color, message)) = warning {
         ui.colored_label(color, message);
     }

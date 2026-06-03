@@ -73,6 +73,12 @@ Build something concrete:
 cargo run -p chatty_factory_cli -- build me a python csv report utility
 ```
 
+Build with a mechanically selected starter:
+
+```powershell
+cargo run -p chatty_factory_cli -- build --starter chattyedu_native_window_module a classroom lesson dashboard module
+```
+
 Patch something:
 
 ```powershell
@@ -102,6 +108,7 @@ In the UI you can:
 - browse generated projects
 - select the active project
 - submit build and patch requests
+- mechanically choose a build starter instead of leaving starter selection to routing guesses
 - inspect project patchability and patch risk
 - inspect extension lanes
 - drive lane lifecycle actions
@@ -114,13 +121,15 @@ In the UI you can:
 At this checkpoint, ChattyFactory can already build and patch several real
 deterministic families.
 
-The current built-in family count is 6.
+The current built-in family count is 8.
 
 ### Supported project shapes
 
 - standalone web dashboards
 - ChattyCog webview modules
 - ChattyCog native-window modules
+- Chatty-EDU native-window modules
+- dual-host Chatty-Cog + Chatty-EDU native-window modules
 - ChattyCog workspace modules
 - Python CLI tools
 - Rust CLI tools
@@ -130,6 +139,7 @@ The current built-in family count is 6.
 The factory is strongest at:
 
 - creating a supported project from plain language
+- building explicit ecosystem-native shells from a mechanically selected starter
 - verifying the result through host-owned checks
 - applying supported follow-up bolt-ons to an existing project
 - diagnosing project structure before patch surgery
@@ -156,6 +166,20 @@ Another example:
 
 ```powershell
 cargo run -p chatty_factory_cli -- make me a ChattyCog webview dashboard module
+```
+
+Mechanical starter examples:
+
+```powershell
+cargo run -p chatty_factory_cli -- build --starter chattycog_native_window_module a shared context handoff dashboard module
+```
+
+```powershell
+cargo run -p chatty_factory_cli -- build --starter chattyedu_native_window_module a kid facing lesson desk module
+```
+
+```powershell
+cargo run -p chatty_factory_cli -- build --starter chattycog_chattyedu_native_window_module a native dashboard module that should load in both chatty-cog and chatty-edu
 ```
 
 ### Patch a project

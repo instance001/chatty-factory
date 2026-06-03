@@ -4,7 +4,8 @@ use std::process::Command;
 
 use anyhow::{bail, Result};
 use chatty_factory_core::{
-    AcceptancePlan, ChattyCogModuleSpec, ChattyCogVisualLoadSpec, FailureClass,
+    AcceptancePlan, ChattyCogModuleSpec, ChattyCogVisualLoadSpec, ChattyEduModuleSpec,
+    FailureClass,
     HelperServiceSpec, HelperStatusSnapshot,
 };
 
@@ -12,12 +13,29 @@ pub fn classify_failure(summary: &str) -> FailureClass {
     let lower = summary.to_ascii_lowercase();
     if lower.contains("schema") || lower.contains("metadata") {
         FailureClass::InvalidMetadata
+    } else if lower.contains("helper summary surface contract failed")
+        || lower.contains("helper processed")
+        || lower.contains("helper service spec")
+        || lower.contains("helper status snapshot")
+        || lower.contains("helper summary snapshot")
+    {
+        FailureClass::HelperWiringFailure
+    } else if lower.contains("chattycog module contract failed")
+        || lower.contains("chattycog visual load contract failed")
+        || lower.contains("chattycog bridge contract failed")
+        || lower.contains("chattyedu module contract failed")
+        || lower.contains("chattyedu visual load contract failed")
+    {
+        FailureClass::StructuredCodeGenerationMismatch
     } else if lower.contains("policy")
         || lower.contains("outside output root")
         || lower.contains("safe relative path")
     {
         FailureClass::PolicyViolation
-    } else if lower.contains("missing") && lower.contains("file") {
+    } else if (lower.contains("missing") && lower.contains("file"))
+        || (lower.contains("acceptance check") && lower.contains("missing"))
+        || lower.contains("no such file")
+    {
         FailureClass::MissingExpectedFiles
     } else if lower.contains("syntax") {
         FailureClass::SyntaxFailure
@@ -25,6 +43,41 @@ pub fn classify_failure(summary: &str) -> FailureClass {
         FailureClass::BuildFailure
     } else {
         FailureClass::Unknown
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_failure;
+    use chatty_factory_core::FailureClass;
+
+    #[test]
+    fn helper_contract_failures_classify_as_helper_wiring_failure() {
+        let summary =
+            "helper summary surface contract failed: 'helperSummaryStatusChip' missing from app.js";
+        assert_eq!(
+            classify_failure(summary),
+            FailureClass::HelperWiringFailure
+        );
+    }
+
+    #[test]
+    fn chattycog_contract_failures_classify_as_structured_generation_mismatch() {
+        let summary = "chattycog bridge contract failed: missing bridge/status.json";
+        assert_eq!(
+            classify_failure(summary),
+            FailureClass::StructuredCodeGenerationMismatch
+        );
+    }
+
+    #[test]
+    fn chattyedu_contract_failures_classify_as_structured_generation_mismatch() {
+        let summary =
+            "chattyedu module contract failed: main.rs is missing the bridge env var contract";
+        assert_eq!(
+            classify_failure(summary),
+            FailureClass::StructuredCodeGenerationMismatch
+        );
     }
 }
 
@@ -98,6 +151,12 @@ pub fn verify_acceptance_plan(project_dir: &Path, plan: &AcceptancePlan) -> Resu
             }
             "chattycog_bridge_contract" => {
                 verify_chattycog_bridge_contract(project_dir, &check.target)?;
+            }
+            "chattyedu_module_contract" => {
+                verify_chattyedu_module_contract(project_dir, &check.target)?;
+            }
+            "chattyedu_visual_load_contract" => {
+                verify_chattyedu_visual_load_contract(project_dir, &check.target)?;
             }
             "helper_service_spec" => {
                 verify_helper_service_spec(project_dir, &check.target, check.expected.as_deref())?;
@@ -395,6 +454,95 @@ fn verify_chattycog_bridge_contract(project_dir: &Path, target: &str) -> Result<
                 lane_path.display()
             );
         }
+    }
+    Ok(())
+}
+
+fn verify_chattyedu_module_contract(project_dir: &Path, target: &str) -> Result<()> {
+    let spec_path = project_dir.join(target);
+    let spec: ChattyEduModuleSpec = serde_json::from_str(&fs::read_to_string(&spec_path)?)?;
+
+    let manifest_path = project_dir.join(&spec.manifest_path);
+    let handshake_path = project_dir.join(&spec.handshake_path);
+    let visual_load_path = project_dir.join(&spec.visual_load_path);
+    let network_capabilities_path = project_dir.join(&spec.network_capabilities_path);
+    let main_rs_path = project_dir.join("src/main.rs");
+
+    for path in [
+        &manifest_path,
+        &handshake_path,
+        &visual_load_path,
+        &network_capabilities_path,
+        &main_rs_path,
+    ] {
+        if !path.exists() {
+            bail!("chattyedu module contract failed: missing {}", path.display());
+        }
+    }
+
+    let manifest: serde_json::Value = serde_json::from_str(&fs::read_to_string(&manifest_path)?)?;
+    let visual_load: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&visual_load_path)?)?;
+    let network_capabilities: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&network_capabilities_path)?)?;
+    let handshake = fs::read_to_string(&handshake_path)?;
+    let main_rs = fs::read_to_string(&main_rs_path)?;
+
+    if manifest
+        .get("module_id")
+        .and_then(|value| value.as_str())
+        != Some(spec.module_id.as_str())
+    {
+        bail!("chattyedu module contract failed: manifest module_id did not match module spec");
+    }
+    if manifest
+        .get("display_name")
+        .and_then(|value| value.as_str())
+        != Some(spec.display_name.as_str())
+    {
+        bail!("chattyedu module contract failed: manifest display_name did not match module spec");
+    }
+    if visual_load
+        .get("kind")
+        .and_then(|value| value.as_str())
+        != Some(spec.visual_kind.as_str())
+    {
+        bail!("chattyedu module contract failed: visual_load kind did not match module spec");
+    }
+    if !handshake.contains(&spec.module_id) || !handshake.contains(&spec.display_name) {
+        bail!("chattyedu module contract failed: HANDSHAKE.md is missing module identity fields");
+    }
+    if !main_rs.contains(&spec.bridge_status_env_var) {
+        bail!("chattyedu module contract failed: main.rs is missing the bridge env var contract");
+    }
+    if network_capabilities
+        .get("features")
+        .and_then(|value| value.as_array())
+        .is_none()
+    {
+        bail!("chattyedu module contract failed: network_capabilities.json missing features array");
+    }
+    Ok(())
+}
+
+fn verify_chattyedu_visual_load_contract(project_dir: &Path, target: &str) -> Result<()> {
+    let visual_load_path = project_dir.join(target);
+    let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&visual_load_path)?)?;
+    let spec = parse_visual_load_spec(&value)?;
+    verify_visual_load_value(&value, &spec)?;
+
+    match spec.kind.as_str() {
+        "native_window" => {
+            if spec.launch_command.is_none() {
+                bail!(
+                    "chattyedu visual load contract failed: native_window requires launch command"
+                );
+            }
+        }
+        other => bail!(
+            "chattyedu visual load contract failed: unsupported kind '{}'",
+            other
+        ),
     }
     Ok(())
 }
