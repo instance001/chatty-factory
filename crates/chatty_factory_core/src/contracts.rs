@@ -125,6 +125,281 @@ pub struct RequestPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BuildFeatureSlice {
+    pub slice_id: String,
+    #[serde(default)]
+    pub slice_kind: String,
+    pub title: String,
+    pub summary: String,
+    #[serde(default)]
+    pub why_it_exists: String,
+    #[serde(default)]
+    pub requested_capabilities: Vec<String>,
+    #[serde(default)]
+    pub planner_suggested_features: Vec<String>,
+    #[serde(default)]
+    pub execution_steps: Vec<String>,
+    #[serde(default)]
+    pub acceptance_targets: Vec<String>,
+    #[serde(default)]
+    pub files_to_create: Vec<String>,
+    #[serde(default)]
+    pub files_to_update: Vec<String>,
+    #[serde(default)]
+    pub expected_symbols: Vec<String>,
+    #[serde(default)]
+    pub acceptance_markers: Vec<String>,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PlannedFileOperation {
+    pub operation_id: String,
+    pub path: String,
+    pub operation_kind: String,
+    pub rationale: String,
+    pub source: String,
+    #[serde(default)]
+    pub content_source: String,
+    #[serde(default)]
+    pub target_anchor: Option<String>,
+    #[serde(default)]
+    pub ownership_boundary: String,
+    #[serde(default)]
+    pub syntax_sensitive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BuildPlanArtifact {
+    pub build_plan_id: String,
+    pub request_id: String,
+    pub source_request_plan_id: String,
+    pub project_name: String,
+    pub family_id: Option<FamilyId>,
+    pub starter_override_id: Option<String>,
+    pub recommended_starter_id: Option<String>,
+    pub desired_surface: Option<DesiredSurface>,
+    pub exoskeleton_target: Option<ExoskeletonTarget>,
+    pub tool_kind: Option<String>,
+    pub interpreted_goal: String,
+    #[serde(default)]
+    pub feature_slices: Vec<BuildFeatureSlice>,
+    #[serde(default)]
+    pub planned_file_operations: Vec<PlannedFileOperation>,
+    #[serde(default)]
+    pub acceptance_targets: Vec<String>,
+    #[serde(default)]
+    pub constraints: Vec<String>,
+    #[serde(default)]
+    pub rationale: Vec<String>,
+    #[serde(default)]
+    pub route_decision_reasons: Vec<String>,
+    pub confidence_score: u8,
+    pub confidence_band: String,
+    pub needs_llm_review: bool,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BuildPlanReview {
+    pub review_id: String,
+    pub request_id: String,
+    pub source_build_plan_id: String,
+    pub project_name: String,
+    pub family_id: Option<FamilyId>,
+    pub starter_override_id: Option<String>,
+    pub recommended_starter_id: Option<String>,
+    pub decision: String,
+    pub original_feature_slice_count: usize,
+    pub reviewed_feature_slice_count: usize,
+    #[serde(default)]
+    pub dropped_feature_slice_ids: Vec<String>,
+    pub original_file_operation_count: usize,
+    pub reviewed_file_operation_count: usize,
+    #[serde(default)]
+    pub dropped_file_operation_ids: Vec<String>,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    #[serde(default)]
+    pub blocked_reasons: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BuildConstraintReviewReceipt {
+    pub review_id: String,
+    pub request_id: String,
+    pub build_plan_id: String,
+    pub project_name: String,
+    pub family_id: Option<FamilyId>,
+    pub tool_kind: Option<String>,
+    pub review_subject: String,
+    #[serde(default)]
+    pub selected_constraints: Vec<ImplementationConstraint>,
+    #[serde(default)]
+    pub violations: Vec<ConstraintViolation>,
+    #[serde(default)]
+    pub blocked_methods: Vec<String>,
+    #[serde(default)]
+    pub recommended_replacements: Vec<String>,
+    pub decision: String,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BuildExecutionWorkOrder {
+    pub work_order_id: String,
+    pub request_id: String,
+    pub build_plan_id: String,
+    pub build_plan_review_id: String,
+    pub build_constraint_review_id: String,
+    pub project_name: String,
+    pub family_id: Option<FamilyId>,
+    pub tool_kind: Option<String>,
+    pub starter_override_id: Option<String>,
+    pub decision: String,
+    #[serde(default)]
+    pub feature_slice_ids: Vec<String>,
+    #[serde(default)]
+    pub feature_capabilities: Vec<String>,
+    #[serde(default)]
+    pub operations: Vec<PlannedFileOperation>,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PlanTask {
+    pub task_id: String,
+    pub request_id: String,
+    pub source_build_plan_id: String,
+    pub source_work_order_id: String,
+    pub task_kind: String,
+    pub task_title: String,
+    pub task_summary: String,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    #[serde(default)]
+    pub target_files: Vec<String>,
+    #[serde(default)]
+    pub allowed_boundaries: Vec<String>,
+    #[serde(default)]
+    pub expected_symbols: Vec<String>,
+    #[serde(default)]
+    pub expected_markers: Vec<String>,
+    #[serde(default)]
+    pub verification_steps: Vec<String>,
+    pub replacement_guidance: Option<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PlanTaskList {
+    pub task_list_id: String,
+    pub request_id: String,
+    pub build_plan_id: String,
+    pub build_plan_review_id: String,
+    pub build_constraint_review_id: String,
+    pub build_work_order_id: String,
+    pub project_name: String,
+    pub family_id: Option<FamilyId>,
+    pub tool_kind: Option<String>,
+    #[serde(default)]
+    pub tasks: Vec<PlanTask>,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PlanTaskExecutionReceipt {
+    pub receipt_id: String,
+    pub request_id: String,
+    pub task_id: String,
+    pub task_kind: String,
+    pub status: String,
+    #[serde(default)]
+    pub touched_files: Vec<String>,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PlanTaskExecutionLog {
+    pub log_id: String,
+    pub request_id: String,
+    pub task_list_id: String,
+    pub decision: String,
+    #[serde(default)]
+    pub receipts: Vec<PlanTaskExecutionReceipt>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PlanTaskVerificationReceipt {
+    pub receipt_id: String,
+    pub request_id: String,
+    pub task_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub verification_steps: Vec<String>,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PlanTaskVerificationLog {
+    pub log_id: String,
+    pub request_id: String,
+    pub task_list_id: String,
+    pub decision: String,
+    #[serde(default)]
+    pub receipts: Vec<PlanTaskVerificationReceipt>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PlanTaskModelAttemptReceipt {
+    pub attempt_id: String,
+    pub request_id: String,
+    pub task_id: String,
+    pub project_name: String,
+    pub target_file: Option<String>,
+    pub prompt_path: String,
+    pub generation_receipt_path: Option<String>,
+    pub decomposition_receipt_path: Option<String>,
+    pub raw_response_path: Option<String>,
+    pub model_path: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub review_findings: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TaskDecompositionReceipt {
+    pub decomposition_id: String,
+    pub request_id: String,
+    pub task_id: String,
+    pub project_name: String,
+    pub task_subtype: String,
+    pub trigger_class: String,
+    pub decision: String,
+    pub source_generation_receipt_path: Option<String>,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    #[serde(default)]
+    pub recommended_child_tasks: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PlannerHandoff {
     pub handoff_id: String,
     pub request_id: String,
@@ -951,6 +1226,25 @@ pub struct PlannerExecutionReceipt {
     pub finish_reason: Option<String>,
     pub degraded_recovery_used: bool,
     pub should_escalate: bool,
+    pub notes: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ModelTaskGenerationReceipt {
+    pub execution_id: String,
+    pub request_id: String,
+    pub task_id: String,
+    pub model_path: String,
+    pub launch_args: Vec<String>,
+    pub raw_response_path: Option<String>,
+    pub server_started: bool,
+    pub http_request_ok: bool,
+    pub process_killed: bool,
+    pub finish_reason: Option<String>,
+    pub response_content_mode: Option<String>,
+    pub content_present: bool,
+    pub reasoning_content_present: bool,
     pub notes: Vec<String>,
     pub created_at: Option<String>,
 }

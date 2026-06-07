@@ -12,6 +12,23 @@ If you want the shortest possible description, ChattyFactory is a local build-an
 It also contains a local planning/runtime layer and a desktop UI for managing projects, extension lanes, and lane lifecycle work.
 The current UI is designed as a scrollable summary-first workspace with deeper diagnostics available through expandable sections.
 
+One important architectural shift is now explicit:
+
+- starter families are meant to be stable foundations
+- they are not meant to be the total limit of what the factory can ever build
+
+The long-term goal is for the main limiter to be:
+
+- what the current model can understand and plan
+- what the host can execute safely
+- what verification and the negative bookshelf will allow through
+
+That now includes a newer execution idea:
+
+- if a frozen task is still too large for the current local model/runtime pair,
+  the factory should learn to split that task into smaller children instead of
+  calling it permanently unsupported
+
 ## License
 
 ChattyFactory is licensed under the GNU Affero General Public License v3.0
@@ -117,6 +134,13 @@ In the UI you can:
 - keep notes on lanes
 - export lane summaries and diffs
 
+The UI and CLI surfaces now also reflect build-task governance more clearly:
+
+- starter override vs normal routing
+- plan and work-order artifacts
+- model-authored microtask attempts
+- decomposition recommendations when a task needs to be split further
+
 ## 4. What ChattyFactory Can Do Today
 
 At this checkpoint, ChattyFactory can already build and patch several real
@@ -146,12 +170,49 @@ The factory is strongest at:
 - diagnosing project structure before patch surgery
 - blocking unsafe, duplicate, or superseded patch cuts before handler code mutates the project
 
+The intended next step beyond this is not “keep adding more positive families forever.”
+
+It is:
+
+- keep the starter catalog small
+- let the model plan richer capability on top of those starters
+- let the host and the negative bookshelf decide what is safe to execute
+- let adaptive task decomposition shrink a task further when even the atomized
+  task is still too broad for the current model/runtime pair
+
 ### Honest fallback behavior
 
 If a request is outside supported deterministic lanes, ChattyFactory should not pretend.
 Instead it will produce fallback artifacts, clarification information, and extension scaffolds for the missing lane.
 
 That is expected behavior, not a failure of the architecture.
+
+One important nuance now:
+
+- "not yet proven at this task size" should increasingly become a decomposition
+  or runtime-mode lesson
+- it should not automatically become "unsupported forever"
+
+## 4A. Adaptive Decomposition In Plain English
+
+Sometimes even a small frozen task is still too much for a local model.
+
+When that happens, ChattyFactory is moving toward this behavior:
+
+1. let the model try the current task size
+2. inspect the attempt with narrow review and verification
+3. decide whether the failure means:
+   - the method is bad
+   - or the task itself is still too broad
+4. if the task is too broad, earn a decomposition rule
+5. next time, replace the parent task with smaller child tasks
+
+This is now proven on one real build-side example:
+
+- broad toolbar task
+- then toolbar label sentence
+- then clause-level toolbar tasks
+- then host composition of the final label and Rust syntax
 
 ## 5. Basic CLI Usage
 

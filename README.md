@@ -24,6 +24,9 @@ It now has:
 
 - 8 built-in deterministic families
 - deterministic build and patch flows
+- starter-plus-plan execution artifacts
+- atomized microtask execution with host-sync, host-mechanical, and model-authored task kinds
+- adaptive task decomposition that can replace a failed broad microtask with smaller child tasks on the next run
 - diagnosis-aware patch surgery:
   - diagnosis
   - intent freeze
@@ -37,6 +40,14 @@ The product promise is intentionally bounded:
 - plain-language requests should land on supported deterministic lanes
 - vague requests may trigger clarification or planner guidance instead of fake certainty
 - existing-project patching is strongest on generated projects that still match declared family and patch contracts
+
+But the capability boundary is no longer supposed to be the old positive-lane catalog alone.
+The active direction is:
+
+- starters as stable substrates
+- model-planned feature work on top
+- host-owned freezing, review, and verification
+- adaptive decomposition when a task is still too broad for the current model/runtime pair
 
 ## What It Does Well
 
@@ -118,6 +129,9 @@ It is not claiming universal safe surgery across arbitrary unknown codebases.
 - [MILESTONE_CHECKPOINT.md](./build-docs/checkpoints/MILESTONE_CHECKPOINT.md)
 - [NEXT_WAVE_OPTIONS.md](./build-docs/plans/NEXT_WAVE_OPTIONS.md)
 - [Negative Constraint Shelf Implementation Plan](./build-docs/plans/NEGATIVE_CONSTRAINT_SHELF_IMPLEMENTATION_PLAN.md)
+- [Starter Plus Plan Execution Pivot](./build-docs/plans/STARTER_PLUS_PLAN_EXECUTION_PIVOT.md)
+- [Atomized Microtask Execution Milestone](./build-docs/plans/ATOMIZED_MICROTASK_EXECUTION_MILESTONE.md)
+- [Adaptive Task Decomposition Milestone](./build-docs/plans/ADAPTIVE_TASK_DECOMPOSITION_MILESTONE.md)
 - [Positive Lane Deprecation Plan](./build-docs/plans/POSITIVE_LANE_DEPRECATION_PLAN.md)
 - [HELPER_SERVICE_MILESTONE.md](./build-docs/milestones/HELPER_SERVICE_MILESTONE.md)
 - [Repository Layout](./docs/REPOSITORY_LAYOUT.md)
@@ -185,6 +199,17 @@ The UI now defaults to a summary-first layout:
 - dense governance and diagnostic sections are collapsible
 - project, result, and fallback views keep the most important signal visible first
 
+The build side now also persists reviewed task artifacts under `runtime/`, including:
+
+- build plans
+- build plan reviews
+- build constraint reviews
+- build execution work orders
+- frozen task lists
+- task execution and verification logs
+- model-authored task receipts
+- adaptive task decomposition receipts
+
 If a request is too vague, ChattyFactory may emit clarification or planner
 handoff artifacts instead of guessing.
 
@@ -221,6 +246,17 @@ Current architectural posture:
 - they are now considered transitional rather than sacred
 - template-first skeletons plus the negative bookshelf are the preferred route
   for future reliability gains
+- starter families are being reframed as stable substrates, not the total
+  capability boundary
+- the long-term limiter should be what the current LLM can plan and what the
+  host can execute safely, not the size of the positive family catalog
+- the next execution pivot is toward atomized microtasks, so unsupported work
+  becomes small reviewed tasks instead of giant all-or-nothing generations
+- adaptive decomposition is now real for at least one proven task family:
+  - broad `toolbar_ui_block`
+  - to `toolbar_label_sentence`
+  - to clause-level child tasks
+  - with the host composing the final toolbar sentence and Rust block
 - ecosystem-native starters now exist as explicit mechanical choices:
   - `chattycog_native_window_module`
   - `chattyedu_native_window_module`

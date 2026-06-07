@@ -13,7 +13,11 @@ pub mod snapshot;
 pub mod starters;
 
 pub use contracts::{
-    AcceptanceCheck, AcceptancePlan, AcceptanceRecipeStatus, BuildReceipt,
+    AcceptanceCheck, AcceptancePlan, AcceptanceRecipeStatus, BuildConstraintReviewReceipt,
+    BuildExecutionWorkOrder, BuildFeatureSlice, BuildPlanArtifact, BuildPlanReview, BuildReceipt,
+    PlanTask, PlanTaskExecutionLog, PlanTaskExecutionReceipt, PlanTaskList,
+    PlanTaskModelAttemptReceipt, PlanTaskVerificationLog, PlanTaskVerificationReceipt,
+    TaskDecompositionReceipt,
     CapabilityTransition, ChattyCogBridgeCapabilities, ChattyCogBridgeSpec,
     ChattyCogCommandSpec, ChattyCogModuleSpec, ChattyCogVisualLoadSpec, ChattyEduModuleSpec,
     ClarificationRequest,
@@ -24,8 +28,8 @@ pub use contracts::{
     ApprovedConstraintShelf, BuildVerificationReceipt, ConstraintApprovalReceipt,
     ConstraintReviewReceipt, ConstraintShelfHistory, ConstraintShelfHistoryEntry,
     ConstraintShelfMutationReceipt, ConstraintViolation, ImplementationConstraint,
-    ProposedConstraintReceipt,
-    OperatorBundleStatus, PatchLaneStatus, PatchReceipt, PlannerDispatchReceipt, PlannerExecutionReceipt,
+    PlannedFileOperation, ProposedConstraintReceipt,
+    ModelTaskGenerationReceipt, OperatorBundleStatus, PatchLaneStatus, PatchReceipt, PlannerDispatchReceipt, PlannerExecutionReceipt,
     PatchIntentFreeze, PatchPlanReview, ProjectPatchDiagnosis,
     PlannerHandoff, PlannerResponse, ProjectBrowserState, ProjectCatalogEntry, ProjectSession,
     ProjectSnapshot, ProjectSpec, RequestMode, RequestPlan, RequestRecord, RouteDecision,
@@ -82,7 +86,7 @@ pub use registries::{
 };
 pub use runtime::{
     build_runtime_model_catalog, default_runtime_config, discover_runtime, resolve_model_choice,
-    run_local_planner, run_runtime_smoke,
+    run_local_planner, run_local_text_generation, run_runtime_smoke,
 };
 pub use snapshot::{
     build_context_bundle, build_project_snapshot, gate_patch_project_snapshot,

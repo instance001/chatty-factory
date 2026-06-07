@@ -19,12 +19,15 @@ use chatty_factory_core::{
     infer_chattycog_hosting_modes_from_text, infer_chattycog_bridge_capabilities_from_text,
     load_project_session, normalize_patch_request, normalize_request, persist_json_pretty,
     persist_project_browser_state, persist_project_session, request_mentions_chattycog,
-    resolve_model_choice, run_execution_policy, run_local_planner, run_runtime_smoke,
+    resolve_model_choice, run_execution_policy, run_local_planner, run_local_text_generation, run_runtime_smoke,
     supported_chattycog_bridge_capabilities,
     should_route_followup_via_planner_text, candidate_operator_bundle_ids_for,
     built_in_capability_comparison_bundles, built_in_proof_templates,
-    AcceptanceCheck, AcceptanceRecipeStatus, ApprovedConstraintShelf, ChattyCogBridgeCapabilities,
-    ClarificationRequest,
+    AcceptanceCheck, AcceptanceRecipeStatus, ApprovedConstraintShelf, BuildConstraintReviewReceipt,
+    BuildExecutionWorkOrder, BuildFeatureSlice, BuildPlanArtifact, BuildPlanReview,
+    ChattyCogBridgeCapabilities, ClarificationRequest, ModelTaskGenerationReceipt, PlanTask, PlanTaskExecutionLog,
+    PlanTaskExecutionReceipt, PlanTaskList, PlanTaskVerificationLog,
+    PlanTaskModelAttemptReceipt, PlanTaskVerificationReceipt, TaskDecompositionReceipt,
     capability_comparison_bundle_by_id, capability_comparison_bundle_by_id_from_root,
     proof_template_by_id, proof_template_by_id_from_root, BuildVerificationReceipt,
     ComposableRoutePlan, CompositionRouteClass, ConstraintApprovalReceipt, ConstraintShelfHistory,
@@ -34,7 +37,7 @@ use chatty_factory_core::{
     FamilyPrimitiveAdapter, FallbackBuildSpec, FallbackPlanReceipt,
     HelperRuntimeReceipt, HelperServiceSpec,
     OperatorBundleStatus, PatchLaneStatus, PatchReceipt, PlannerDispatchReceipt, PlannerHandoff,
-    PlannerResponse, PrimitiveExecutionPlan, PrimitiveExecutionStep, PrimitiveProofHarnessReceipt,
+    PlannerResponse, PlannedFileOperation, PrimitiveExecutionPlan, PrimitiveExecutionStep, PrimitiveProofHarnessReceipt,
     PrimitiveProofEnrichmentBinding, PrimitiveProofFamilyRequestBinding, PrimitiveProofTemplate, CapabilityComparisonBundle, ConstraintReviewReceipt, ConstraintViolation, ImplementationConstraint, ProjectBrowserState, ProjectPatchDiagnosis, PatchIntentFreeze, PatchPlanReview, ProjectSession, ProjectSpec, ProposedConstraintReceipt, RuntimeConfig,
     RequestMode, RequestPlan, RequestRecord, RuntimeModelCatalogReceipt, RuntimeSmokeReceipt,
     patch_primitive_classes_for_kinds,
@@ -393,6 +396,3004 @@ fn starter_id_for_family_id(family_id: &FamilyId) -> &'static str {
         FamilyId::RustCliTool => "rust_cli_tool",
         FamilyId::PythonCliTool => "python_cli_tool",
     }
+}
+
+fn derive_build_plan_artifact(
+    request: &RequestRecord,
+    plan: &RequestPlan,
+    route: &chatty_factory_core::RouteDecision,
+    inputs: &chatty_factory_core::ScaffoldInputs,
+    starter_override: Option<&BuildStarterOverride>,
+    recommended_starter_id: Option<&str>,
+) -> BuildPlanArtifact {
+    let feature_slices = derive_build_feature_slices(request, plan, route, inputs);
+    BuildPlanArtifact {
+        build_plan_id: chatty_factory_core::timestamp_id("build-plan"),
+        request_id: request.request_id.clone(),
+        source_request_plan_id: plan.plan_id.clone(),
+        project_name: inputs.project_name.clone(),
+        family_id: route.selected_family_id.clone(),
+        starter_override_id: starter_override.map(|value| value.family_id.as_str().to_string()),
+        recommended_starter_id: recommended_starter_id.map(str::to_string),
+        desired_surface: request.desired_surface.clone(),
+        exoskeleton_target: request.exoskeleton_target.clone(),
+        tool_kind: plan.inferred_tool_kind.clone(),
+        interpreted_goal: plan.interpreted_goal.clone(),
+        feature_slices: feature_slices.clone(),
+        planned_file_operations: planned_file_operations_for_build(
+            route.selected_family_id.as_ref(),
+            &feature_slices,
+        ),
+        acceptance_targets: acceptance_targets_for_build_plan(plan),
+        constraints: plan.constraints.clone(),
+        rationale: plan.rationale.clone(),
+        route_decision_reasons: route.decision_reasons.clone(),
+        confidence_score: plan.confidence_score,
+        confidence_band: plan.confidence_band.clone(),
+        needs_llm_review: plan.needs_llm_review,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn derive_build_feature_slices(
+    request: &RequestRecord,
+    plan: &RequestPlan,
+    route: &chatty_factory_core::RouteDecision,
+    inputs: &chatty_factory_core::ScaffoldInputs,
+) -> Vec<BuildFeatureSlice> {
+    let starter_seed_id = format!("{}:starter-seed", plan.plan_id);
+    let starter_label = route
+        .selected_family_id
+        .as_ref()
+        .map(FamilyId::as_str)
+        .unwrap_or("starter_substrate");
+    let starter_files = starter_contract_paths(route.selected_family_id.as_ref())
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let mut slices = vec![BuildFeatureSlice {
+        slice_id: starter_seed_id.clone(),
+        slice_kind: "starter_seed".into(),
+        title: "starter substrate seed".into(),
+        summary: format!(
+            "seed `{}` as a stable substrate for `{}` before feature-specific build work",
+            starter_label, inputs.project_name
+        ),
+        why_it_exists: "establish the smallest governed substrate with contract files, acceptance baseline, and ecosystem compatibility surfaces before layering feature behavior".into(),
+        requested_capabilities: request.requested_capabilities.clone(),
+        planner_suggested_features: plan.planner_suggested_features.clone(),
+        execution_steps: plan.execution_steps.clone(),
+        acceptance_targets: acceptance_targets_for_build_plan(plan),
+        files_to_create: starter_files,
+        files_to_update: Vec::new(),
+        expected_symbols: vec![format!("starter:{}", starter_label)],
+        acceptance_markers: plan.planner_required_markers.clone(),
+        dependencies: Vec::new(),
+    }];
+    let feature_target_files = default_feature_target_files(route.selected_family_id.as_ref());
+    let requested_features = normalized_feature_slice_inputs(request, plan, inputs);
+    for (index, feature_name) in requested_features.into_iter().enumerate() {
+        slices.push(BuildFeatureSlice {
+            slice_id: format!("{}:feature-{}", plan.plan_id, index + 1),
+            slice_kind: "feature_layer".into(),
+            title: feature_name.replace('_', " "),
+            summary: format!(
+                "layer requested feature `{}` onto starter `{}` using host-reviewed file targets",
+                feature_name, starter_label
+            ),
+            why_it_exists: "translate user-requested behavior into a bounded feature slice that can later be reviewed, constrained, and executed without expanding the starter catalog".into(),
+            requested_capabilities: vec![feature_name.clone()],
+            planner_suggested_features: plan.planner_suggested_features.clone(),
+            execution_steps: vec![
+                format!("refine `{}` into concrete file updates on the selected starter", feature_name),
+                "review anchors, ownership boundaries, and syntax-sensitive surfaces before applying code".into(),
+                "sync acceptance-critical contracts after feature insertion".into(),
+            ],
+            acceptance_targets: acceptance_targets_for_build_plan(plan),
+            files_to_create: Vec::new(),
+            files_to_update: feature_target_files.clone(),
+            expected_symbols: vec![format!("feature:{}", feature_name)],
+            acceptance_markers: plan.planner_required_markers.clone(),
+            dependencies: vec![starter_seed_id.clone()],
+        });
+    }
+    slices
+}
+
+fn acceptance_targets_for_build_plan(plan: &RequestPlan) -> Vec<String> {
+    let mut targets = Vec::new();
+    targets.extend(plan.planner_expected_outputs.clone());
+    targets.extend(plan.planner_required_markers.clone());
+    targets.extend(
+        plan.planner_acceptance_checks.iter().map(|check| {
+            format!(
+                "{}:{}:{}",
+                check.kind,
+                check.target,
+                check.expected.clone().unwrap_or_default()
+            )
+        }),
+    );
+    targets.sort();
+    targets.dedup();
+    targets
+}
+
+fn planned_file_operations_for_build(
+    selected_family_id: Option<&FamilyId>,
+    feature_slices: &[BuildFeatureSlice],
+) -> Vec<PlannedFileOperation> {
+    let mut paths = match selected_family_id {
+        Some(FamilyId::ChattycogNativeWindowModule) => vec![
+            "Cargo.toml",
+            "src/main.rs",
+            "manifest.json",
+            "visual_load.json",
+            "HANDSHAKE.md",
+            "ChattyCogModuleSpec.json",
+            "network_capabilities.json",
+            "README.md",
+            "STATE_TEMPLATE.md",
+            "ProjectSpec.json",
+            "AcceptancePlan.json",
+        ],
+        Some(FamilyId::ChattyeduNativeWindowModule) => vec![
+            "Cargo.toml",
+            "src/main.rs",
+            "manifest.json",
+            "visual_load.json",
+            "HANDSHAKE.md",
+            "ChattyEduModuleSpec.json",
+            "network_capabilities.json",
+            "README.md",
+            "STATE_TEMPLATE.md",
+            "ProjectSpec.json",
+            "AcceptancePlan.json",
+        ],
+        Some(FamilyId::ChattycogChattyeduNativeWindowModule) => vec![
+            "Cargo.toml",
+            "src/main.rs",
+            "manifest.json",
+            "visual_load.json",
+            "HANDSHAKE.md",
+            "ChattyCogModuleSpec.json",
+            "ChattyEduModuleSpec.json",
+            "network_capabilities.json",
+            "README.md",
+            "STATE_TEMPLATE.md",
+            "ProjectSpec.json",
+            "AcceptancePlan.json",
+        ],
+        Some(FamilyId::RustCliTool) => vec![
+            "Cargo.toml",
+            "src/main.rs",
+            "README.md",
+            "ProjectSpec.json",
+            "AcceptancePlan.json",
+        ],
+        Some(FamilyId::PythonCliTool) => vec![
+            "main.py",
+            "README.md",
+            "ProjectSpec.json",
+            "AcceptancePlan.json",
+        ],
+        _ => vec![
+            "index.html",
+            "app.js",
+            "styles.css",
+            "README.md",
+            "ProjectSpec.json",
+            "AcceptancePlan.json",
+        ],
+    };
+    paths.sort();
+    let mut operations = paths
+        .into_iter()
+        .enumerate()
+        .map(|(index, path)| PlannedFileOperation {
+            operation_id: format!("starter-file-{}", index + 1),
+            path: path.into(),
+            operation_kind: "emit_or_refresh".into(),
+            rationale: "starter substrate contract file expected during deterministic build emission"
+                .into(),
+            source: "family_starter_contract".into(),
+            content_source: "family_template_or_contract_renderer".into(),
+            target_anchor: None,
+            ownership_boundary: "starter_contract_boundary".into(),
+            syntax_sensitive: path.ends_with(".rs")
+                || path.ends_with(".py")
+                || path.ends_with(".js")
+                || path.ends_with(".html")
+                || path.ends_with(".css"),
+        })
+        .collect::<Vec<_>>();
+
+    for slice in feature_slices {
+        if slice.slice_kind != "feature_layer" {
+            continue;
+        }
+        for (index, path) in slice.files_to_update.iter().enumerate() {
+            operations.push(PlannedFileOperation {
+                operation_id: format!("{}:update-{}", slice.slice_id, index + 1),
+                path: path.clone(),
+                operation_kind: feature_operation_kind_for_path(path).into(),
+                rationale: format!(
+                    "feature slice `{}` would extend this file as bounded post-starter work",
+                    slice.title
+                ),
+                source: "build_feature_slice".into(),
+                content_source: "future_host_execution_helper".into(),
+                target_anchor: feature_target_anchor_for_path(path).map(str::to_string),
+                ownership_boundary: feature_ownership_boundary_for_path(path).into(),
+                syntax_sensitive: is_syntax_sensitive_path(path),
+            });
+        }
+        for (index, path) in slice.files_to_create.iter().enumerate() {
+            if operations.iter().any(|operation| operation.path == *path) {
+                continue;
+            }
+            operations.push(PlannedFileOperation {
+                operation_id: format!("{}:create-{}", slice.slice_id, index + 1),
+                path: path.clone(),
+                operation_kind: "create_feature_file_candidate".into(),
+                rationale: format!(
+                    "feature slice `{}` may require a dedicated file beyond the starter substrate",
+                    slice.title
+                ),
+                source: "build_feature_slice".into(),
+                content_source: "future_host_execution_helper".into(),
+                target_anchor: None,
+                ownership_boundary: feature_ownership_boundary_for_path(path).into(),
+                syntax_sensitive: is_syntax_sensitive_path(path),
+            });
+        }
+    }
+
+    operations
+}
+
+fn review_build_plan_artifact(
+    build_plan: &BuildPlanArtifact,
+) -> (BuildPlanReview, BuildPlanArtifact) {
+    let mut reviewed = build_plan.clone();
+    let mut findings = Vec::new();
+    let blocked_reasons = Vec::new();
+    let original_feature_slice_count = reviewed.feature_slices.len();
+    let original_file_operation_count = reviewed.planned_file_operations.len();
+    let mut dropped_feature_slice_ids = Vec::new();
+    let substrate_capabilities = starter_substrate_capabilities(reviewed.family_id.as_ref());
+
+    reviewed.feature_slices = reviewed
+        .feature_slices
+        .into_iter()
+        .filter(|slice| {
+            if slice.slice_kind != "feature_layer" {
+                return true;
+            }
+            let removable = !slice.requested_capabilities.is_empty()
+                && slice
+                    .requested_capabilities
+                    .iter()
+                    .all(|capability| substrate_capabilities.iter().any(|known| known == capability));
+            if removable {
+                dropped_feature_slice_ids.push(slice.slice_id.clone());
+                findings.push(format!(
+                    "self-review removed substrate-identity feature slice `{}` because the selected starter already provides: {}",
+                    slice.slice_id,
+                    slice.requested_capabilities.join(", ")
+                ));
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    reviewed.planned_file_operations = reviewed
+        .planned_file_operations
+        .into_iter()
+        .filter(|operation| {
+            let belongs_to_dropped_slice = dropped_feature_slice_ids
+                .iter()
+                .any(|slice_id| operation.operation_id.starts_with(&format!("{slice_id}:")));
+            !belongs_to_dropped_slice
+        })
+        .collect();
+
+    let dropped_file_operation_ids = build_plan
+        .planned_file_operations
+        .iter()
+        .filter(|operation| {
+            dropped_feature_slice_ids
+                .iter()
+                .any(|slice_id| operation.operation_id.starts_with(&format!("{slice_id}:")))
+        })
+        .map(|operation| operation.operation_id.clone())
+        .collect::<Vec<_>>();
+
+    let decision = if dropped_feature_slice_ids.is_empty() {
+        "proceed_with_original_plan"
+    } else {
+        "proceed_with_refined_plan"
+    };
+
+    let review = BuildPlanReview {
+        review_id: chatty_factory_core::timestamp_id("build-plan-review"),
+        request_id: build_plan.request_id.clone(),
+        source_build_plan_id: build_plan.build_plan_id.clone(),
+        project_name: build_plan.project_name.clone(),
+        family_id: build_plan.family_id.clone(),
+        starter_override_id: build_plan.starter_override_id.clone(),
+        recommended_starter_id: build_plan.recommended_starter_id.clone(),
+        decision: decision.into(),
+        original_feature_slice_count,
+        reviewed_feature_slice_count: reviewed.feature_slices.len(),
+        dropped_feature_slice_ids,
+        original_file_operation_count,
+        reviewed_file_operation_count: reviewed.planned_file_operations.len(),
+        dropped_file_operation_ids,
+        findings,
+        blocked_reasons,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+
+    (review, reviewed)
+}
+
+fn review_build_plan_constraints(
+    build_plan: &BuildPlanArtifact,
+    plan_review: &BuildPlanReview,
+) -> BuildConstraintReviewReceipt {
+    let mut selected_constraints = Vec::new();
+    let violations = Vec::new();
+    let blocked_methods = Vec::new();
+    let mut recommended_replacements = Vec::new();
+    let mut findings = Vec::new();
+
+    if let (Some(selected), Some(recommended)) = (
+        build_plan.starter_override_id.as_deref(),
+        build_plan.recommended_starter_id.as_deref(),
+    ) {
+        if selected != recommended {
+            let selected_lifecycle = build_starter_lifecycle(selected);
+            let recommended_lifecycle = build_starter_lifecycle(recommended);
+            if selected_lifecycle.contains("frozen") && recommended_lifecycle.contains("active") {
+                selected_constraints.push(ImplementationConstraint {
+                    constraint_id: chatty_factory_core::timestamp_id("implementation-constraint"),
+                    constraint_scope: "starter_selection".into(),
+                    constraint_origin: "build_plan_constraint_review".into(),
+                    family_id: build_plan.family_id.clone(),
+                    tool_kind: build_plan.tool_kind.clone(),
+                    language_id: None,
+                    constraint_kind: "frozen_legacy_starter_override".into(),
+                    forbidden_method_summary: format!(
+                        "do not treat frozen legacy starter `{selected}` as the default forward path when active starter `{recommended}` is available"
+                    ),
+                    forbidden_markers: Vec::new(),
+                    required_markers: Vec::new(),
+                    forbidden_surface_groups: Vec::new(),
+                    violation_reason_template: format!(
+                        "selected starter `{selected}` is a frozen legacy substrate while `{recommended}` is the active forward starter"
+                    ),
+                    replacement_guidance: Some(format!(
+                        "prefer the active starter `{recommended}` unless the legacy substrate is intentionally required"
+                    )),
+                    severity: "warn".into(),
+                    active: true,
+                    created_at: Some(chatty_factory_core::timestamp_id("created")),
+                });
+                recommended_replacements.push(recommended.to_string());
+                findings.push(format!(
+                    "constraint review noted that starter override `{selected}` points to a frozen legacy starter while `{recommended}` is the active recommendation"
+                ));
+            }
+        }
+    }
+
+    if build_plan
+        .feature_slices
+        .iter()
+        .all(|slice| slice.slice_kind == "starter_seed")
+    {
+        findings.push(
+            "constraint review found no remaining feature-layer work beyond the starter substrate; the current plan is starter-only".into(),
+        );
+    } else if plan_review.decision == "proceed_with_refined_plan" {
+        findings.push(
+            "constraint review accepted the self-reviewed starter-plus-feature plan after substrate-only feature slices were removed".into(),
+        );
+    } else {
+        findings.push(
+            "constraint review found no active forbidden build methods for the reviewed starter-plus-feature plan".into(),
+        );
+    }
+
+    BuildConstraintReviewReceipt {
+        review_id: chatty_factory_core::timestamp_id("build-constraint-review"),
+        request_id: build_plan.request_id.clone(),
+        build_plan_id: build_plan.build_plan_id.clone(),
+        project_name: build_plan.project_name.clone(),
+        family_id: build_plan.family_id.clone(),
+        tool_kind: build_plan.tool_kind.clone(),
+        review_subject: "build_plan_execution".into(),
+        selected_constraints,
+        violations,
+        blocked_methods,
+        recommended_replacements,
+        decision: "allow_current_plan".into(),
+        findings,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn derive_build_execution_work_order(
+    build_plan: &BuildPlanArtifact,
+    plan_review: &BuildPlanReview,
+    constraint_review: &BuildConstraintReviewReceipt,
+) -> BuildExecutionWorkOrder {
+    let surviving_feature_slice_ids = build_plan
+        .feature_slices
+        .iter()
+        .filter(|slice| slice.slice_kind == "feature_layer")
+        .map(|slice| slice.slice_id.clone())
+        .collect::<Vec<_>>();
+    let surviving_feature_capabilities = build_plan
+        .feature_slices
+        .iter()
+        .filter(|slice| slice.slice_kind == "feature_layer")
+        .flat_map(|slice| slice.requested_capabilities.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut findings = Vec::new();
+    findings.extend(plan_review.findings.clone());
+    findings.extend(constraint_review.findings.clone());
+    BuildExecutionWorkOrder {
+        work_order_id: chatty_factory_core::timestamp_id("build-work-order"),
+        request_id: build_plan.request_id.clone(),
+        build_plan_id: build_plan.build_plan_id.clone(),
+        build_plan_review_id: plan_review.review_id.clone(),
+        build_constraint_review_id: constraint_review.review_id.clone(),
+        project_name: build_plan.project_name.clone(),
+        family_id: build_plan.family_id.clone(),
+        tool_kind: build_plan.tool_kind.clone(),
+        starter_override_id: build_plan.starter_override_id.clone(),
+        decision: if constraint_review.decision == "allow_current_plan" {
+            "ready_for_future_host_execution_helpers".into()
+        } else {
+            constraint_review.decision.clone()
+        },
+        feature_slice_ids: surviving_feature_slice_ids,
+        feature_capabilities: surviving_feature_capabilities,
+        operations: build_plan.planned_file_operations.clone(),
+        findings,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn derive_plan_task_list(
+    runtime_root: &Path,
+    build_plan: &BuildPlanArtifact,
+    plan_review: &BuildPlanReview,
+    constraint_review: &BuildConstraintReviewReceipt,
+    work_order: &BuildExecutionWorkOrder,
+) -> PlanTaskList {
+    let feature_slice_map = build_plan
+        .feature_slices
+        .iter()
+        .map(|slice| (slice.slice_id.clone(), slice))
+        .collect::<BTreeMap<_, _>>();
+    let mut tasks = Vec::new();
+    let toolbar_decomposition_enabled =
+        has_decomposition_rule_for_task_subtype(runtime_root, "toolbar_ui_block");
+    let toolbar_label_decomposition_enabled =
+        has_decomposition_rule_for_task_subtype(runtime_root, "toolbar_label_sentence");
+
+    for slice_id in &work_order.feature_slice_ids {
+        let Some(slice) = feature_slice_map.get(slice_id) else {
+            continue;
+        };
+
+        let sync_operations = work_order
+            .operations
+            .iter()
+            .filter(|operation| {
+                operation.operation_id.starts_with(&format!("{slice_id}:"))
+                    && matches!(
+                        operation.operation_kind.as_str(),
+                        "sync_contract_candidate" | "sync_docs_candidate"
+                    )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if !sync_operations.is_empty() {
+            let target_files = sync_operations
+                .iter()
+                .map(|operation| operation.path.clone())
+                .collect::<Vec<_>>();
+            let allowed_boundaries = sync_operations
+                .iter()
+                .map(|operation| operation.ownership_boundary.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            tasks.push(PlanTask {
+                task_id: format!("{slice_id}:host-sync"),
+                request_id: build_plan.request_id.clone(),
+                source_build_plan_id: build_plan.build_plan_id.clone(),
+                source_work_order_id: work_order.work_order_id.clone(),
+                task_kind: "host_sync".into(),
+                task_title: format!("sync reviewed metadata for {}", slice.title),
+                task_summary: format!(
+                    "host-sync contract and docs files for feature slice `{}`",
+                    slice.title
+                ),
+                dependencies: slice.dependencies.clone(),
+                target_files,
+                allowed_boundaries,
+                expected_symbols: slice.expected_symbols.clone(),
+                expected_markers: slice.acceptance_markers.clone(),
+                verification_steps: vec![
+                    "project_spec_sync".into(),
+                    "acceptance_plan_sync".into(),
+                    "readme_sync".into(),
+                ],
+                replacement_guidance: None,
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            });
+        }
+
+        let mechanical_operations = work_order
+            .operations
+            .iter()
+            .filter(|operation| {
+                operation.operation_id.starts_with(&format!("{slice_id}:"))
+                    && operation.operation_kind == "insert_feature_block_candidate"
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if !mechanical_operations.is_empty() {
+            let target_files = mechanical_operations
+                .iter()
+                .map(|operation| operation.path.clone())
+                .collect::<Vec<_>>();
+            let allowed_boundaries = mechanical_operations
+                .iter()
+                .map(|operation| operation.ownership_boundary.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            tasks.push(PlanTask {
+                task_id: format!("{slice_id}:host-mechanical"),
+                request_id: build_plan.request_id.clone(),
+                source_build_plan_id: build_plan.build_plan_id.clone(),
+                source_work_order_id: work_order.work_order_id.clone(),
+                task_kind: "host_mechanical".into(),
+                task_title: format!("prepare bounded feature insertion for {}", slice.title),
+                task_summary: format!(
+                    "host-mechanical anchor-scoped insertion candidate for feature slice `{}`",
+                    slice.title
+                ),
+                dependencies: vec![format!("{slice_id}:host-sync")],
+                target_files,
+                allowed_boundaries,
+                expected_symbols: slice.expected_symbols.clone(),
+                expected_markers: slice.acceptance_markers.clone(),
+                verification_steps: vec![
+                    "anchor_review".into(),
+                    "syntax_boundary_check".into(),
+                ],
+                replacement_guidance: Some(
+                    "convert this candidate into a concrete bounded helper or keep it as a model-authored microtask if the host still lacks a safe insertion method".into(),
+                ),
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            });
+        }
+
+        let uses_toolbar_feature = slice
+            .expected_symbols
+            .iter()
+            .any(|symbol| symbol == "feature:action_toolbar");
+        if uses_toolbar_feature && toolbar_decomposition_enabled {
+            if toolbar_label_decomposition_enabled {
+                for (suffix, symbol, title_hint, summary_hint) in [
+                    (
+                        "clause-run-action",
+                        "feature:action_toolbar_label_clause_run_action",
+                        "author toolbar run-action clause",
+                        "decomposed model-authored microtask for the run-action clause behind the action toolbar label",
+                    ),
+                    (
+                        "clause-clear-action",
+                        "feature:action_toolbar_label_clause_clear_action",
+                        "author toolbar clear-action clause",
+                        "decomposed model-authored microtask for the clear-action clause behind the action toolbar label",
+                    ),
+                ] {
+                    tasks.push(PlanTask {
+                        task_id: format!("{slice_id}:model-authored:{suffix}"),
+                        request_id: build_plan.request_id.clone(),
+                        source_build_plan_id: build_plan.build_plan_id.clone(),
+                        source_work_order_id: work_order.work_order_id.clone(),
+                        task_kind: "model_authored".into(),
+                        task_title: format!("{title_hint} for {}", slice.title),
+                        task_summary: format!("{summary_hint} `{}`", slice.title),
+                        dependencies: vec![format!("{slice_id}:host-sync")],
+                        target_files: slice.files_to_update.clone(),
+                        allowed_boundaries: vec!["starter_extension_boundary".into()],
+                        expected_symbols: vec![symbol.into()],
+                        expected_markers: slice.acceptance_markers.clone(),
+                        verification_steps: vec![
+                            "json_or_parse".into(),
+                            "cargo_check_or_runtime_equivalent".into(),
+                            "acceptance_reverify".into(),
+                        ],
+                        replacement_guidance: Some(
+                            "earned decomposition rule applied again: ask the model only for one clause at a time; the host composes the final toolbar sentence and Rust block".into(),
+                        ),
+                        created_at: Some(chatty_factory_core::timestamp_id("created")),
+                    });
+                }
+            } else {
+                tasks.push(PlanTask {
+                    task_id: format!("{slice_id}:model-authored:label-sentence"),
+                    request_id: build_plan.request_id.clone(),
+                    source_build_plan_id: build_plan.build_plan_id.clone(),
+                    source_work_order_id: work_order.work_order_id.clone(),
+                    task_kind: "model_authored".into(),
+                    task_title: format!("author toolbar label sentence for {}", slice.title),
+                    task_summary: format!(
+                        "decomposed model-authored microtask for the explanatory label behind feature slice `{}`",
+                        slice.title
+                    ),
+                    dependencies: vec![format!("{slice_id}:host-sync")],
+                    target_files: slice.files_to_update.clone(),
+                    allowed_boundaries: vec!["starter_extension_boundary".into()],
+                    expected_symbols: vec!["feature:action_toolbar_label_sentence".into()],
+                    expected_markers: slice.acceptance_markers.clone(),
+                    verification_steps: vec![
+                        "json_or_parse".into(),
+                        "cargo_check_or_runtime_equivalent".into(),
+                        "acceptance_reverify".into(),
+                    ],
+                    replacement_guidance: Some(
+                        "earned decomposition rule applied: ask the model only for the toolbar label sentence; the host owns literals and final Rust rendering".into(),
+                    ),
+                    created_at: Some(chatty_factory_core::timestamp_id("created")),
+                });
+            }
+        } else {
+            tasks.push(PlanTask {
+                task_id: format!("{slice_id}:model-authored"),
+                request_id: build_plan.request_id.clone(),
+                source_build_plan_id: build_plan.build_plan_id.clone(),
+                source_work_order_id: work_order.work_order_id.clone(),
+                task_kind: "model_authored".into(),
+                task_title: format!("author feature behavior for {}", slice.title),
+                task_summary: format!(
+                    "model-authored microtask for the actual code behavior behind feature slice `{}`",
+                    slice.title
+                ),
+                dependencies: vec![format!("{slice_id}:host-sync")],
+                target_files: slice.files_to_update.clone(),
+                allowed_boundaries: vec!["starter_extension_boundary".into()],
+                expected_symbols: slice.expected_symbols.clone(),
+                expected_markers: slice.acceptance_markers.clone(),
+                verification_steps: vec![
+                    "syntax_or_parse".into(),
+                    "cargo_check_or_runtime_equivalent".into(),
+                    "acceptance_reverify".into(),
+                ],
+                replacement_guidance: Some(
+                    "keep scope to one small feature slice at a time; do not rewrite whole starter files".into(),
+                ),
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            });
+        }
+    }
+
+    let mut findings = Vec::new();
+    findings.extend(plan_review.findings.clone());
+    findings.extend(constraint_review.findings.clone());
+    if toolbar_decomposition_enabled {
+        if toolbar_label_decomposition_enabled {
+            findings.push(
+                "applied earned decomposition rules for `toolbar_ui_block` and `toolbar_label_sentence`, replacing the broad toolbar task with clause-level child tasks".into(),
+            );
+        } else {
+            findings.push(
+                "applied earned decomposition rule for `toolbar_ui_block` and replaced the broad toolbar task with a decomposed label-sentence task".into(),
+            );
+        }
+    }
+    findings.push(format!(
+        "derived {} task(s) from reviewed build work order",
+        tasks.len()
+    ));
+
+    PlanTaskList {
+        task_list_id: chatty_factory_core::timestamp_id("plan-task-list"),
+        request_id: build_plan.request_id.clone(),
+        build_plan_id: build_plan.build_plan_id.clone(),
+        build_plan_review_id: plan_review.review_id.clone(),
+        build_constraint_review_id: constraint_review.review_id.clone(),
+        build_work_order_id: work_order.work_order_id.clone(),
+        project_name: build_plan.project_name.clone(),
+        family_id: build_plan.family_id.clone(),
+        tool_kind: build_plan.tool_kind.clone(),
+        tasks,
+        findings,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn persist_build_plan_review(runtime_root: &Path, review: &BuildPlanReview) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("build_plan_reviews")
+        .join(format!("{}-review.json", review.request_id));
+    persist_json_pretty(&path, review)?;
+    Ok(path)
+}
+
+fn persist_build_constraint_review_receipt(
+    runtime_root: &Path,
+    review: &BuildConstraintReviewReceipt,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("build_constraint_reviews")
+        .join(format!("{}-constraint-review.json", review.request_id));
+    persist_json_pretty(&path, review)?;
+    Ok(path)
+}
+
+fn persist_build_execution_work_order(
+    runtime_root: &Path,
+    work_order: &BuildExecutionWorkOrder,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("build_execution_work_orders")
+        .join(format!("{}-work-order.json", work_order.request_id));
+    persist_json_pretty(&path, work_order)?;
+    Ok(path)
+}
+
+fn persist_plan_task_list(runtime_root: &Path, task_list: &PlanTaskList) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("plan_tasks")
+        .join(format!("{}-tasks.json", task_list.request_id));
+    persist_json_pretty(&path, task_list)?;
+    Ok(path)
+}
+
+#[derive(Debug, Clone, Default)]
+struct TaskAttemptOutcome {
+    status: String,
+    touched_files: Vec<String>,
+    findings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct ActionToolbarSemanticDraft {
+    title: String,
+    label: String,
+    primary_button: String,
+    secondary_button: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct ActionToolbarLabelDraft {
+    label: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+struct ActionToolbarClauseDraft {
+    clause: String,
+}
+
+fn derive_plan_task_execution_log(
+    task_list: &PlanTaskList,
+    work_order_synced_files: &[String],
+    attempted_outcomes: &BTreeMap<String, TaskAttemptOutcome>,
+) -> PlanTaskExecutionLog {
+    let synced_file_set = work_order_synced_files.iter().cloned().collect::<BTreeSet<_>>();
+    let receipts = task_list
+        .tasks
+        .iter()
+        .map(|task| {
+            if let Some(outcome) = attempted_outcomes.get(&task.task_id) {
+                return PlanTaskExecutionReceipt {
+                    receipt_id: chatty_factory_core::timestamp_id("task-execution"),
+                    request_id: task.request_id.clone(),
+                    task_id: task.task_id.clone(),
+                    task_kind: task.task_kind.clone(),
+                    status: outcome.status.clone(),
+                    touched_files: outcome.touched_files.clone(),
+                    findings: outcome.findings.clone(),
+                    created_at: Some(chatty_factory_core::timestamp_id("created")),
+                };
+            }
+            let touched_files = task
+                .target_files
+                .iter()
+                .filter(|path| synced_file_set.contains(*path))
+                .cloned()
+                .collect::<Vec<_>>();
+            let (status, findings) = if task.task_kind == "host_sync" {
+                if touched_files.is_empty() {
+                    (
+                        "no_change_needed".to_string(),
+                        vec!["host sync task was attempted but target files were already aligned".into()],
+                    )
+                } else {
+                    (
+                        "executed".to_string(),
+                        vec![format!(
+                            "host sync task updated: {}",
+                            touched_files.join(", ")
+                        )],
+                    )
+                }
+            } else {
+                (
+                    "pending_not_attempted".to_string(),
+                    vec!["task is frozen but has not been attempted in this build slice".into()],
+                )
+            };
+            PlanTaskExecutionReceipt {
+                receipt_id: chatty_factory_core::timestamp_id("task-execution"),
+                request_id: task.request_id.clone(),
+                task_id: task.task_id.clone(),
+                task_kind: task.task_kind.clone(),
+                status,
+                touched_files,
+                findings,
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            }
+        })
+        .collect::<Vec<_>>();
+    let decision = if receipts.iter().any(|receipt| receipt.status == "executed") {
+        "host_sync_executed_with_pending_followups"
+    } else {
+        "no_host_task_changes_with_pending_followups"
+    };
+    PlanTaskExecutionLog {
+        log_id: chatty_factory_core::timestamp_id("task-execution-log"),
+        request_id: task_list.request_id.clone(),
+        task_list_id: task_list.task_list_id.clone(),
+        decision: decision.into(),
+        receipts,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn persist_plan_task_execution_log(
+    runtime_root: &Path,
+    log: &PlanTaskExecutionLog,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("task_execution_receipts")
+        .join(format!("{}-task-execution.json", log.request_id));
+    persist_json_pretty(&path, log)?;
+    Ok(path)
+}
+
+fn derive_plan_task_verification_log(
+    task_list: &PlanTaskList,
+    execution_log: &PlanTaskExecutionLog,
+    execution_status: &str,
+) -> PlanTaskVerificationLog {
+    let execution_by_task = execution_log
+        .receipts
+        .iter()
+        .map(|receipt| (receipt.task_id.clone(), receipt))
+        .collect::<BTreeMap<_, _>>();
+    let receipts = task_list
+        .tasks
+        .iter()
+        .map(|task| {
+            let execution_receipt = execution_by_task.get(&task.task_id);
+            let execution_status_value = execution_receipt
+                .map(|receipt| receipt.status.as_str())
+                .unwrap_or("pending_not_attempted");
+            let (status, findings) = if matches!(execution_status_value, "executed" | "no_change_needed")
+            {
+                (
+                    "verified_current_slice".to_string(),
+                    vec![format!(
+                        "verification acknowledged current build slice after `{}` task status `{}` and execution smoke `{}`",
+                        task.task_kind, execution_status_value, execution_status
+                    )],
+                )
+            } else {
+                (
+                    "pending_not_attempted".to_string(),
+                    vec!["verification deferred because the task has not been attempted yet".into()],
+                )
+            };
+            PlanTaskVerificationReceipt {
+                receipt_id: chatty_factory_core::timestamp_id("task-verification"),
+                request_id: task.request_id.clone(),
+                task_id: task.task_id.clone(),
+                status,
+                verification_steps: task.verification_steps.clone(),
+                findings,
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            }
+        })
+        .collect::<Vec<_>>();
+    let decision = if receipts
+        .iter()
+        .any(|receipt| receipt.status == "verified_current_slice")
+    {
+        "current_slice_verified_with_pending_followups"
+    } else {
+        "verification_deferred_pending_task_attempts"
+    };
+    PlanTaskVerificationLog {
+        log_id: chatty_factory_core::timestamp_id("task-verification-log"),
+        request_id: task_list.request_id.clone(),
+        task_list_id: task_list.task_list_id.clone(),
+        decision: decision.into(),
+        receipts,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn persist_plan_task_verification_log(
+    runtime_root: &Path,
+    log: &PlanTaskVerificationLog,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("task_verification_receipts")
+        .join(format!("{}-task-verification.json", log.request_id));
+    persist_json_pretty(&path, log)?;
+    Ok(path)
+}
+
+fn execute_first_host_mechanical_microtasks(
+    project_dir: &Path,
+    task_list: &PlanTaskList,
+) -> Result<BTreeMap<String, TaskAttemptOutcome>> {
+    let mut outcomes = BTreeMap::new();
+    for task in &task_list.tasks {
+        if task.task_kind != "host_mechanical" {
+            continue;
+        }
+        if task
+            .expected_symbols
+            .iter()
+            .any(|symbol| symbol == "feature:status_panel")
+        {
+            outcomes.insert(
+                task.task_id.clone(),
+                attempt_native_status_panel_microtask(project_dir, task)?,
+            );
+        }
+    }
+    Ok(outcomes)
+}
+
+fn attempt_native_status_panel_microtask(
+    project_dir: &Path,
+    task: &PlanTask,
+) -> Result<TaskAttemptOutcome> {
+    let Some(target_file) = task
+        .target_files
+        .iter()
+        .find(|path| path.ends_with("src/main.rs"))
+    else {
+        return Ok(TaskAttemptOutcome {
+            status: "pending_not_attempted".into(),
+            touched_files: Vec::new(),
+            findings: vec![
+                "host-mechanical status panel task stayed pending because no Rust entrypoint target file was declared"
+                    .into(),
+            ],
+        });
+    };
+
+    let path = project_dir.join(target_file);
+    let original = fs::read_to_string(&path)?;
+    let start_marker = "            // chattyfactory:feature:status_panel:start";
+    let end_marker = "            // chattyfactory:feature:status_panel:end";
+    if original.contains(start_marker) && original.contains(end_marker) {
+        return Ok(TaskAttemptOutcome {
+            status: "no_change_needed".into(),
+            touched_files: Vec::new(),
+            findings: vec![
+                "host-mechanical status panel task found the bounded feature block already present".into(),
+            ],
+        });
+    }
+
+    let anchor = "            // native_window_feature_patch_anchor";
+    if !original.contains(anchor) {
+        return Ok(TaskAttemptOutcome {
+            status: "pending_not_attempted".into(),
+            touched_files: Vec::new(),
+            findings: vec![
+                "host-mechanical status panel task stayed pending because the native window feature anchor was not present"
+                    .into(),
+            ],
+        });
+    }
+
+    let block = [
+        "            // chattyfactory:feature:status_panel:start",
+        "            ui.add_space(8.0);",
+        "            ui.group(|ui| {",
+        "                ui.strong(\"Status panel\");",
+        "                ui.label(\"Shared room state and hosted event lanes are ready for feature-specific wiring.\");",
+        "            });",
+        "            // chattyfactory:feature:status_panel:end",
+        "",
+        "            // native_window_feature_patch_anchor",
+    ]
+    .join("\n");
+    let updated = original.replacen(anchor, &block, 1);
+    if updated == original {
+        return Ok(TaskAttemptOutcome {
+            status: "pending_not_attempted".into(),
+            touched_files: Vec::new(),
+            findings: vec![
+                "host-mechanical status panel task could not narrow the insertion to a single anchored update"
+                    .into(),
+            ],
+        });
+    }
+
+    fs::write(&path, updated)?;
+    Ok(TaskAttemptOutcome {
+        status: "executed".into(),
+        touched_files: vec![target_file.clone()],
+        findings: vec![
+            "host-mechanical status panel task inserted a bounded feature block at the native window starter anchor"
+                .into(),
+        ],
+    })
+}
+
+fn execute_first_model_authored_microtasks(
+    runtime_root: &Path,
+    workspace_root: &Path,
+    project_dir: &Path,
+    task_list: &PlanTaskList,
+    planner: &HostPlannerOptions,
+) -> Result<(BTreeMap<String, TaskAttemptOutcome>, Vec<PathBuf>)> {
+    let mut outcomes = BTreeMap::new();
+    let mut receipt_paths = Vec::new();
+    for task in &task_list.tasks {
+        if task.task_kind != "model_authored" {
+            continue;
+        }
+        if task
+            .expected_symbols
+            .iter()
+            .any(|symbol| symbol == "feature:action_toolbar")
+        {
+            let (outcome, receipt_path) = attempt_native_action_toolbar_model_microtask(
+                runtime_root,
+                workspace_root,
+                project_dir,
+                task,
+                task_list,
+                planner,
+            )?;
+            outcomes.insert(task.task_id.clone(), outcome);
+            receipt_paths.push(receipt_path);
+        } else if task
+            .expected_symbols
+            .iter()
+            .any(|symbol| symbol == "feature:action_toolbar_label_sentence")
+        {
+            let (outcome, receipt_path) = attempt_native_action_toolbar_label_sentence_microtask(
+                runtime_root,
+                workspace_root,
+                project_dir,
+                task,
+                task_list,
+                planner,
+            )?;
+            outcomes.insert(task.task_id.clone(), outcome);
+            receipt_paths.push(receipt_path);
+        } else if task
+            .expected_symbols
+            .iter()
+            .any(|symbol| {
+                symbol == "feature:action_toolbar_label_clause_run_action"
+                    || symbol == "feature:action_toolbar_label_clause_clear_action"
+            })
+        {
+            let clause_kind = if task
+                .expected_symbols
+                .iter()
+                .any(|symbol| symbol == "feature:action_toolbar_label_clause_run_action")
+            {
+                "run_action"
+            } else {
+                "clear_action"
+            };
+            let (outcome, receipt_path) = attempt_native_action_toolbar_label_clause_microtask(
+                runtime_root,
+                workspace_root,
+                project_dir,
+                task,
+                task_list,
+                planner,
+                clause_kind,
+            )?;
+            outcomes.insert(task.task_id.clone(), outcome);
+            receipt_paths.push(receipt_path);
+        }
+    }
+    Ok((outcomes, receipt_paths))
+}
+
+fn attempt_native_action_toolbar_model_microtask(
+    runtime_root: &Path,
+    workspace_root: &Path,
+    project_dir: &Path,
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    planner: &HostPlannerOptions,
+) -> Result<(TaskAttemptOutcome, PathBuf)> {
+    let prompt_root = runtime_root.join("model_task_prompts");
+    let prompt_path = prompt_root.join(format!("{}-prompt.md", sanitize_filename(&task.task_id)));
+    let receipt_root = runtime_root.join("model_task_attempts");
+    let Some(target_file) = task
+        .target_files
+        .iter()
+        .find(|path| path.ends_with("src/main.rs"))
+        .cloned()
+    else {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: None,
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: None,
+            decomposition_receipt_path: None,
+            raw_response_path: None,
+            model_path: None,
+            status: "pending_not_attempted".into(),
+            review_findings: vec![
+                "model-authored task stayed pending because no Rust entrypoint target file was declared"
+                    .into(),
+            ],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "pending_not_attempted".into(),
+                touched_files: Vec::new(),
+                findings: vec![
+                    format!(
+                        "model-authored action toolbar task stayed pending; see {}",
+                        receipt_path.display()
+                    ),
+                ],
+            },
+            receipt_path,
+        ));
+    };
+
+    let target_path = project_dir.join(&target_file);
+    let original = fs::read_to_string(&target_path)?;
+    let start_marker = "            // chattyfactory:feature:action_toolbar:start";
+    let end_marker = "            // chattyfactory:feature:action_toolbar:end";
+    if original.contains(start_marker) && original.contains(end_marker) {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: None,
+            decomposition_receipt_path: None,
+            raw_response_path: None,
+            model_path: None,
+            status: "no_change_needed".into(),
+            review_findings: vec![
+                "model-authored action toolbar task found the bounded feature block already present"
+                    .into(),
+            ],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "no_change_needed".into(),
+                touched_files: Vec::new(),
+                findings: vec![
+                    format!(
+                        "model-authored action toolbar task found the bounded feature block already present; see {}",
+                        receipt_path.display()
+                    ),
+                ],
+            },
+            receipt_path,
+        ));
+    }
+
+    let prompt_markers = [
+        "            // native_window_feature_patch_anchor",
+        "            // bridge_status_panel_anchor",
+        "            // ready_toggle_anchor",
+    ];
+    let mut anchor_context = String::new();
+    for line in original.lines() {
+        if prompt_markers.iter().any(|marker| line.contains(marker)) {
+            anchor_context.push_str(line);
+            anchor_context.push('\n');
+        }
+    }
+    let (system_prompt, user_prompt) = build_action_toolbar_model_prompts(
+        task,
+        task_list,
+        &target_file,
+        &anchor_context,
+    );
+    fs::create_dir_all(&prompt_root)?;
+    fs::write(
+        &prompt_path,
+        format!("# System\n{}\n\n# User\n{}\n", system_prompt, user_prompt),
+    )?;
+
+    let models_root = workspace_root.join("models");
+    let discovery = discover_runtime(runtime_root, &models_root)?;
+    let catalog = build_runtime_model_catalog(&models_root)?;
+    let mut config = default_runtime_config(runtime_root, &models_root)?;
+    config.default_model_path = resolve_model_choice(
+        planner.requested_model.as_deref(),
+        &catalog,
+        discovery.preferred_model_path.as_deref(),
+    );
+    if let Some(port) = planner.requested_port {
+        config.port = port;
+    }
+    persist_json_pretty(&runtime_root.join("runtime_config.json"), &config)?;
+
+    let raw_response_dir = runtime_root.join("model_task_raw_responses");
+    let (raw_generated, generation_receipt) = match run_local_text_generation(
+        &config,
+        &task.request_id,
+        &task.task_id,
+        &system_prompt,
+        &user_prompt,
+        &raw_response_dir,
+        planner.requested_model.as_deref(),
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            let receipt = PlanTaskModelAttemptReceipt {
+                attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+                request_id: task.request_id.clone(),
+                task_id: task.task_id.clone(),
+                project_name: task_list.project_name.clone(),
+                target_file: Some(target_file.clone()),
+                prompt_path: prompt_path.display().to_string(),
+                generation_receipt_path: None,
+                decomposition_receipt_path: None,
+                raw_response_path: None,
+                model_path: config.default_model_path.clone(),
+                status: "pending_not_attempted".into(),
+                review_findings: vec![format!(
+                    "model-authored action toolbar task could not run local text generation: {error}"
+                )],
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            };
+            let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+            return Ok((
+                TaskAttemptOutcome {
+                    status: "pending_not_attempted".into(),
+                    touched_files: Vec::new(),
+                    findings: vec![
+                        format!(
+                            "model-authored action toolbar task stayed pending because local generation failed; see {}",
+                            receipt_path.display()
+                        ),
+                    ],
+                },
+                receipt_path,
+            ));
+        }
+    };
+
+    let generation_receipt_root = runtime_root.join("model_task_generation_receipts");
+    let mut generation_receipt_path =
+        persist_model_task_generation_receipt(&generation_receipt_root, &generation_receipt)?;
+    let mut semantic_draft = parse_action_toolbar_model_draft(&raw_generated).unwrap_or_default();
+    let mut review_findings = review_action_toolbar_model_draft(&semantic_draft);
+    let mut final_generation_receipt = generation_receipt;
+    if !review_findings.is_empty() {
+        let retry_user_prompt = build_action_toolbar_retry_prompt(&user_prompt, &review_findings);
+        fs::write(
+            &prompt_path,
+            format!(
+                "# System\n{}\n\n# User\n{}\n\n# Retry User\n{}\n",
+                system_prompt, user_prompt, retry_user_prompt
+            ),
+        )?;
+        match run_local_text_generation(
+            &config,
+            &task.request_id,
+            &format!("{}-retry-1", task.task_id),
+            &system_prompt,
+            &retry_user_prompt,
+            &raw_response_dir,
+            planner.requested_model.as_deref(),
+        ) {
+            Ok((retry_raw_generated, retry_generation_receipt)) => {
+                let retry_generation_receipt_path =
+                    persist_model_task_generation_receipt(&generation_receipt_root, &retry_generation_receipt)?;
+                let retry_semantic_draft =
+                    parse_action_toolbar_model_draft(&retry_raw_generated).unwrap_or_default();
+                let retry_review_findings =
+                    review_action_toolbar_model_draft(&retry_semantic_draft);
+                if retry_review_findings.is_empty() {
+                    semantic_draft = retry_semantic_draft;
+                    review_findings.clear();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                } else {
+                    review_findings = retry_review_findings
+                        .into_iter()
+                        .map(|finding| format!("retry review: {finding}"))
+                        .collect::<Vec<_>>();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                }
+            }
+            Err(error) => {
+                review_findings.push(format!(
+                    "retry generation failed after narrow-review feedback: {error}"
+                ));
+            }
+        }
+    }
+    if !review_findings.is_empty() {
+        if should_recommend_action_toolbar_decomposition(&final_generation_receipt, &review_findings)
+        {
+            let decomposition_root = runtime_root.join("task_decomposition_receipts");
+            let decomposition = build_action_toolbar_decomposition_receipt(
+                task,
+                task_list,
+                &final_generation_receipt,
+                &generation_receipt_path,
+                &review_findings,
+            );
+            let decomposition_receipt_path =
+                persist_task_decomposition_receipt(&decomposition_root, &decomposition)?;
+            let mut findings = review_findings.clone();
+            findings.push(format!(
+                "adaptive decomposition recommended; see {}",
+                decomposition_receipt_path.display()
+            ));
+            let receipt = PlanTaskModelAttemptReceipt {
+                attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+                request_id: task.request_id.clone(),
+                task_id: task.task_id.clone(),
+                project_name: task_list.project_name.clone(),
+                target_file: Some(target_file.clone()),
+                prompt_path: prompt_path.display().to_string(),
+                generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+                decomposition_receipt_path: Some(decomposition_receipt_path.display().to_string()),
+                raw_response_path: final_generation_receipt.raw_response_path.clone(),
+                model_path: Some(final_generation_receipt.model_path.clone()),
+                status: "decomposition_recommended".into(),
+                review_findings: findings,
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            };
+            let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+            return Ok((
+                TaskAttemptOutcome {
+                    status: "decomposition_recommended".into(),
+                    touched_files: Vec::new(),
+                    findings: vec![format!(
+                        "model-authored action toolbar task recommended adaptive decomposition; see {}",
+                        receipt_path.display()
+                    )],
+                },
+                receipt_path,
+            ));
+        }
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+            decomposition_receipt_path: None,
+            raw_response_path: final_generation_receipt.raw_response_path.clone(),
+            model_path: Some(final_generation_receipt.model_path.clone()),
+            status: "blocked_by_review".into(),
+            review_findings,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "blocked_by_review".into(),
+                touched_files: Vec::new(),
+                findings: vec![
+                    format!(
+                        "model-authored action toolbar task was blocked by narrow review; see {}",
+                        receipt_path.display()
+                    ),
+                ],
+            },
+            receipt_path,
+        ));
+    }
+
+    let anchor = "            // native_window_feature_patch_anchor";
+    if !original.contains(anchor) {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+            decomposition_receipt_path: None,
+            raw_response_path: final_generation_receipt.raw_response_path.clone(),
+            model_path: Some(final_generation_receipt.model_path.clone()),
+            status: "pending_not_attempted".into(),
+            review_findings: vec![
+                "model-authored action toolbar task could not find the native window feature anchor"
+                    .into(),
+            ],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "pending_not_attempted".into(),
+                touched_files: Vec::new(),
+                findings: vec![
+                    format!(
+                        "model-authored action toolbar task stayed pending because the anchor was missing; see {}",
+                        receipt_path.display()
+                    ),
+                ],
+            },
+            receipt_path,
+        ));
+    }
+
+    let rendered_block = render_action_toolbar_model_draft(&semantic_draft);
+    let wrapped_block = format!(
+        "            // chattyfactory:feature:action_toolbar:start\n{}\n            // chattyfactory:feature:action_toolbar:end\n\n            // native_window_feature_patch_anchor",
+        indent_model_authored_block(&rendered_block, 12)
+    );
+    let updated = original.replacen(anchor, &wrapped_block, 1);
+    fs::write(&target_path, updated)?;
+    let receipt = PlanTaskModelAttemptReceipt {
+        attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        target_file: Some(target_file.clone()),
+        prompt_path: prompt_path.display().to_string(),
+        generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+        decomposition_receipt_path: None,
+        raw_response_path: final_generation_receipt.raw_response_path.clone(),
+        model_path: Some(final_generation_receipt.model_path.clone()),
+        status: "executed".into(),
+        review_findings: vec![
+            "model-authored action toolbar semantic draft passed review and was rendered into the native window feature anchor"
+                .into(),
+        ],
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+    Ok((
+        TaskAttemptOutcome {
+            status: "executed".into(),
+            touched_files: vec![target_file],
+            findings: vec![
+                format!(
+                    "model-authored action toolbar task inserted a bounded generated block; see {}",
+                    receipt_path.display()
+                ),
+            ],
+        },
+        receipt_path,
+    ))
+}
+
+fn attempt_native_action_toolbar_label_sentence_microtask(
+    runtime_root: &Path,
+    workspace_root: &Path,
+    project_dir: &Path,
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    planner: &HostPlannerOptions,
+) -> Result<(TaskAttemptOutcome, PathBuf)> {
+    let prompt_root = runtime_root.join("model_task_prompts");
+    let prompt_path = prompt_root.join(format!("{}-prompt.md", sanitize_filename(&task.task_id)));
+    let receipt_root = runtime_root.join("model_task_attempts");
+    let Some(target_file) = task
+        .target_files
+        .iter()
+        .find(|path| path.ends_with("src/main.rs"))
+        .cloned()
+    else {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: None,
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: None,
+            decomposition_receipt_path: None,
+            raw_response_path: None,
+            model_path: None,
+            status: "pending_not_attempted".into(),
+            review_findings: vec![
+                "decomposed toolbar label task stayed pending because no Rust entrypoint target file was declared"
+                    .into(),
+            ],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "pending_not_attempted".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed toolbar label task stayed pending; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    };
+
+    let target_path = project_dir.join(&target_file);
+    let original = fs::read_to_string(&target_path)?;
+    let start_marker = "            // chattyfactory:feature:action_toolbar:start";
+    let end_marker = "            // chattyfactory:feature:action_toolbar:end";
+    if original.contains(start_marker) && original.contains(end_marker) {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: None,
+            decomposition_receipt_path: None,
+            raw_response_path: None,
+            model_path: None,
+            status: "no_change_needed".into(),
+            review_findings: vec![
+                "decomposed toolbar label task found the bounded feature block already present".into(),
+            ],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "no_change_needed".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed toolbar label task found the bounded feature block already present; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+
+    let prompt_markers = [
+        "            // native_window_feature_patch_anchor",
+        "            // bridge_status_panel_anchor",
+        "            // ready_toggle_anchor",
+    ];
+    let mut anchor_context = String::new();
+    for line in original.lines() {
+        if prompt_markers.iter().any(|marker| line.contains(marker)) {
+            anchor_context.push_str(line);
+            anchor_context.push('\n');
+        }
+    }
+    let (system_prompt, user_prompt) = build_action_toolbar_label_sentence_prompts(
+        task,
+        task_list,
+        &target_file,
+        &anchor_context,
+    );
+    fs::create_dir_all(&prompt_root)?;
+    fs::write(
+        &prompt_path,
+        format!("# System\n{}\n\n# User\n{}\n", system_prompt, user_prompt),
+    )?;
+
+    let models_root = workspace_root.join("models");
+    let discovery = discover_runtime(runtime_root, &models_root)?;
+    let catalog = build_runtime_model_catalog(&models_root)?;
+    let mut config = default_runtime_config(runtime_root, &models_root)?;
+    config.default_model_path = resolve_model_choice(
+        planner.requested_model.as_deref(),
+        &catalog,
+        discovery.preferred_model_path.as_deref(),
+    );
+    if let Some(port) = planner.requested_port {
+        config.port = port;
+    }
+    persist_json_pretty(&runtime_root.join("runtime_config.json"), &config)?;
+
+    let raw_response_dir = runtime_root.join("model_task_raw_responses");
+    let (raw_generated, generation_receipt) = match run_local_text_generation(
+        &config,
+        &task.request_id,
+        &task.task_id,
+        &system_prompt,
+        &user_prompt,
+        &raw_response_dir,
+        planner.requested_model.as_deref(),
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            let receipt = PlanTaskModelAttemptReceipt {
+                attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+                request_id: task.request_id.clone(),
+                task_id: task.task_id.clone(),
+                project_name: task_list.project_name.clone(),
+                target_file: Some(target_file.clone()),
+                prompt_path: prompt_path.display().to_string(),
+                generation_receipt_path: None,
+                decomposition_receipt_path: None,
+                raw_response_path: None,
+                model_path: config.default_model_path.clone(),
+                status: "pending_not_attempted".into(),
+                review_findings: vec![format!(
+                    "decomposed toolbar label task could not run local text generation: {error}"
+                )],
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            };
+            let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+            return Ok((
+                TaskAttemptOutcome {
+                    status: "pending_not_attempted".into(),
+                    touched_files: Vec::new(),
+                    findings: vec![format!(
+                        "decomposed toolbar label task stayed pending because local generation failed; see {}",
+                        receipt_path.display()
+                    )],
+                },
+                receipt_path,
+            ));
+        }
+    };
+
+    let generation_receipt_root = runtime_root.join("model_task_generation_receipts");
+    let mut generation_receipt_path =
+        persist_model_task_generation_receipt(&generation_receipt_root, &generation_receipt)?;
+    let mut label_draft = parse_action_toolbar_label_draft(&raw_generated).unwrap_or_default();
+    let mut review_findings = review_action_toolbar_label_draft(&label_draft);
+    let mut final_generation_receipt = generation_receipt;
+    if should_recommend_action_toolbar_label_decomposition(&final_generation_receipt, &review_findings)
+    {
+        let decomposition_root = runtime_root.join("task_decomposition_receipts");
+        let decomposition = build_action_toolbar_label_decomposition_receipt(
+            task,
+            task_list,
+            &final_generation_receipt,
+            &generation_receipt_path,
+            &review_findings,
+        );
+        let decomposition_receipt_path =
+            persist_task_decomposition_receipt(&decomposition_root, &decomposition)?;
+        let mut findings = review_findings.clone();
+        findings.push(format!(
+            "adaptive decomposition recommended; see {}",
+            decomposition_receipt_path.display()
+        ));
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+            decomposition_receipt_path: Some(decomposition_receipt_path.display().to_string()),
+            raw_response_path: final_generation_receipt.raw_response_path.clone(),
+            model_path: Some(final_generation_receipt.model_path.clone()),
+            status: "decomposition_recommended".into(),
+            review_findings: findings,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "decomposition_recommended".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed toolbar label task recommended adaptive decomposition; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+    if !review_findings.is_empty() {
+        let retry_user_prompt =
+            build_action_toolbar_label_sentence_retry_prompt(&user_prompt, &review_findings);
+        fs::write(
+            &prompt_path,
+            format!(
+                "# System\n{}\n\n# User\n{}\n\n# Retry User\n{}\n",
+                system_prompt, user_prompt, retry_user_prompt
+            ),
+        )?;
+        match run_local_text_generation(
+            &config,
+            &task.request_id,
+            &format!("{}-retry-1", task.task_id),
+            &system_prompt,
+            &retry_user_prompt,
+            &raw_response_dir,
+            planner.requested_model.as_deref(),
+        ) {
+            Ok((retry_raw_generated, retry_generation_receipt)) => {
+                let retry_generation_receipt_path =
+                    persist_model_task_generation_receipt(&generation_receipt_root, &retry_generation_receipt)?;
+                let retry_label_draft =
+                    parse_action_toolbar_label_draft(&retry_raw_generated).unwrap_or_default();
+                let retry_review_findings =
+                    review_action_toolbar_label_draft(&retry_label_draft);
+                if retry_review_findings.is_empty() {
+                    label_draft = retry_label_draft;
+                    review_findings.clear();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                } else {
+                    review_findings = retry_review_findings
+                        .into_iter()
+                        .map(|finding| format!("retry review: {finding}"))
+                        .collect::<Vec<_>>();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                }
+            }
+            Err(error) => {
+                review_findings.push(format!(
+                    "retry generation failed after narrow-review feedback: {error}"
+                ));
+            }
+        }
+    }
+
+    if !review_findings.is_empty() {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+            decomposition_receipt_path: None,
+            raw_response_path: final_generation_receipt.raw_response_path.clone(),
+            model_path: Some(final_generation_receipt.model_path.clone()),
+            status: "blocked_by_review".into(),
+            review_findings,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "blocked_by_review".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed toolbar label task was blocked by narrow review; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+
+    let anchor = "            // native_window_feature_patch_anchor";
+    if !original.contains(anchor) {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+            decomposition_receipt_path: None,
+            raw_response_path: final_generation_receipt.raw_response_path.clone(),
+            model_path: Some(final_generation_receipt.model_path.clone()),
+            status: "pending_not_attempted".into(),
+            review_findings: vec![
+                "decomposed toolbar label task could not find the native window feature anchor"
+                    .into(),
+            ],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "pending_not_attempted".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed toolbar label task stayed pending because the anchor was missing; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+
+    let rendered_block = render_action_toolbar_model_draft(&ActionToolbarSemanticDraft {
+        title: "Action toolbar".into(),
+        label: label_draft.label.trim().to_string(),
+        primary_button: "Run action".into(),
+        secondary_button: "Clear".into(),
+    });
+    let wrapped_block = format!(
+        "            // chattyfactory:feature:action_toolbar:start\n{}\n            // chattyfactory:feature:action_toolbar:end\n\n            // native_window_feature_patch_anchor",
+        indent_model_authored_block(&rendered_block, 12)
+    );
+    let updated = original.replacen(anchor, &wrapped_block, 1);
+    fs::write(&target_path, updated)?;
+    let receipt = PlanTaskModelAttemptReceipt {
+        attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        target_file: Some(target_file.clone()),
+        prompt_path: prompt_path.display().to_string(),
+        generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+        decomposition_receipt_path: None,
+        raw_response_path: final_generation_receipt.raw_response_path.clone(),
+        model_path: Some(final_generation_receipt.model_path.clone()),
+        status: "executed".into(),
+        review_findings: vec![
+            "decomposed toolbar label task passed review and the host rendered the full toolbar block with fixed literals".into(),
+        ],
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+    Ok((
+        TaskAttemptOutcome {
+            status: "executed".into(),
+            touched_files: vec![target_file],
+            findings: vec![format!(
+                "decomposed toolbar label task inserted a bounded rendered toolbar block; see {}",
+                receipt_path.display()
+            )],
+        },
+        receipt_path,
+    ))
+}
+
+fn attempt_native_action_toolbar_label_clause_microtask(
+    runtime_root: &Path,
+    workspace_root: &Path,
+    project_dir: &Path,
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    planner: &HostPlannerOptions,
+    clause_kind: &str,
+) -> Result<(TaskAttemptOutcome, PathBuf)> {
+    let prompt_root = runtime_root.join("model_task_prompts");
+    let prompt_path = prompt_root.join(format!("{}-prompt.md", sanitize_filename(&task.task_id)));
+    let receipt_root = runtime_root.join("model_task_attempts");
+    let Some(target_file) = task
+        .target_files
+        .iter()
+        .find(|path| path.ends_with("src/main.rs"))
+        .cloned()
+    else {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: None,
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: None,
+            decomposition_receipt_path: None,
+            raw_response_path: None,
+            model_path: None,
+            status: "pending_not_attempted".into(),
+            review_findings: vec![format!(
+                "decomposed toolbar clause task `{clause_kind}` stayed pending because no Rust entrypoint target file was declared"
+            )],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "pending_not_attempted".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed toolbar clause task `{clause_kind}` stayed pending; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    };
+
+    let target_path = project_dir.join(&target_file);
+    let original = fs::read_to_string(&target_path)?;
+    let start_marker = "            // chattyfactory:feature:action_toolbar:start";
+    let end_marker = "            // chattyfactory:feature:action_toolbar:end";
+    if original.contains(start_marker) && original.contains(end_marker) {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: None,
+            decomposition_receipt_path: None,
+            raw_response_path: None,
+            model_path: None,
+            status: "no_change_needed".into(),
+            review_findings: vec![format!(
+                "decomposed toolbar clause task `{clause_kind}` found the bounded feature block already present"
+            )],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "no_change_needed".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed toolbar clause task `{clause_kind}` found the bounded feature block already present; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+
+    let prompt_markers = [
+        "            // native_window_feature_patch_anchor",
+        "            // bridge_status_panel_anchor",
+        "            // ready_toggle_anchor",
+    ];
+    let mut anchor_context = String::new();
+    for line in original.lines() {
+        if prompt_markers.iter().any(|marker| line.contains(marker)) {
+            anchor_context.push_str(line);
+            anchor_context.push('\n');
+        }
+    }
+    let (system_prompt, user_prompt) = build_action_toolbar_label_clause_prompts(
+        task,
+        task_list,
+        &target_file,
+        &anchor_context,
+        clause_kind,
+    );
+    fs::create_dir_all(&prompt_root)?;
+    fs::write(
+        &prompt_path,
+        format!("# System\n{}\n\n# User\n{}\n", system_prompt, user_prompt),
+    )?;
+
+    let models_root = workspace_root.join("models");
+    let discovery = discover_runtime(runtime_root, &models_root)?;
+    let catalog = build_runtime_model_catalog(&models_root)?;
+    let mut config = default_runtime_config(runtime_root, &models_root)?;
+    config.default_model_path = resolve_model_choice(
+        planner.requested_model.as_deref(),
+        &catalog,
+        discovery.preferred_model_path.as_deref(),
+    );
+    if let Some(port) = planner.requested_port {
+        config.port = port;
+    }
+    persist_json_pretty(&runtime_root.join("runtime_config.json"), &config)?;
+
+    let raw_response_dir = runtime_root.join("model_task_raw_responses");
+    let (raw_generated, generation_receipt) = match run_local_text_generation(
+        &config,
+        &task.request_id,
+        &task.task_id,
+        &system_prompt,
+        &user_prompt,
+        &raw_response_dir,
+        planner.requested_model.as_deref(),
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            let receipt = PlanTaskModelAttemptReceipt {
+                attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+                request_id: task.request_id.clone(),
+                task_id: task.task_id.clone(),
+                project_name: task_list.project_name.clone(),
+                target_file: Some(target_file.clone()),
+                prompt_path: prompt_path.display().to_string(),
+                generation_receipt_path: None,
+                decomposition_receipt_path: None,
+                raw_response_path: None,
+                model_path: config.default_model_path.clone(),
+                status: "pending_not_attempted".into(),
+                review_findings: vec![format!(
+                    "decomposed toolbar clause task `{clause_kind}` could not run local text generation: {error}"
+                )],
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            };
+            let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+            return Ok((
+                TaskAttemptOutcome {
+                    status: "pending_not_attempted".into(),
+                    touched_files: Vec::new(),
+                    findings: vec![format!(
+                        "decomposed toolbar clause task `{clause_kind}` stayed pending because local generation failed; see {}",
+                        receipt_path.display()
+                    )],
+                },
+                receipt_path,
+            ));
+        }
+    };
+
+    let generation_receipt_root = runtime_root.join("model_task_generation_receipts");
+    let generation_receipt_path =
+        persist_model_task_generation_receipt(&generation_receipt_root, &generation_receipt)?;
+    let mut clause_draft = parse_action_toolbar_clause_draft(&raw_generated).unwrap_or_default();
+    let mut review_findings = review_action_toolbar_clause_draft(&clause_draft, clause_kind);
+    let mut final_generation_receipt = generation_receipt;
+    let mut generation_receipt_path = generation_receipt_path;
+    if !review_findings.is_empty() {
+        let retry_user_prompt = build_action_toolbar_label_clause_retry_prompt(
+            &user_prompt,
+            &review_findings,
+            clause_kind,
+        );
+        fs::write(
+            &prompt_path,
+            format!(
+                "# System\n{}\n\n# User\n{}\n\n# Retry User\n{}\n",
+                system_prompt, user_prompt, retry_user_prompt
+            ),
+        )?;
+        match run_local_text_generation(
+            &config,
+            &task.request_id,
+            &format!("{}-retry-1", task.task_id),
+            &system_prompt,
+            &retry_user_prompt,
+            &raw_response_dir,
+            planner.requested_model.as_deref(),
+        ) {
+            Ok((retry_raw_generated, retry_generation_receipt)) => {
+                let retry_generation_receipt_path =
+                    persist_model_task_generation_receipt(&generation_receipt_root, &retry_generation_receipt)?;
+                let retry_clause_draft =
+                    parse_action_toolbar_clause_draft(&retry_raw_generated).unwrap_or_default();
+                let retry_review_findings =
+                    review_action_toolbar_clause_draft(&retry_clause_draft, clause_kind);
+                if retry_review_findings.is_empty() {
+                    clause_draft = retry_clause_draft;
+                    review_findings.clear();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                } else {
+                    review_findings = retry_review_findings
+                        .into_iter()
+                        .map(|finding| format!("retry review: {finding}"))
+                        .collect::<Vec<_>>();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                }
+            }
+            Err(error) => {
+                review_findings.push(format!(
+                    "retry generation failed after narrow-review feedback: {error}"
+                ));
+            }
+        }
+    }
+    if !review_findings.is_empty() {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+            decomposition_receipt_path: None,
+            raw_response_path: final_generation_receipt.raw_response_path.clone(),
+            model_path: Some(final_generation_receipt.model_path.clone()),
+            status: "blocked_by_review".into(),
+            review_findings,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "blocked_by_review".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed toolbar clause task `{clause_kind}` was blocked by narrow review; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+
+    let clause_dir = runtime_root
+        .join("model_task_clause_drafts")
+        .join(sanitize_filename(&task_list.request_id));
+    fs::create_dir_all(&clause_dir)?;
+    let clause_path = clause_dir.join(format!("{}-{}.json", sanitize_filename(&task_list.project_name), clause_kind));
+    persist_json_pretty(&clause_path, &clause_draft)?;
+
+    let mut touched_files = Vec::new();
+    let mut findings = vec![format!(
+        "decomposed toolbar clause task `{clause_kind}` persisted a reviewed clause draft"
+    )];
+    if let Some(composed_label) =
+        try_compose_toolbar_label_from_clause_drafts(&clause_dir, &task_list.project_name)
+    {
+        let anchor = "            // native_window_feature_patch_anchor";
+        if original.contains(anchor) {
+            let rendered_block = render_action_toolbar_model_draft(&ActionToolbarSemanticDraft {
+                title: "Action toolbar".into(),
+                label: composed_label,
+                primary_button: "Run action".into(),
+                secondary_button: "Clear".into(),
+            });
+            let wrapped_block = format!(
+                "            // chattyfactory:feature:action_toolbar:start\n{}\n            // chattyfactory:feature:action_toolbar:end\n\n            // native_window_feature_patch_anchor",
+                indent_model_authored_block(&rendered_block, 12)
+            );
+            let updated = original.replacen(anchor, &wrapped_block, 1);
+            fs::write(&target_path, updated)?;
+            touched_files.push(target_file.clone());
+            findings.push(
+                "host composed the final toolbar label sentence from decomposed clause drafts and rendered the toolbar block".into(),
+            );
+        }
+    }
+
+    let receipt = PlanTaskModelAttemptReceipt {
+        attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        target_file: Some(target_file.clone()),
+        prompt_path: prompt_path.display().to_string(),
+        generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+        decomposition_receipt_path: None,
+        raw_response_path: final_generation_receipt.raw_response_path.clone(),
+        model_path: Some(final_generation_receipt.model_path.clone()),
+        status: "executed".into(),
+        review_findings: findings.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+    Ok((
+        TaskAttemptOutcome {
+            status: "executed".into(),
+            touched_files,
+            findings: vec![format!(
+                "decomposed toolbar clause task `{clause_kind}` executed; see {}",
+                receipt_path.display()
+            )],
+        },
+        receipt_path,
+    ))
+}
+
+fn build_action_toolbar_model_prompts(
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    target_file: &str,
+    anchor_context: &str,
+) -> (String, String) {
+    let system_prompt = "Return exactly one minified JSON object and nothing else. Do not return Rust code. Do not return markdown. Do not use code fences. Do not add prose. Use exactly these keys: title, label, primary_button, secondary_button.".to_string();
+    let user_prompt = format!(
+        "Task id: {task_id}\nProject: {project}\nTitle: {title}\nSummary: {summary}\nTarget file: {target_file}\nExpected symbols: {expected_symbols}\nVerification intent: {verification}\nAnchor context:\n{anchor_context}\n\nReturn exactly one minified JSON object for a tiny action toolbar semantic draft. Requirements:\n- use exactly these keys: `title`, `label`, `primary_button`, `secondary_button`\n- set `title` to the exact literal `Action toolbar`\n- set `primary_button` to the exact literal `Run action`\n- set `secondary_button` to the exact literal `Clear`\n- make `label` one short explanatory sentence for the toolbar\n- no extra keys\n- no markdown\n- no prose\n- no Rust code\n- output must look like this shape exactly:\n{{\"title\":\"Action toolbar\",\"label\":\"Short explanatory label\",\"primary_button\":\"Run action\",\"secondary_button\":\"Clear\"}}",
+        task_id = task.task_id,
+        project = task_list.project_name,
+        title = task.task_title,
+        summary = task.task_summary,
+        target_file = target_file,
+        expected_symbols = task.expected_symbols.join(", "),
+        verification = task.verification_steps.join(", "),
+        anchor_context = anchor_context.trim_end(),
+    );
+    (system_prompt, user_prompt)
+}
+
+fn build_action_toolbar_label_sentence_prompts(
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    target_file: &str,
+    anchor_context: &str,
+) -> (String, String) {
+    let system_prompt = "Return exactly one minified JSON object and nothing else. Do not return Rust code. Do not return markdown. Do not use code fences. Do not add prose. Use exactly one key: label.".to_string();
+    let user_prompt = format!(
+        "Task id: {task_id}\nProject: {project}\nTitle: {title}\nSummary: {summary}\nTarget file: {target_file}\nExpected symbols: {expected_symbols}\nVerification intent: {verification}\nAnchor context:\n{anchor_context}\n\nReturn exactly one minified JSON object for the toolbar label sentence only. Requirements:\n- use exactly one key: `label`\n- `label` must be one short explanatory sentence for an action toolbar\n- keep it under 90 characters if possible\n- make it concrete and useful for a real dashboard\n- do not use placeholder wording like `short explanatory label`, `placeholder`, `todo`, `sample`, or `example`\n- no extra keys\n- no markdown\n- no prose\n- no Rust code\n- output must look like this shape exactly:\n{{\"label\":\"Use the toolbar buttons to run or clear the current action.\"}}",
+        task_id = task.task_id,
+        project = task_list.project_name,
+        title = task.task_title,
+        summary = task.task_summary,
+        target_file = target_file,
+        expected_symbols = task.expected_symbols.join(", "),
+        verification = task.verification_steps.join(", "),
+        anchor_context = anchor_context.trim_end(),
+    );
+    (system_prompt, user_prompt)
+}
+
+fn build_action_toolbar_label_sentence_retry_prompt(
+    original_user_prompt: &str,
+    review_findings: &[String],
+) -> String {
+    format!(
+        "{original_user_prompt}\n\nYour previous attempt was rejected for these exact reasons:\n- {}\n\nRetry once. Fix every violation exactly. Hard requirements for this retry:\n- return valid minified JSON only\n- use exactly one key and no others: `label`\n- the label must sound like real UI copy, not placeholder text\n- do not return prose, markdown, or code\nReturn only the corrected minified JSON object.",
+        review_findings.join("\n- ")
+    )
+}
+
+fn build_action_toolbar_label_clause_prompts(
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    target_file: &str,
+    anchor_context: &str,
+    clause_kind: &str,
+) -> (String, String) {
+    let system_prompt = "Return exactly one minified JSON object and nothing else. Do not return Rust code. Do not return markdown. Do not use code fences. Do not add prose. Do not think aloud. Use exactly one key: clause.".to_string();
+    let clause_requirement = if clause_kind == "run_action" {
+        "The clause must describe running or starting the current action from the toolbar."
+    } else {
+        "The clause must describe clearing or resetting the current action from the toolbar."
+    };
+    let example_clause = if clause_kind == "run_action" {
+        "Run the current action from the toolbar."
+    } else {
+        "Clear the current action when you need a fresh start."
+    };
+    let user_prompt = format!(
+        "Task id: {task_id}\nProject: {project}\nTitle: {title}\nSummary: {summary}\nTarget file: {target_file}\nExpected symbols: {expected_symbols}\nVerification intent: {verification}\nAnchor context:\n{anchor_context}\n\nReturn exactly one minified JSON object for one toolbar label clause only. Requirements:\n- use exactly one key: `clause`\n- {clause_requirement}\n- keep it under 70 characters if possible\n- make it concrete UI copy, not placeholder wording\n- no extra keys\n- no markdown\n- no prose\n- no Rust code\n- output must look like this shape exactly:\n{{\"clause\":\"{example_clause}\"}}",
+        task_id = task.task_id,
+        project = task_list.project_name,
+        title = task.task_title,
+        summary = task.task_summary,
+        target_file = target_file,
+        expected_symbols = task.expected_symbols.join(", "),
+        verification = task.verification_steps.join(", "),
+        anchor_context = anchor_context.trim_end(),
+        clause_requirement = clause_requirement,
+        example_clause = example_clause,
+    );
+    (system_prompt, user_prompt)
+}
+
+fn build_action_toolbar_label_clause_retry_prompt(
+    original_user_prompt: &str,
+    review_findings: &[String],
+    clause_kind: &str,
+) -> String {
+    let hard_clause_rule = if clause_kind == "run_action" {
+        "- the clause must explicitly say `run` or `start`"
+    } else {
+        "- the clause must explicitly say `clear` or `reset`"
+    };
+    let exact_shape = if clause_kind == "run_action" {
+        "{\"clause\":\"Run the current action from the toolbar.\"}"
+    } else {
+        "{\"clause\":\"Clear the current action to reset the toolbar state.\"}"
+    };
+    format!(
+        "{original_user_prompt}\n\nYour previous attempt was rejected for these exact reasons:\n- {}\n\nRetry once. Fix every violation exactly. Hard requirements for this retry:\n- return valid minified JSON only\n- use exactly one key and no others: `clause`\n{hard_clause_rule}\n- do not return prose, markdown, or code\n- return this exact object shape with your own clause value if needed:\n{exact_shape}\nReturn only the corrected minified JSON object.",
+        review_findings.join("\n- ")
+    )
+}
+
+fn review_action_toolbar_clause_draft(
+    draft: &ActionToolbarClauseDraft,
+    clause_kind: &str,
+) -> Vec<String> {
+    let mut findings = Vec::new();
+    let trimmed = draft.clause.trim();
+    if trimmed.is_empty() {
+        findings.push("clause draft omitted the required `clause` field".into());
+    }
+    if trimmed.chars().count() > 100 {
+        findings.push("clause draft was broader than the narrow microtask budget".into());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let placeholder_markers = [
+        "placeholder",
+        "todo",
+        "example",
+        "sample",
+        "insert clause",
+        "write clause",
+    ];
+    if placeholder_markers.iter().any(|marker| lower.contains(marker)) {
+        findings.push("clause draft used placeholder wording instead of real UI copy".into());
+    }
+    if clause_kind == "run_action" && !(lower.contains("run") || lower.contains("start")) {
+        findings.push("run-action clause draft did not mention running or starting the action".into());
+    }
+    if clause_kind == "clear_action" && !(lower.contains("clear") || lower.contains("reset") || lower.contains("fresh start")) {
+        findings.push("clear-action clause draft did not mention clearing or resetting the action".into());
+    }
+    findings
+}
+
+fn parse_action_toolbar_clause_draft(raw: &str) -> Option<ActionToolbarClauseDraft> {
+    let json = extract_first_json_object_local(raw)?;
+    serde_json::from_str(&json).ok()
+}
+
+fn try_compose_toolbar_label_from_clause_drafts(
+    clause_dir: &Path,
+    project_name: &str,
+) -> Option<String> {
+    let base = sanitize_filename(project_name);
+    let run_path = clause_dir.join(format!("{base}-run_action.json"));
+    let clear_path = clause_dir.join(format!("{base}-clear_action.json"));
+    let run_contents = fs::read_to_string(run_path).ok()?;
+    let clear_contents = fs::read_to_string(clear_path).ok()?;
+    let run_draft: ActionToolbarClauseDraft = serde_json::from_str(&run_contents).ok()?;
+    let clear_draft: ActionToolbarClauseDraft = serde_json::from_str(&clear_contents).ok()?;
+    let run_clause = run_draft.clause.trim().trim_end_matches('.').to_string();
+    let clear_clause = clear_draft.clause.trim().trim_end_matches('.').to_string();
+    if run_clause.is_empty() || clear_clause.is_empty() {
+        return None;
+    }
+    Some(format!("{run_clause}. {clear_clause}."))
+}
+
+fn build_action_toolbar_retry_prompt(original_user_prompt: &str, review_findings: &[String]) -> String {
+    format!(
+        "{original_user_prompt}\n\nYour previous attempt was rejected for these exact reasons:\n- {}\n\nRetry once. Fix every violation exactly. Hard requirements for this retry:\n- return valid minified JSON only\n- use exactly these keys and no others: `title`, `label`, `primary_button`, `secondary_button`\n- `title` must be `Action toolbar`\n- `primary_button` must be `Run action`\n- `secondary_button` must be `Clear`\n- do not return prose, markdown, or code\nReturn only the corrected minified JSON object.",
+        review_findings.join("\n- ")
+    )
+}
+
+fn review_action_toolbar_label_draft(draft: &ActionToolbarLabelDraft) -> Vec<String> {
+    let mut findings = Vec::new();
+    let trimmed = draft.label.trim();
+    if trimmed.is_empty() {
+        findings.push("label draft omitted the required `label` field".into());
+    }
+    if trimmed.chars().count() > 120 {
+        findings.push("label draft was broader than the narrow microtask budget".into());
+    }
+    let forbidden = ["fn ", "struct ", "impl ", "use ", "mod ", "{", "}"];
+    for token in forbidden {
+        if trimmed.contains(token) {
+            findings.push(format!("label draft included forbidden token `{token}`"));
+        }
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let placeholder_markers = [
+        "short explanatory label",
+        "placeholder",
+        "todo",
+        "example",
+        "sample",
+        "insert label",
+        "write label",
+    ];
+    if placeholder_markers.iter().any(|marker| lower.contains(marker)) {
+        findings.push("label draft used placeholder wording instead of real UI copy".into());
+    }
+    findings
+}
+
+fn parse_action_toolbar_label_draft(raw: &str) -> Option<ActionToolbarLabelDraft> {
+    let json = extract_first_json_object_local(raw)?;
+    serde_json::from_str(&json).ok()
+}
+
+fn review_action_toolbar_model_draft(draft: &ActionToolbarSemanticDraft) -> Vec<String> {
+    let mut findings = Vec::new();
+    if draft.title.trim().is_empty()
+        || draft.label.trim().is_empty()
+        || draft.primary_button.trim().is_empty()
+        || draft.secondary_button.trim().is_empty()
+    {
+        findings.push("semantic draft omitted one or more required fields".into());
+    }
+    if draft.title != "Action toolbar" {
+        findings.push("semantic draft did not set `title` to `Action toolbar`".into());
+    }
+    if draft.primary_button != "Run action" {
+        findings.push("semantic draft did not set `primary_button` to `Run action`".into());
+    }
+    if draft.secondary_button != "Clear" {
+        findings.push("semantic draft did not set `secondary_button` to `Clear`".into());
+    }
+    if draft.label.chars().count() > 120 {
+        findings.push("semantic draft label was broader than the narrow microtask budget".into());
+    }
+    let forbidden = ["fn ", "struct ", "impl ", "use ", "mod ", "{", "}"];
+    for token in forbidden {
+        if draft.label.contains(token) {
+            findings.push(format!("semantic draft label included forbidden token `{token}`"));
+        }
+    }
+    findings
+}
+
+fn parse_action_toolbar_model_draft(raw: &str) -> Option<ActionToolbarSemanticDraft> {
+    let json = extract_first_json_object_local(raw)?;
+    serde_json::from_str(&json).ok()
+}
+
+fn extract_first_json_object_local(text: &str) -> Option<String> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escape = false;
+    let mut start = None;
+    for (index, ch) in text.char_indices() {
+        if in_string {
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start = Some(index);
+                }
+                depth += 1;
+            }
+            '}' => {
+                if depth == 0 {
+                    continue;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(start_index) = start {
+                        return Some(text[start_index..=index].to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn render_action_toolbar_model_draft(draft: &ActionToolbarSemanticDraft) -> String {
+    [
+        "ui.group(|ui| {".to_string(),
+        format!("    ui.strong({:?});", draft.title),
+        format!("    ui.label({:?});", draft.label),
+        format!("    if ui.button({:?}).clicked() {{}}", draft.primary_button),
+        format!("    if ui.button({:?}).clicked() {{}}", draft.secondary_button),
+        "});".to_string(),
+    ]
+    .join("\n")
+}
+
+fn should_recommend_action_toolbar_decomposition(
+    generation_receipt: &ModelTaskGenerationReceipt,
+    review_findings: &[String],
+) -> bool {
+    generation_receipt.response_content_mode.as_deref() == Some("reasoning_fallback")
+        && !generation_receipt.content_present
+        && generation_receipt.reasoning_content_present
+        && (generation_receipt.finish_reason.as_deref() == Some("length")
+            || review_findings
+                .iter()
+                .any(|finding| finding.contains("semantic draft omitted one or more required fields")))
+}
+
+fn should_recommend_action_toolbar_label_decomposition(
+    generation_receipt: &ModelTaskGenerationReceipt,
+    review_findings: &[String],
+) -> bool {
+    generation_receipt.response_content_mode.as_deref() == Some("reasoning_fallback")
+        && !generation_receipt.content_present
+        && generation_receipt.reasoning_content_present
+        && (generation_receipt.finish_reason.as_deref() == Some("length")
+            || review_findings
+                .iter()
+                .any(|finding| finding.contains("label draft omitted the required `label` field")))
+}
+
+fn build_action_toolbar_decomposition_receipt(
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    generation_receipt: &ModelTaskGenerationReceipt,
+    generation_receipt_path: &Path,
+    review_findings: &[String],
+) -> TaskDecompositionReceipt {
+    let mut findings = vec![
+        "model-authored task returned empty `content` and relied on reasoning spillover".into(),
+        "current small-model attempt suggests this toolbar semantic draft should be decomposed before retrying".into(),
+    ];
+    findings.extend(review_findings.iter().cloned());
+    TaskDecompositionReceipt {
+        decomposition_id: chatty_factory_core::timestamp_id("task-decomposition"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        task_subtype: "toolbar_ui_block".into(),
+        trigger_class: format!(
+            "generation_mode:{}",
+            generation_receipt
+                .response_content_mode
+                .as_deref()
+                .unwrap_or("unknown")
+        ),
+        decision: "decompose_before_retrying_task_subtype".into(),
+        source_generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+        findings,
+        recommended_child_tasks: vec![
+            "action_toolbar_title_literal".into(),
+            "action_toolbar_label_sentence".into(),
+            "action_toolbar_primary_button_literal".into(),
+            "action_toolbar_secondary_button_literal".into(),
+            "host_render_toolbar_group_block".into(),
+        ],
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn build_action_toolbar_label_decomposition_receipt(
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    generation_receipt: &ModelTaskGenerationReceipt,
+    generation_receipt_path: &Path,
+    review_findings: &[String],
+) -> TaskDecompositionReceipt {
+    let mut findings = vec![
+        "decomposed toolbar label task returned empty `content` and relied on reasoning spillover".into(),
+        "current small-model attempt suggests this label microtask still needs a smaller execution shape or a different runtime mode".into(),
+    ];
+    findings.extend(review_findings.iter().cloned());
+    TaskDecompositionReceipt {
+        decomposition_id: chatty_factory_core::timestamp_id("task-decomposition"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        task_subtype: "toolbar_label_sentence".into(),
+        trigger_class: format!(
+            "generation_mode:{}",
+            generation_receipt
+                .response_content_mode
+                .as_deref()
+                .unwrap_or("unknown")
+        ),
+        decision: "decompose_or_shift_runtime_mode_before_retrying_task_subtype".into(),
+        source_generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+        findings,
+        recommended_child_tasks: vec![
+            "action_toolbar_label_clause_run_action".into(),
+            "action_toolbar_label_clause_clear_action".into(),
+            "host_compose_toolbar_label_sentence".into(),
+        ],
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn has_decomposition_rule_for_task_subtype(runtime_root: &Path, task_subtype: &str) -> bool {
+    let receipts_dir = runtime_root.join("task_decomposition_receipts");
+    let Ok(entries) = fs::read_dir(receipts_dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_file() {
+            continue;
+        }
+        let Ok(contents) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let Ok(receipt) = serde_json::from_str::<TaskDecompositionReceipt>(&contents) else {
+            continue;
+        };
+        if receipt.task_subtype == task_subtype
+            && receipt.decision.contains("decompose")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn indent_model_authored_block(block: &str, spaces: usize) -> String {
+    let indent = " ".repeat(spaces);
+    block.lines()
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{indent}{line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn persist_model_task_generation_receipt(
+    receipt_root: &Path,
+    receipt: &ModelTaskGenerationReceipt,
+) -> Result<PathBuf> {
+    let path = receipt_root.join(format!("{}-generation.json", sanitize_filename(&receipt.task_id)));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_task_decomposition_receipt(
+    receipt_root: &Path,
+    receipt: &TaskDecompositionReceipt,
+) -> Result<PathBuf> {
+    let path = receipt_root.join(format!(
+        "{}-decomposition.json",
+        sanitize_filename(&receipt.task_id)
+    ));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_plan_task_model_attempt_receipt(
+    receipt_root: &Path,
+    receipt: &PlanTaskModelAttemptReceipt,
+) -> Result<PathBuf> {
+    let path = receipt_root.join(format!("{}-attempt.json", sanitize_filename(&receipt.task_id)));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn sanitize_filename(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch,
+            _ => '_',
+        })
+        .collect()
+}
+
+fn execute_safe_build_execution_work_order(
+    project_dir: &Path,
+    work_order: &BuildExecutionWorkOrder,
+) -> Result<Vec<String>> {
+    let mut synced_files = Vec::new();
+    if sync_work_order_project_spec(project_dir, work_order)? {
+        synced_files.push("ProjectSpec.json".into());
+    }
+    if sync_work_order_acceptance_plan(project_dir, work_order)? {
+        synced_files.push("AcceptancePlan.json".into());
+    }
+    if sync_work_order_readme(project_dir, work_order)? {
+        synced_files.push("README.md".into());
+    }
+    Ok(synced_files)
+}
+
+fn sync_work_order_project_spec(
+    project_dir: &Path,
+    work_order: &BuildExecutionWorkOrder,
+) -> Result<bool> {
+    let path = project_dir.join("ProjectSpec.json");
+    let mut spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(&path)?)?;
+    let original = serde_json::to_string_pretty(&spec)?;
+    for feature in &work_order.feature_capabilities {
+        if !spec.features.iter().any(|existing| existing == feature) {
+            spec.features.push(feature.clone());
+        }
+    }
+    spec.features.sort();
+    spec.features.dedup();
+    let updated = serde_json::to_string_pretty(&spec)?;
+    if updated != original {
+        fs::write(&path, updated)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+fn sync_work_order_acceptance_plan(
+    project_dir: &Path,
+    work_order: &BuildExecutionWorkOrder,
+) -> Result<bool> {
+    let path = project_dir.join("AcceptancePlan.json");
+    let mut plan: chatty_factory_core::AcceptancePlan =
+        serde_json::from_str(&fs::read_to_string(&path)?)?;
+    let original = serde_json::to_string_pretty(&plan)?;
+    let metadata_note = format!(
+        "reviewed_build_work_order:{}:{} feature slice(s)",
+        work_order.work_order_id,
+        work_order.feature_slice_ids.len()
+    );
+    if !plan.schema_checks.iter().any(|existing| existing == &metadata_note) {
+        plan.schema_checks.push(metadata_note);
+    }
+    let updated = serde_json::to_string_pretty(&plan)?;
+    if updated != original {
+        fs::write(&path, updated)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+fn sync_work_order_readme(project_dir: &Path, work_order: &BuildExecutionWorkOrder) -> Result<bool> {
+    let path = project_dir.join("README.md");
+    let original = fs::read_to_string(&path)?;
+    let planned_features = if work_order.feature_capabilities.is_empty() {
+        "- none yet".to_string()
+    } else {
+        work_order
+            .feature_capabilities
+            .iter()
+            .map(|feature| format!("- `{feature}`"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let execution_candidates = work_order
+        .operations
+        .iter()
+        .filter(|operation| operation.source == "build_feature_slice")
+        .take(8)
+        .map(|operation| format!("- `{}` -> `{}`", operation.operation_kind, operation.path))
+        .collect::<Vec<_>>();
+    let execution_candidates = if execution_candidates.is_empty() {
+        "- starter-only work order".to_string()
+    } else {
+        execution_candidates.join("\n")
+    };
+    let section = format!(
+        "\n<!-- chattyfactory:build-work-order:start -->\n## Reviewed Build Work Order\n\nDecision: `{}`\n\nReviewed feature capabilities:\n{}\n\nFirst bounded execution candidates:\n{}\n<!-- chattyfactory:build-work-order:end -->\n",
+        work_order.decision,
+        planned_features,
+        execution_candidates
+    );
+    let updated = replace_or_append_marked_section(
+        &original,
+        "<!-- chattyfactory:build-work-order:start -->",
+        "<!-- chattyfactory:build-work-order:end -->",
+        &section,
+    );
+    if updated != original {
+        fs::write(&path, updated)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+fn replace_or_append_marked_section(
+    original: &str,
+    start_marker: &str,
+    end_marker: &str,
+    replacement: &str,
+) -> String {
+    if let (Some(start), Some(end)) = (original.find(start_marker), original.find(end_marker)) {
+        let end_index = end + end_marker.len();
+        let mut updated = String::new();
+        updated.push_str(&original[..start]);
+        updated.push_str(replacement);
+        updated.push_str(&original[end_index..]);
+        updated
+    } else {
+        let mut updated = original.trim_end().to_string();
+        updated.push_str("\n");
+        updated.push_str(replacement);
+        updated
+    }
+}
+
+fn starter_substrate_capabilities(selected_family_id: Option<&FamilyId>) -> Vec<String> {
+    match selected_family_id {
+        Some(FamilyId::ChattycogNativeWindowModule) => vec![
+            "rust".into(),
+            "dashboard".into(),
+            "module_wrapper".into(),
+        ],
+        Some(FamilyId::ChattyeduNativeWindowModule) => vec![
+            "rust".into(),
+            "dashboard".into(),
+        ],
+        Some(FamilyId::ChattycogChattyeduNativeWindowModule) => vec![
+            "rust".into(),
+            "dashboard".into(),
+            "module_wrapper".into(),
+        ],
+        Some(FamilyId::RustCliTool) => vec!["rust".into(), "cli".into()],
+        Some(FamilyId::PythonCliTool) => vec!["python".into(), "cli".into()],
+        _ => vec!["web".into(), "dashboard".into()],
+    }
+}
+
+fn feature_operation_kind_for_path(path: &str) -> &'static str {
+    if path.ends_with("src/main.rs")
+        || path.ends_with("main.py")
+        || path.ends_with("app.js")
+        || path.ends_with("index.html")
+    {
+        "insert_feature_block_candidate"
+    } else if path.ends_with("ProjectSpec.json") || path.ends_with("AcceptancePlan.json") {
+        "sync_contract_candidate"
+    } else if path.ends_with("README.md") {
+        "sync_docs_candidate"
+    } else {
+        "update_feature_file_candidate"
+    }
+}
+
+fn feature_target_anchor_for_path(path: &str) -> Option<&'static str> {
+    if path.ends_with("src/main.rs") {
+        Some("native_window_feature_patch_anchor")
+    } else if path.ends_with("app.js") {
+        Some("web_dashboard_feature_patch_anchor")
+    } else {
+        None
+    }
+}
+
+fn feature_ownership_boundary_for_path(path: &str) -> &'static str {
+    if path.ends_with("ProjectSpec.json") || path.ends_with("AcceptancePlan.json") {
+        "host_owned_contract_sync"
+    } else if path.ends_with("README.md") {
+        "documentation_sync_boundary"
+    } else {
+        "starter_extension_boundary"
+    }
+}
+
+fn is_syntax_sensitive_path(path: &str) -> bool {
+    path.ends_with(".rs")
+        || path.ends_with(".py")
+        || path.ends_with(".js")
+        || path.ends_with(".html")
+        || path.ends_with(".css")
+}
+
+fn starter_contract_paths(selected_family_id: Option<&FamilyId>) -> Vec<&'static str> {
+    match selected_family_id {
+        Some(FamilyId::ChattycogNativeWindowModule) => vec![
+            "Cargo.toml",
+            "src/main.rs",
+            "manifest.json",
+            "visual_load.json",
+            "HANDSHAKE.md",
+            "ChattyCogModuleSpec.json",
+            "network_capabilities.json",
+            "README.md",
+            "STATE_TEMPLATE.md",
+            "ProjectSpec.json",
+            "AcceptancePlan.json",
+        ],
+        Some(FamilyId::ChattyeduNativeWindowModule) => vec![
+            "Cargo.toml",
+            "src/main.rs",
+            "manifest.json",
+            "visual_load.json",
+            "HANDSHAKE.md",
+            "ChattyEduModuleSpec.json",
+            "network_capabilities.json",
+            "README.md",
+            "STATE_TEMPLATE.md",
+            "ProjectSpec.json",
+            "AcceptancePlan.json",
+        ],
+        Some(FamilyId::ChattycogChattyeduNativeWindowModule) => vec![
+            "Cargo.toml",
+            "src/main.rs",
+            "manifest.json",
+            "visual_load.json",
+            "HANDSHAKE.md",
+            "ChattyCogModuleSpec.json",
+            "ChattyEduModuleSpec.json",
+            "network_capabilities.json",
+            "README.md",
+            "STATE_TEMPLATE.md",
+            "ProjectSpec.json",
+            "AcceptancePlan.json",
+        ],
+        Some(FamilyId::RustCliTool) => vec![
+            "Cargo.toml",
+            "src/main.rs",
+            "README.md",
+            "ProjectSpec.json",
+            "AcceptancePlan.json",
+        ],
+        Some(FamilyId::PythonCliTool) => vec![
+            "main.py",
+            "README.md",
+            "ProjectSpec.json",
+            "AcceptancePlan.json",
+        ],
+        _ => vec![
+            "index.html",
+            "app.js",
+            "styles.css",
+            "README.md",
+            "ProjectSpec.json",
+            "AcceptancePlan.json",
+        ],
+    }
+}
+
+fn default_feature_target_files(selected_family_id: Option<&FamilyId>) -> Vec<String> {
+    match selected_family_id {
+        Some(FamilyId::ChattycogNativeWindowModule)
+        | Some(FamilyId::ChattyeduNativeWindowModule)
+        | Some(FamilyId::ChattycogChattyeduNativeWindowModule) => vec![
+            "src/main.rs".into(),
+            "ProjectSpec.json".into(),
+            "AcceptancePlan.json".into(),
+            "README.md".into(),
+        ],
+        Some(FamilyId::RustCliTool) => vec![
+            "src/main.rs".into(),
+            "ProjectSpec.json".into(),
+            "AcceptancePlan.json".into(),
+            "README.md".into(),
+        ],
+        Some(FamilyId::PythonCliTool) => vec![
+            "main.py".into(),
+            "ProjectSpec.json".into(),
+            "AcceptancePlan.json".into(),
+            "README.md".into(),
+        ],
+        _ => vec![
+            "app.js".into(),
+            "index.html".into(),
+            "styles.css".into(),
+            "ProjectSpec.json".into(),
+            "AcceptancePlan.json".into(),
+            "README.md".into(),
+        ],
+    }
+}
+
+fn normalized_feature_slice_inputs(
+    request: &RequestRecord,
+    plan: &RequestPlan,
+    inputs: &chatty_factory_core::ScaffoldInputs,
+) -> Vec<String> {
+    let lower = request.raw_request.to_ascii_lowercase();
+    let mut features = request.requested_capabilities.clone();
+    features.extend(plan.planner_suggested_features.clone());
+    features.extend(inputs.feature_tokens.clone());
+    features.extend(
+        infer_chattycog_bridge_capabilities_from_text(&lower)
+            .into_iter()
+            .map(|capability| format!("bridge_{}", capability)),
+    );
+    features.retain(|feature| !feature.trim().is_empty());
+    features.sort();
+    features.dedup();
+    features
 }
 
 fn derive_family_usage_summary(output_root: &Path) -> Result<FamilyUsageSummaryReceipt> {
@@ -5254,6 +8255,45 @@ impl HostBridge {
                 .join(format!("{}-inputs.json", request.request_id)),
             &inputs,
         )?;
+        let build_plan_artifact = derive_build_plan_artifact(
+            &request,
+            &plan,
+            &route,
+            &inputs,
+            starter_override.as_ref(),
+            recommended_starter_id.as_deref(),
+        );
+        let build_plan_artifact_path = self
+            .runtime_root
+            .join("build_plans")
+            .join(format!("{}-build-plan.json", request.request_id));
+        let (build_plan_review, reviewed_build_plan_artifact) =
+            review_build_plan_artifact(&build_plan_artifact);
+        let build_plan_review_path =
+            persist_build_plan_review(&self.runtime_root, &build_plan_review)?;
+        let build_constraint_review =
+            review_build_plan_constraints(&reviewed_build_plan_artifact, &build_plan_review);
+        let build_constraint_review_path =
+            persist_build_constraint_review_receipt(&self.runtime_root, &build_constraint_review)?;
+        let build_execution_work_order = derive_build_execution_work_order(
+            &reviewed_build_plan_artifact,
+            &build_plan_review,
+            &build_constraint_review,
+        );
+        let build_execution_work_order_path = persist_build_execution_work_order(
+            &self.runtime_root,
+            &build_execution_work_order,
+        )?;
+        let plan_task_list = derive_plan_task_list(
+            &self.runtime_root,
+            &reviewed_build_plan_artifact,
+            &build_plan_review,
+            &build_constraint_review,
+            &build_execution_work_order,
+        );
+        let plan_task_list_path =
+            persist_plan_task_list(&self.runtime_root, &plan_task_list)?;
+        persist_json_pretty(&build_plan_artifact_path, &reviewed_build_plan_artifact)?;
         let mut composition_patch_kinds = derive_bounded_build_composition_patch_kinds(
             &request,
             &plan,
@@ -5378,6 +8418,25 @@ impl HostBridge {
         composition_notes.extend(composition_review_notes);
 
         apply_request_plan_enrichments(&artifacts.project_dir, &plan)?;
+        let work_order_synced_files =
+            execute_safe_build_execution_work_order(&artifacts.project_dir, &build_execution_work_order)?;
+        let mut attempted_task_outcomes =
+            execute_first_host_mechanical_microtasks(&artifacts.project_dir, &plan_task_list)?;
+        let (model_task_outcomes, model_task_receipt_paths) = execute_first_model_authored_microtasks(
+            &self.runtime_root,
+            &self.workspace_root,
+            &artifacts.project_dir,
+            &plan_task_list,
+            planner,
+        )?;
+        attempted_task_outcomes.extend(model_task_outcomes);
+        let plan_task_execution_log = derive_plan_task_execution_log(
+            &plan_task_list,
+            &work_order_synced_files,
+            &attempted_task_outcomes,
+        );
+        let plan_task_execution_log_path =
+            persist_plan_task_execution_log(&self.runtime_root, &plan_task_execution_log)?;
         let execution_status = match run_execution_safety(
             &self.runtime_root,
             &request.request_id,
@@ -5414,6 +8473,33 @@ impl HostBridge {
                 );
             }
         };
+        let plan_task_verification_log = derive_plan_task_verification_log(
+            &plan_task_list,
+            &plan_task_execution_log,
+            &execution_status,
+        );
+        let plan_task_verification_log_path = persist_plan_task_verification_log(
+            &self.runtime_root,
+            &plan_task_verification_log,
+        )?;
+        let attempted_microtasks = attempted_task_outcomes
+            .iter()
+            .map(|(task_id, outcome)| {
+                format!(
+                    "{task_id}:{}{}",
+                    outcome.status,
+                    if outcome.touched_files.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", outcome.touched_files.join(", "))
+                    }
+                )
+            })
+            .collect::<Vec<_>>();
+        let attempted_model_microtasks = model_task_receipt_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>();
         persist_project_grounding(
             &self.runtime_root,
             &request.request_id,
@@ -5566,6 +8652,45 @@ impl HostBridge {
                     format!("plan_confidence={} ({})", plan.confidence_score, plan.confidence_band),
                     format!("execution_smoke={execution_status}"),
                     format!("files={}", receipt.emitted_files.len()),
+                    format!("build_plan_artifact={}", build_plan_artifact_path.display()),
+                    format!("build_plan_review={}", build_plan_review_path.display()),
+                    format!(
+                        "build_constraint_review={}",
+                        build_constraint_review_path.display()
+                    ),
+                    format!(
+                        "build_execution_work_order={}",
+                        build_execution_work_order_path.display()
+                    ),
+                    format!("plan_task_list={}", plan_task_list_path.display()),
+                    format!(
+                        "build_work_order_synced_files={}",
+                        work_order_synced_files.join(", ")
+                    ),
+                    format!(
+                        "plan_task_execution_log={}",
+                        plan_task_execution_log_path.display()
+                    ),
+                    format!(
+                        "plan_task_verification_log={}",
+                        plan_task_verification_log_path.display()
+                    ),
+                    format!(
+                        "attempted_microtasks={}",
+                        if attempted_microtasks.is_empty() {
+                            "none".into()
+                        } else {
+                            attempted_microtasks.join(" | ")
+                        }
+                    ),
+                    format!(
+                        "model_task_attempt_receipts={}",
+                        if attempted_model_microtasks.is_empty() {
+                            "none".into()
+                        } else {
+                            attempted_model_microtasks.join(", ")
+                        }
+                    ),
                     format!("family_usage_summary={}", family_usage_summary_path.display()),
                     format!("starter_usage_summary={}", starter_usage_summary_path.display()),
                 ];
@@ -5623,6 +8748,61 @@ impl HostBridge {
                         "primitive execution plan persisted: {}",
                         primitive_execution_plan_path.display()
                     ));
+                    notes.push(format!(
+                        "build plan artifact persisted: {}",
+                        build_plan_artifact_path.display()
+                    ));
+                    notes.push(format!(
+                        "build plan self-review decision: {}",
+                        build_plan_review.decision
+                    ));
+                    if !build_plan_review.findings.is_empty() {
+                        notes.push(format!(
+                            "build plan self-review findings: {}",
+                            build_plan_review.findings.join(" | ")
+                        ));
+                    }
+                    notes.push(format!(
+                        "build constraint review decision: {}",
+                        build_constraint_review.decision
+                    ));
+                    if !build_constraint_review.findings.is_empty() {
+                        notes.push(format!(
+                            "build constraint review findings: {}",
+                            build_constraint_review.findings.join(" | ")
+                        ));
+                    }
+                    notes.push(format!(
+                        "build execution work order persisted: {}",
+                        build_execution_work_order_path.display()
+                    ));
+                    notes.push(format!(
+                        "plan task list persisted: {}",
+                        plan_task_list_path.display()
+                    ));
+                    if !work_order_synced_files.is_empty() {
+                        notes.push(format!(
+                            "safe build work-order helpers synchronized: {}",
+                            work_order_synced_files.join(", ")
+                        ));
+                    }
+                    notes.push(format!(
+                        "plan task execution log persisted: {}",
+                        plan_task_execution_log_path.display()
+                    ));
+                    notes.push(format!(
+                        "plan task verification log persisted: {}",
+                        plan_task_verification_log_path.display()
+                    ));
+                    if !attempted_microtasks.is_empty() {
+                        notes.push(format!(
+                            "attempted microtasks: {}",
+                            attempted_microtasks.join(" | ")
+                        ));
+                    }
+                    for receipt_path in &attempted_model_microtasks {
+                        notes.push(format!("model-authored task receipt persisted: {receipt_path}"));
+                    }
                     if let Some((receipt, path)) = &auto_monitoring_compare {
                         notes.push(format!(
                             "cross-family helper monitoring receipt emitted: {}",
@@ -5637,6 +8817,14 @@ impl HostBridge {
                 },
                 file_paths: {
                     let mut files = receipt.emitted_files;
+                    files.push(build_plan_artifact_path.display().to_string());
+                    files.push(build_plan_review_path.display().to_string());
+                    files.push(build_constraint_review_path.display().to_string());
+                    files.push(build_execution_work_order_path.display().to_string());
+                    files.push(plan_task_list_path.display().to_string());
+                    files.push(plan_task_execution_log_path.display().to_string());
+                    files.push(plan_task_verification_log_path.display().to_string());
+                    files.extend(attempted_model_microtasks.clone());
                     files.push(primitive_execution_plan_path.display().to_string());
                     if let Some((_, path)) = &auto_monitoring_compare {
                         files.push(path.display().to_string());

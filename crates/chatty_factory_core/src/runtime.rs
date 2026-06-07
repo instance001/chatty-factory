@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Result};
 
 use crate::{
-    DiscoveredModel, PlannerExecutionReceipt, PlannerHandoff, PlannerResponse,
+    DiscoveredModel, ModelTaskGenerationReceipt, PlannerExecutionReceipt, PlannerHandoff, PlannerResponse,
     RuntimeCapabilityRecord, RuntimeConfig, RuntimeDiscoveryReceipt, RuntimeModelAssessment,
     RuntimeModelCatalogReceipt, RuntimeSmokeReceipt,
 };
@@ -369,6 +369,169 @@ pub fn run_local_planner(
         Ok(planner_response) => Ok((planner_response, receipt)),
         Err(err) => Err(err),
     }
+}
+
+pub fn run_local_text_generation(
+    config: &RuntimeConfig,
+    request_id: &str,
+    task_id: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    raw_response_dir: &Path,
+    model_override: Option<&str>,
+) -> Result<(String, ModelTaskGenerationReceipt)> {
+    let runtime_root = PathBuf::from(&config.runtime_root);
+    let server_executable = PathBuf::from(&config.server_executable);
+    let model_path = model_override
+        .map(str::to_string)
+        .or_else(|| config.default_model_path.clone())
+        .ok_or_else(|| anyhow!("no model configured for local text generation"))?;
+    if !Path::new(&model_path).exists() {
+        bail!("text generation model does not exist at {}", model_path);
+    }
+
+    fs::create_dir_all(raw_response_dir)?;
+    let safe_task_id = sanitize_runtime_filename(task_id);
+
+    let stdout_log_path =
+        raw_response_dir.join(format!("model-task-server-{safe_task_id}-stdout.log"));
+    let stderr_log_path =
+        raw_response_dir.join(format!("model-task-server-{safe_task_id}-stderr.log"));
+    let stdout_log = File::create(&stdout_log_path)?;
+    let stderr_log = File::create(&stderr_log_path)?;
+
+    let launch_args = vec![
+        "-m".into(),
+        model_path.clone(),
+        "-ngl".into(),
+        config.gpu_layers.to_string(),
+        "-c".into(),
+        config.context_size.to_string(),
+        "--host".into(),
+        config.host.clone(),
+        "--port".into(),
+        config.port.to_string(),
+    ];
+
+    let mut child = Command::new(&server_executable)
+        .args(&launch_args)
+        .current_dir(&runtime_root)
+        .stdout(Stdio::from(stdout_log))
+        .stderr(Stdio::from(stderr_log))
+        .spawn()?;
+
+    let mut receipt = ModelTaskGenerationReceipt {
+        execution_id: crate::timestamp_id("model-task-generation"),
+        request_id: request_id.to_string(),
+        task_id: task_id.to_string(),
+        model_path: model_path.clone(),
+        launch_args: launch_args.clone(),
+        raw_response_path: None,
+        server_started: false,
+        http_request_ok: false,
+        process_killed: false,
+        finish_reason: None,
+        response_content_mode: None,
+        content_present: false,
+        reasoning_content_present: false,
+        notes: vec![
+            format!("stdout_log={}", stdout_log_path.display()),
+            format!("stderr_log={}", stderr_log_path.display()),
+        ],
+        created_at: Some(crate::timestamp_id("created")),
+    };
+
+    let result = (|| -> Result<String> {
+        let deadline = Instant::now() + Duration::from_secs(config.launch_timeout_secs);
+        while Instant::now() < deadline {
+            if let Some(status) = child.try_wait()? {
+                receipt
+                    .notes
+                    .push(format!("model task server exited early with status {status}"));
+                break;
+            }
+            if http_probe(config.host.as_str(), config.port)? {
+                receipt.server_started = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(750));
+        }
+
+        if !receipt.server_started {
+            bail!("model task server did not become ready before timeout");
+        }
+
+        let request_body = build_text_generation_chat_request(system_prompt, user_prompt)?;
+        let raw_response = post_json_request_with_timeout(
+            config.host.as_str(),
+            config.port,
+            "/v1/chat/completions",
+            &request_body,
+            300,
+        )?;
+        receipt.http_request_ok = true;
+
+        let raw_response_path =
+            raw_response_dir.join(format!("model-task-response-{safe_task_id}-raw.json"));
+        fs::write(&raw_response_path, &raw_response)?;
+        receipt.raw_response_path = Some(raw_response_path.display().to_string());
+
+        let value: serde_json::Value = serde_json::from_str(&raw_response)?;
+        receipt.finish_reason = value
+            .get("choices")
+            .and_then(|choices| choices.get(0))
+            .and_then(|choice| choice.get("finish_reason"))
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        let message = value
+            .get("choices")
+            .and_then(|choices| choices.get(0))
+            .and_then(|choice| choice.get("message"))
+            .ok_or_else(|| anyhow!("model task response did not contain chat completion message"))?;
+        let content = message
+            .get("content")
+            .and_then(|content| content.as_str())
+            .unwrap_or_default();
+        let reasoning_content = message
+            .get("reasoning_content")
+            .and_then(|content| content.as_str())
+            .unwrap_or_default();
+        receipt.content_present = !content.trim().is_empty();
+        receipt.reasoning_content_present = !reasoning_content.trim().is_empty();
+        let combined = if !content.trim().is_empty() {
+            receipt.response_content_mode = Some("content".into());
+            content.to_string()
+        } else if !reasoning_content.trim().is_empty() {
+            receipt.response_content_mode = Some("reasoning_fallback".into());
+            reasoning_content.to_string()
+        } else {
+            receipt.response_content_mode = Some("empty".into());
+            reasoning_content.to_string()
+        };
+        if combined.trim().is_empty() {
+            bail!("model task response did not contain usable content");
+        }
+        Ok(combined)
+    })();
+
+    let _ = child.kill();
+    let _ = child.wait();
+    receipt.process_killed = true;
+
+    match result {
+        Ok(content) => Ok((content, receipt)),
+        Err(err) => Err(err),
+    }
+}
+
+fn sanitize_runtime_filename(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch,
+            _ => '_',
+        })
+        .collect()
 }
 
 pub fn resolve_model_choice(
@@ -823,10 +986,39 @@ fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
     Ok(serde_json::to_string(&payload)?)
 }
 
+fn build_text_generation_chat_request(system_prompt: &str, user_prompt: &str) -> Result<String> {
+    let payload = serde_json::json!({
+        "messages": [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": user_prompt
+            }
+        ],
+        "temperature": 0.2,
+        "max_tokens": 220,
+        "stream": false
+    });
+    Ok(serde_json::to_string(&payload)?)
+}
+
 fn post_json_request(host: &str, port: u16, path: &str, body: &str) -> Result<String> {
+    post_json_request_with_timeout(host, port, path, body, 120)
+}
+
+fn post_json_request_with_timeout(
+    host: &str,
+    port: u16,
+    path: &str,
+    body: &str,
+    timeout_secs: u64,
+) -> Result<String> {
     let url = format!("http://{host}:{port}{path}");
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(timeout_secs))
         .build()?;
     let response = client
         .post(url)

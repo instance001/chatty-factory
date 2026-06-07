@@ -103,6 +103,238 @@ Suggested fields:
 - `helper_checks`
 - `schema_checks`
 
+### `BuildPlanArtifact`
+
+Purpose:
+- typed build execution intent layered on top of a starter substrate
+
+Why:
+- the starter catalog should stay small
+- capability should increasingly come from what the current model can plan plus what the host can execute safely
+- this artifact is the first host-owned bridge between request interpretation and future plan execution
+
+Current notable fields:
+- `build_plan_id`
+- `request_id`
+- `source_request_plan_id`
+- `project_name`
+- `family_id`
+- `starter_override_id`
+- `recommended_starter_id`
+- `desired_surface`
+- `exoskeleton_target`
+- `tool_kind`
+- `interpreted_goal`
+- `feature_slices`
+- `planned_file_operations`
+- `acceptance_targets`
+- `constraints`
+- `rationale`
+- `route_decision_reasons`
+- `confidence_score`
+- `confidence_band`
+
+Current notable nested fields:
+- `feature_slices[].slice_kind`
+- `feature_slices[].why_it_exists`
+- `feature_slices[].files_to_create`
+- `feature_slices[].files_to_update`
+- `feature_slices[].expected_symbols`
+- `feature_slices[].acceptance_markers`
+- `feature_slices[].dependencies`
+- `planned_file_operations[].operation_id`
+- `planned_file_operations[].content_source`
+- `planned_file_operations[].ownership_boundary`
+- `planned_file_operations[].syntax_sensitive`
+
+### `BuildPlanReview`
+
+Purpose:
+- host-owned self-review receipt for starter-plus-feature build plans before execution grows beyond starter emission
+
+Why:
+- the starter catalog should not be mistaken for the feature catalog
+- self-review can remove substrate-identity feature slices and keep the build plan focused on real incremental behavior
+
+Current notable fields:
+- `source_build_plan_id`
+- `decision`
+- `original_feature_slice_count`
+- `reviewed_feature_slice_count`
+- `dropped_feature_slice_ids`
+- `findings`
+- `blocked_reasons`
+
+### `BuildConstraintReviewReceipt`
+
+Purpose:
+- conservative negative-funnel review of a self-reviewed build plan before richer host execution arrives
+
+Why:
+- starter choice and feature layering should be checked against known bad methods before they become executable build operations
+
+Current notable fields:
+- `build_plan_id`
+- `review_subject`
+- `selected_constraints`
+- `violations`
+- `blocked_methods`
+- `recommended_replacements`
+- `decision`
+- `findings`
+
+### `BuildExecutionWorkOrder`
+
+Purpose:
+- dedicated reviewed operation receipt for future host build helpers
+
+Why:
+- reviewed build-plan operations should be consumable directly by later host execution logic instead of being recovered indirectly from the broader build-plan artifact
+
+Current notable fields:
+- `build_plan_id`
+- `build_plan_review_id`
+- `build_constraint_review_id`
+- `decision`
+- `feature_slice_ids`
+- `operations`
+- `findings`
+
+### `PlanTaskList`
+
+Purpose:
+- freeze reviewed build work into small execution tasks before any model-authored task execution is allowed
+
+Why:
+- the system should not jump from a reviewed work order straight into giant generation
+- this is the task-graph bridge between reviewed plan artifacts and later microtask execution
+
+Current notable fields:
+- `build_plan_id`
+- `build_plan_review_id`
+- `build_constraint_review_id`
+- `build_work_order_id`
+- `tasks`
+- `findings`
+
+### `PlanTask`
+
+Purpose:
+- one frozen atomized unit of build work
+
+Why:
+- the long-term limiter should be what the current model can do one reviewed step at a time, not whether the host has a giant prewritten helper catalog
+
+Current notable fields:
+- `task_kind`
+- `task_title`
+- `task_summary`
+- `dependencies`
+- `target_files`
+- `allowed_boundaries`
+- `expected_symbols`
+- `expected_markers`
+- `verification_steps`
+- `replacement_guidance`
+
+### `PlanTaskExecutionLog`
+
+Purpose:
+- persist the current execution state of every frozen task, including tasks that have not been attempted yet
+
+Why:
+- the system should not leave model-authored or host-mechanical tasks in an implied state
+- unattempted tasks should still have explicit lifecycle evidence
+
+Current notable fields:
+- `decision`
+- `task_list_id`
+- `receipts`
+- `receipts[].task_id`
+- `receipts[].task_kind`
+- `receipts[].status`
+- `receipts[].touched_files`
+- `receipts[].findings`
+
+### `PlanTaskVerificationLog`
+
+Purpose:
+- persist the current verification posture of every frozen task
+
+Why:
+- task-level verification should be explicit even when a task is deferred
+
+Current notable fields:
+- `decision`
+- `task_list_id`
+- `receipts`
+- `receipts[].task_id`
+- `receipts[].status`
+- `receipts[].verification_steps`
+- `receipts[].findings`
+
+### `PlanTaskModelAttemptReceipt`
+
+Purpose:
+- persist the narrow prompt/response/review envelope for a model-authored microtask attempt
+
+Why:
+- the model should be allowed to try small frozen tasks
+- but the attempt needs explicit evidence when it executes, stays pending, or is blocked by narrow review
+
+Current notable fields:
+- `task_id`
+- `project_name`
+- `target_file`
+- `prompt_path`
+- `generation_receipt_path`
+- `decomposition_receipt_path`
+- `raw_response_path`
+- `model_path`
+- `status`
+- `review_findings`
+
+### `TaskDecompositionReceipt`
+
+Purpose:
+- persist evidence that a frozen microtask should be decomposed before retrying
+
+Why:
+- some model-authored task subtypes fail not because the goal is invalid, but because the current task granularity or generation mode is still too broad for the active model
+
+Current notable fields:
+- `task_id`
+- `task_subtype`
+- `trigger_class`
+- `decision`
+- `source_generation_receipt_path`
+- `findings`
+- `recommended_child_tasks`
+
+### `ModelTaskGenerationReceipt`
+
+Purpose:
+- persist the local llama runtime execution details for one model-authored microtask generation attempt
+
+Why:
+- model-authored task attempts should be inspectable at the same level as planner runs
+- slow generations, timeout problems, or runtime failures should not disappear into generic task status
+
+Current notable fields:
+- `request_id`
+- `task_id`
+- `model_path`
+- `launch_args`
+- `raw_response_path`
+- `server_started`
+- `http_request_ok`
+- `process_killed`
+- `finish_reason`
+- `response_content_mode`
+- `content_present`
+- `reasoning_content_present`
+- `notes`
+
 ### 5) `FailureReport`
 
 Purpose:
