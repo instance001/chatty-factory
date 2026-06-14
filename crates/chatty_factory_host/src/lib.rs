@@ -27,7 +27,8 @@ use chatty_factory_core::{
     BuildExecutionWorkOrder, BuildFeatureSlice, BuildPlanArtifact, BuildPlanReview,
     ChattyCogBridgeCapabilities, ClarificationRequest, ModelTaskGenerationReceipt, PlanTask, PlanTaskExecutionLog,
     PlanTaskExecutionReceipt, PlanTaskList, PlanTaskVerificationLog,
-    PlanTaskModelAttemptReceipt, PlanTaskVerificationReceipt, TaskDecompositionReceipt,
+    PlanTaskModelAttemptReceipt, PlanTaskVerificationReceipt, TaskDecompositionInferenceReceipt,
+    TaskDecompositionProposal, TaskDecompositionReceipt,
     capability_comparison_bundle_by_id, capability_comparison_bundle_by_id_from_root,
     proof_template_by_id, proof_template_by_id_from_root, BuildVerificationReceipt,
     ComposableRoutePlan, CompositionRouteClass, ConstraintApprovalReceipt, ConstraintShelfHistory,
@@ -888,6 +889,10 @@ fn derive_plan_task_list(
         has_decomposition_rule_for_task_subtype(runtime_root, "toolbar_ui_block");
     let toolbar_label_decomposition_enabled =
         has_decomposition_rule_for_task_subtype(runtime_root, "toolbar_label_sentence");
+    let metric_card_decomposition_enabled =
+        has_decomposition_rule_for_task_subtype(runtime_root, "metric_card_block");
+    let metric_card_context_decomposition_enabled =
+        has_decomposition_rule_for_task_subtype(runtime_root, "metric_card_context_sentence");
 
     for slice_id in &work_order.feature_slice_ids {
         let Some(slice) = feature_slice_map.get(slice_id) else {
@@ -990,11 +995,103 @@ fn derive_plan_task_list(
             });
         }
 
+        let uses_metric_card_feature = slice
+            .expected_symbols
+            .iter()
+            .any(|symbol| symbol == "feature:metric_card");
         let uses_toolbar_feature = slice
             .expected_symbols
             .iter()
             .any(|symbol| symbol == "feature:action_toolbar");
-        if uses_toolbar_feature && toolbar_decomposition_enabled {
+        if uses_metric_card_feature && metric_card_decomposition_enabled {
+            for (suffix, symbol, title_hint, summary_hint) in [
+                (
+                    "title-literal",
+                    "feature:metric_card_title_literal",
+                    "author metric card title",
+                    "decomposed model-authored microtask for the metric card title field",
+                ),
+                (
+                    "value-line",
+                    "feature:metric_card_value_line",
+                    "author metric card value line",
+                    "decomposed model-authored microtask for the metric card value field",
+                ),
+                (
+                    "context-sentence",
+                    "feature:metric_card_context_sentence",
+                    "author metric card context sentence",
+                    "decomposed model-authored microtask for the metric card context field",
+                ),
+            ] {
+                if suffix == "context-sentence" && metric_card_context_decomposition_enabled {
+                    continue;
+                }
+                tasks.push(PlanTask {
+                    task_id: format!("{slice_id}:model-authored:{suffix}"),
+                    request_id: build_plan.request_id.clone(),
+                    source_build_plan_id: build_plan.build_plan_id.clone(),
+                    source_work_order_id: work_order.work_order_id.clone(),
+                    task_kind: "model_authored".into(),
+                    task_title: format!("{title_hint} for {}", slice.title),
+                    task_summary: format!("{summary_hint} `{}`", slice.title),
+                    dependencies: vec![format!("{slice_id}:host-sync")],
+                    target_files: slice.files_to_update.clone(),
+                    allowed_boundaries: vec!["starter_extension_boundary".into()],
+                    expected_symbols: vec![symbol.into()],
+                    expected_markers: slice.acceptance_markers.clone(),
+                    verification_steps: vec![
+                        "json_or_parse".into(),
+                        "cargo_check_or_runtime_equivalent".into(),
+                        "acceptance_reverify".into(),
+                    ],
+                    replacement_guidance: Some(
+                        "earned semantic-object field split applied: ask the model for one metric card field at a time; the host composes and renders the final card".into(),
+                    ),
+                    created_at: Some(chatty_factory_core::timestamp_id("created")),
+                });
+            }
+            if metric_card_context_decomposition_enabled {
+                for (suffix, symbol, title_hint, summary_hint) in [
+                    (
+                        "context-subject-clause",
+                        "feature:metric_card_context_clause_subject",
+                        "author metric card context subject clause",
+                        "decomposed model-authored microtask for the subject fragment behind the metric card context sentence",
+                    ),
+                    (
+                        "context-purpose-clause",
+                        "feature:metric_card_context_clause_purpose",
+                        "author metric card context purpose clause",
+                        "decomposed model-authored microtask for the purpose fragment behind the metric card context sentence",
+                    ),
+                ] {
+                    tasks.push(PlanTask {
+                        task_id: format!("{slice_id}:model-authored:{suffix}"),
+                        request_id: build_plan.request_id.clone(),
+                        source_build_plan_id: build_plan.build_plan_id.clone(),
+                        source_work_order_id: work_order.work_order_id.clone(),
+                        task_kind: "model_authored".into(),
+                        task_title: format!("{title_hint} for {}", slice.title),
+                        task_summary: format!("{summary_hint} `{}`", slice.title),
+                        dependencies: vec![format!("{slice_id}:host-sync")],
+                        target_files: slice.files_to_update.clone(),
+                        allowed_boundaries: vec!["starter_extension_boundary".into()],
+                        expected_symbols: vec![symbol.into()],
+                        expected_markers: slice.acceptance_markers.clone(),
+                        verification_steps: vec![
+                            "json_or_parse".into(),
+                            "cargo_check_or_runtime_equivalent".into(),
+                            "acceptance_reverify".into(),
+                        ],
+                        replacement_guidance: Some(
+                            "earned sentence grammar applied: ask the model for one context fragment at a time; the host composes the final context sentence and metric card block".into(),
+                        ),
+                        created_at: Some(chatty_factory_core::timestamp_id("created")),
+                    });
+                }
+            }
+        } else if uses_toolbar_feature && toolbar_decomposition_enabled {
             if toolbar_label_decomposition_enabled {
                 for (suffix, symbol, title_hint, summary_hint) in [
                     (
@@ -1095,6 +1192,16 @@ fn derive_plan_task_list(
     let mut findings = Vec::new();
     findings.extend(plan_review.findings.clone());
     findings.extend(constraint_review.findings.clone());
+    if metric_card_decomposition_enabled {
+        findings.push(
+            "applied earned decomposition rule for `metric_card_block`, replacing the broad metric card task with field-level child tasks".into(),
+        );
+    }
+    if metric_card_context_decomposition_enabled {
+        findings.push(
+            "applied earned decomposition rule for `metric_card_context_sentence`, replacing the broad sentence child with clause-level context fragments".into(),
+        );
+    }
     if toolbar_decomposition_enabled {
         if toolbar_label_decomposition_enabled {
             findings.push(
@@ -1183,6 +1290,18 @@ struct ActionToolbarSemanticDraft {
 #[derive(Debug, Clone, Default, Deserialize)]
 struct ActionToolbarLabelDraft {
     label: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct MetricCardSemanticDraft {
+    title: String,
+    value: String,
+    context: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+struct MetricCardFieldDraft {
+    value: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -1524,9 +1643,1229 @@ fn execute_first_model_authored_microtasks(
             )?;
             outcomes.insert(task.task_id.clone(), outcome);
             receipt_paths.push(receipt_path);
+        } else if task
+            .expected_symbols
+            .iter()
+            .any(|symbol| {
+                symbol == "feature:metric_card_title_literal"
+                    || symbol == "feature:metric_card_value_line"
+                    || symbol == "feature:metric_card_context_sentence"
+            })
+        {
+            let field_kind = if task
+                .expected_symbols
+                .iter()
+                .any(|symbol| symbol == "feature:metric_card_title_literal")
+            {
+                "title"
+            } else if task
+                .expected_symbols
+                .iter()
+                .any(|symbol| symbol == "feature:metric_card_value_line")
+            {
+                "value"
+            } else {
+                "context"
+            };
+            let (outcome, receipt_path) = attempt_native_metric_card_field_microtask(
+                runtime_root,
+                workspace_root,
+                project_dir,
+                task,
+                task_list,
+                planner,
+                field_kind,
+            )?;
+            outcomes.insert(task.task_id.clone(), outcome);
+            receipt_paths.push(receipt_path);
+        } else if task
+            .expected_symbols
+            .iter()
+            .any(|symbol| {
+                symbol == "feature:metric_card_context_clause_subject"
+                    || symbol == "feature:metric_card_context_clause_purpose"
+            })
+        {
+            let clause_kind = if task
+                .expected_symbols
+                .iter()
+                .any(|symbol| symbol == "feature:metric_card_context_clause_subject")
+            {
+                "subject"
+            } else {
+                "purpose"
+            };
+            let (outcome, receipt_path) = attempt_native_metric_card_context_clause_microtask(
+                runtime_root,
+                workspace_root,
+                project_dir,
+                task,
+                task_list,
+                planner,
+                clause_kind,
+            )?;
+            outcomes.insert(task.task_id.clone(), outcome);
+            receipt_paths.push(receipt_path);
+        } else if task
+            .expected_symbols
+            .iter()
+            .any(|symbol| symbol == "feature:metric_card")
+        {
+            let (outcome, receipt_path) = attempt_native_metric_card_model_microtask(
+                runtime_root,
+                workspace_root,
+                project_dir,
+                task,
+                task_list,
+                planner,
+            )?;
+            outcomes.insert(task.task_id.clone(), outcome);
+            receipt_paths.push(receipt_path);
         }
     }
     Ok((outcomes, receipt_paths))
+}
+
+fn attempt_native_metric_card_model_microtask(
+    runtime_root: &Path,
+    workspace_root: &Path,
+    project_dir: &Path,
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    planner: &HostPlannerOptions,
+) -> Result<(TaskAttemptOutcome, PathBuf)> {
+    let prompt_root = runtime_root.join("model_task_prompts");
+    let prompt_path = prompt_root.join(format!("{}-prompt.md", sanitize_filename(&task.task_id)));
+    let receipt_root = runtime_root.join("model_task_attempts");
+    let Some(target_file) = task
+        .target_files
+        .iter()
+        .find(|path| path.ends_with("src/main.rs"))
+        .cloned()
+    else {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: None,
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: None,
+            decomposition_receipt_path: None,
+            raw_response_path: None,
+            model_path: None,
+            status: "pending_not_attempted".into(),
+            review_findings: vec![
+                "model-authored metric card task stayed pending because no Rust entrypoint target file was declared"
+                    .into(),
+            ],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "pending_not_attempted".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "model-authored metric card task stayed pending; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    };
+
+    let target_path = project_dir.join(&target_file);
+    let original = fs::read_to_string(&target_path)?;
+    let start_marker = "            // chattyfactory:feature:metric_card:start";
+    let end_marker = "            // chattyfactory:feature:metric_card:end";
+    if original.contains(start_marker) && original.contains(end_marker) {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: None,
+            decomposition_receipt_path: None,
+            raw_response_path: None,
+            model_path: None,
+            status: "no_change_needed".into(),
+            review_findings: vec![
+                "model-authored metric card task found the bounded feature block already present"
+                    .into(),
+            ],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "no_change_needed".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "model-authored metric card task found the bounded feature block already present; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+
+    let prompt_markers = [
+        "            // native_window_feature_patch_anchor",
+        "            // bridge_status_panel_anchor",
+        "            // ready_toggle_anchor",
+    ];
+    let mut anchor_context = String::new();
+    for line in original.lines() {
+        if prompt_markers.iter().any(|marker| line.contains(marker)) {
+            anchor_context.push_str(line);
+            anchor_context.push('\n');
+        }
+    }
+    let (system_prompt, user_prompt) =
+        build_metric_card_model_prompts(task, task_list, &target_file, &anchor_context);
+    fs::create_dir_all(&prompt_root)?;
+    fs::write(
+        &prompt_path,
+        format!("# System\n{}\n\n# User\n{}\n", system_prompt, user_prompt),
+    )?;
+
+    let models_root = workspace_root.join("models");
+    let discovery = discover_runtime(runtime_root, &models_root)?;
+    let catalog = build_runtime_model_catalog(&models_root)?;
+    let mut config = default_runtime_config(runtime_root, &models_root)?;
+    config.default_model_path = resolve_model_choice(
+        planner.requested_model.as_deref(),
+        &catalog,
+        discovery.preferred_model_path.as_deref(),
+    );
+    if let Some(port) = planner.requested_port {
+        config.port = port;
+    }
+    persist_json_pretty(&runtime_root.join("runtime_config.json"), &config)?;
+
+    let raw_response_dir = runtime_root.join("model_task_raw_responses");
+    let (raw_generated, generation_receipt) = match run_local_text_generation(
+        &config,
+        &task.request_id,
+        &task.task_id,
+        &system_prompt,
+        &user_prompt,
+        &raw_response_dir,
+        planner.requested_model.as_deref(),
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            let receipt = PlanTaskModelAttemptReceipt {
+                attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+                request_id: task.request_id.clone(),
+                task_id: task.task_id.clone(),
+                project_name: task_list.project_name.clone(),
+                target_file: Some(target_file.clone()),
+                prompt_path: prompt_path.display().to_string(),
+                generation_receipt_path: None,
+                decomposition_receipt_path: None,
+                raw_response_path: None,
+                model_path: config.default_model_path.clone(),
+                status: "pending_not_attempted".into(),
+                review_findings: vec![format!(
+                    "model-authored metric card task could not run local text generation: {error}"
+                )],
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            };
+            let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+            return Ok((
+                TaskAttemptOutcome {
+                    status: "pending_not_attempted".into(),
+                    touched_files: Vec::new(),
+                    findings: vec![format!(
+                        "model-authored metric card task stayed pending because local generation failed; see {}",
+                        receipt_path.display()
+                    )],
+                },
+                receipt_path,
+            ));
+        }
+    };
+
+    let generation_receipt_root = runtime_root.join("model_task_generation_receipts");
+    let mut generation_receipt_path =
+        persist_model_task_generation_receipt(&generation_receipt_root, &generation_receipt)?;
+    let mut semantic_draft = parse_metric_card_model_draft(&raw_generated).unwrap_or_default();
+    let mut review_findings = review_metric_card_model_draft(&semantic_draft);
+    let mut final_generation_receipt = generation_receipt;
+    if !review_findings.is_empty() {
+        let retry_user_prompt = build_metric_card_retry_prompt(&user_prompt, &review_findings);
+        fs::write(
+            &prompt_path,
+            format!(
+                "# System\n{}\n\n# User\n{}\n\n# Retry User\n{}\n",
+                system_prompt, user_prompt, retry_user_prompt
+            ),
+        )?;
+        match run_local_text_generation(
+            &config,
+            &task.request_id,
+            &format!("{}-retry-1", task.task_id),
+            &system_prompt,
+            &retry_user_prompt,
+            &raw_response_dir,
+            planner.requested_model.as_deref(),
+        ) {
+            Ok((retry_raw_generated, retry_generation_receipt)) => {
+                let retry_generation_receipt_path =
+                    persist_model_task_generation_receipt(
+                        &generation_receipt_root,
+                        &retry_generation_receipt,
+                    )?;
+                let retry_semantic_draft =
+                    parse_metric_card_model_draft(&retry_raw_generated).unwrap_or_default();
+                let retry_review_findings =
+                    review_metric_card_model_draft(&retry_semantic_draft);
+                if retry_review_findings.is_empty() {
+                    semantic_draft = retry_semantic_draft;
+                    review_findings.clear();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                } else {
+                    review_findings = retry_review_findings
+                        .into_iter()
+                        .map(|finding| format!("retry review: {finding}"))
+                        .collect::<Vec<_>>();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                }
+            }
+            Err(error) => {
+                review_findings.push(format!(
+                    "retry generation failed after narrow-review feedback: {error}"
+                ));
+            }
+        }
+    }
+    if !review_findings.is_empty() {
+        if should_recommend_metric_card_decomposition(&final_generation_receipt, &review_findings)
+        {
+            let decomposition_root = runtime_root.join("task_decomposition_receipts");
+            let proposal_root = runtime_root.join("task_decomposition_proposals");
+            let inference_root = runtime_root.join("task_decomposition_inference_receipts");
+            let (proposal, mut inference, decomposition) = infer_semantic_object_field_split(
+                task,
+                task_list,
+                &final_generation_receipt,
+                &generation_receipt_path,
+                &review_findings,
+                "metric_card_block",
+                &["title_literal", "value_line", "context_sentence"],
+                "host_render_metric_card_block",
+            );
+            let proposal_path =
+                persist_task_decomposition_proposal(&proposal_root, &proposal)?;
+            inference.proposal_path = Some(proposal_path.display().to_string());
+            let inference_path =
+                persist_task_decomposition_inference_receipt(&inference_root, &inference)?;
+            let decomposition_receipt_path =
+                persist_task_decomposition_receipt(&decomposition_root, &decomposition)?;
+            let mut findings = review_findings.clone();
+            findings.push(format!(
+                "adaptive decomposition recommended; see {}",
+                decomposition_receipt_path.display()
+            ));
+            findings.push(format!(
+                "generic decomposition proposal persisted: {}",
+                proposal_path.display()
+            ));
+            findings.push(format!(
+                "generic decomposition inference persisted: {}",
+                inference_path.display()
+            ));
+            let receipt = PlanTaskModelAttemptReceipt {
+                attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+                request_id: task.request_id.clone(),
+                task_id: task.task_id.clone(),
+                project_name: task_list.project_name.clone(),
+                target_file: Some(target_file.clone()),
+                prompt_path: prompt_path.display().to_string(),
+                generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+                decomposition_receipt_path: Some(decomposition_receipt_path.display().to_string()),
+                raw_response_path: final_generation_receipt.raw_response_path.clone(),
+                model_path: Some(final_generation_receipt.model_path.clone()),
+                status: "decomposition_recommended".into(),
+                review_findings: findings,
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            };
+            let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+            return Ok((
+                TaskAttemptOutcome {
+                    status: "decomposition_recommended".into(),
+                    touched_files: Vec::new(),
+                    findings: vec![format!(
+                        "model-authored metric card task recommended adaptive decomposition; see {}",
+                        receipt_path.display()
+                    )],
+                },
+                receipt_path,
+            ));
+        }
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+            decomposition_receipt_path: None,
+            raw_response_path: final_generation_receipt.raw_response_path.clone(),
+            model_path: Some(final_generation_receipt.model_path.clone()),
+            status: "blocked_by_review".into(),
+            review_findings,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "blocked_by_review".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "model-authored metric card task was blocked by narrow review; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+
+    let anchor = "            // native_window_feature_patch_anchor";
+    if !original.contains(anchor) {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+            decomposition_receipt_path: None,
+            raw_response_path: final_generation_receipt.raw_response_path.clone(),
+            model_path: Some(final_generation_receipt.model_path.clone()),
+            status: "pending_not_attempted".into(),
+            review_findings: vec![
+                "model-authored metric card task could not find the native window feature anchor"
+                    .into(),
+            ],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "pending_not_attempted".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "model-authored metric card task stayed pending because the anchor was missing; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+
+    let rendered_block = render_metric_card_model_draft(&semantic_draft);
+    let wrapped_block = format!(
+        "            // chattyfactory:feature:metric_card:start\n{}\n            // chattyfactory:feature:metric_card:end\n\n            // native_window_feature_patch_anchor",
+        indent_model_authored_block(&rendered_block, 12)
+    );
+    let updated = original.replacen(anchor, &wrapped_block, 1);
+    fs::write(&target_path, updated)?;
+    let receipt = PlanTaskModelAttemptReceipt {
+        attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        target_file: Some(target_file.clone()),
+        prompt_path: prompt_path.display().to_string(),
+        generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+        decomposition_receipt_path: None,
+        raw_response_path: final_generation_receipt.raw_response_path.clone(),
+        model_path: Some(final_generation_receipt.model_path.clone()),
+        status: "executed".into(),
+        review_findings: vec![
+            "model-authored metric card semantic draft passed review and was rendered into the native window feature anchor"
+                .into(),
+        ],
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+    Ok((
+        TaskAttemptOutcome {
+            status: "executed".into(),
+            touched_files: vec![target_file],
+            findings: vec![format!(
+                "model-authored metric card task inserted a bounded generated metric card block; see {}",
+                receipt_path.display()
+            )],
+        },
+        receipt_path,
+    ))
+}
+
+fn attempt_native_metric_card_field_microtask(
+    runtime_root: &Path,
+    workspace_root: &Path,
+    project_dir: &Path,
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    planner: &HostPlannerOptions,
+    field_kind: &str,
+) -> Result<(TaskAttemptOutcome, PathBuf)> {
+    let prompt_root = runtime_root.join("model_task_prompts");
+    let prompt_path = prompt_root.join(format!("{}-prompt.md", sanitize_filename(&task.task_id)));
+    let receipt_root = runtime_root.join("model_task_attempts");
+    let Some(target_file) = task
+        .target_files
+        .iter()
+        .find(|path| path.ends_with("src/main.rs"))
+        .cloned()
+    else {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: None,
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: None,
+            decomposition_receipt_path: None,
+            raw_response_path: None,
+            model_path: None,
+            status: "pending_not_attempted".into(),
+            review_findings: vec![format!(
+                "decomposed metric card field task `{field_kind}` stayed pending because no Rust entrypoint target file was declared"
+            )],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "pending_not_attempted".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed metric card field task `{field_kind}` stayed pending; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    };
+
+    let target_path = project_dir.join(&target_file);
+    let original = fs::read_to_string(&target_path)?;
+    let start_marker = "            // chattyfactory:feature:metric_card:start";
+    let end_marker = "            // chattyfactory:feature:metric_card:end";
+    if original.contains(start_marker) && original.contains(end_marker) {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: None,
+            decomposition_receipt_path: None,
+            raw_response_path: None,
+            model_path: None,
+            status: "no_change_needed".into(),
+            review_findings: vec![format!(
+                "decomposed metric card field task `{field_kind}` found the bounded feature block already present"
+            )],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "no_change_needed".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed metric card field task `{field_kind}` found the bounded feature block already present; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+
+    let prompt_markers = [
+        "            // native_window_feature_patch_anchor",
+        "            // bridge_status_panel_anchor",
+        "            // ready_toggle_anchor",
+    ];
+    let mut anchor_context = String::new();
+    for line in original.lines() {
+        if prompt_markers.iter().any(|marker| line.contains(marker)) {
+            anchor_context.push_str(line);
+            anchor_context.push('\n');
+        }
+    }
+    let (system_prompt, user_prompt) = build_metric_card_field_prompts(
+        task,
+        task_list,
+        &target_file,
+        &anchor_context,
+        field_kind,
+    );
+    fs::create_dir_all(&prompt_root)?;
+    fs::write(
+        &prompt_path,
+        format!("# System\n{}\n\n# User\n{}\n", system_prompt, user_prompt),
+    )?;
+
+    let models_root = workspace_root.join("models");
+    let discovery = discover_runtime(runtime_root, &models_root)?;
+    let catalog = build_runtime_model_catalog(&models_root)?;
+    let mut config = default_runtime_config(runtime_root, &models_root)?;
+    config.default_model_path = resolve_model_choice(
+        planner.requested_model.as_deref(),
+        &catalog,
+        discovery.preferred_model_path.as_deref(),
+    );
+    if let Some(port) = planner.requested_port {
+        config.port = port;
+    }
+    persist_json_pretty(&runtime_root.join("runtime_config.json"), &config)?;
+
+    let raw_response_dir = runtime_root.join("model_task_raw_responses");
+    let (raw_generated, generation_receipt) = match run_local_text_generation(
+        &config,
+        &task.request_id,
+        &task.task_id,
+        &system_prompt,
+        &user_prompt,
+        &raw_response_dir,
+        planner.requested_model.as_deref(),
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            let receipt = PlanTaskModelAttemptReceipt {
+                attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+                request_id: task.request_id.clone(),
+                task_id: task.task_id.clone(),
+                project_name: task_list.project_name.clone(),
+                target_file: Some(target_file.clone()),
+                prompt_path: prompt_path.display().to_string(),
+                generation_receipt_path: None,
+                decomposition_receipt_path: None,
+                raw_response_path: None,
+                model_path: config.default_model_path.clone(),
+                status: "pending_not_attempted".into(),
+                review_findings: vec![format!(
+                    "decomposed metric card field task `{field_kind}` could not run local text generation: {error}"
+                )],
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            };
+            let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+            return Ok((
+                TaskAttemptOutcome {
+                    status: "pending_not_attempted".into(),
+                    touched_files: Vec::new(),
+                    findings: vec![format!(
+                        "decomposed metric card field task `{field_kind}` stayed pending because local generation failed; see {}",
+                        receipt_path.display()
+                    )],
+                },
+                receipt_path,
+            ));
+        }
+    };
+
+    let generation_receipt_root = runtime_root.join("model_task_generation_receipts");
+    let mut generation_receipt_path =
+        persist_model_task_generation_receipt(&generation_receipt_root, &generation_receipt)?;
+    let mut field_draft = parse_metric_card_field_draft(&raw_generated).unwrap_or_default();
+    let mut review_findings = review_metric_card_field_draft(&field_draft, field_kind);
+    let mut final_generation_receipt = generation_receipt;
+    if !review_findings.is_empty() {
+        let retry_user_prompt = build_metric_card_field_retry_prompt(
+            &user_prompt,
+            &review_findings,
+            field_kind,
+        );
+        fs::write(
+            &prompt_path,
+            format!(
+                "# System\n{}\n\n# User\n{}\n\n# Retry User\n{}\n",
+                system_prompt, user_prompt, retry_user_prompt
+            ),
+        )?;
+        match run_local_text_generation(
+            &config,
+            &task.request_id,
+            &format!("{}-retry-1", task.task_id),
+            &system_prompt,
+            &retry_user_prompt,
+            &raw_response_dir,
+            planner.requested_model.as_deref(),
+        ) {
+            Ok((retry_raw_generated, retry_generation_receipt)) => {
+                let retry_generation_receipt_path =
+                    persist_model_task_generation_receipt(
+                        &generation_receipt_root,
+                        &retry_generation_receipt,
+                    )?;
+                let retry_field_draft =
+                    parse_metric_card_field_draft(&retry_raw_generated).unwrap_or_default();
+                let retry_review_findings =
+                    review_metric_card_field_draft(&retry_field_draft, field_kind);
+                if retry_review_findings.is_empty() {
+                    field_draft = retry_field_draft;
+                    review_findings.clear();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                } else {
+                    review_findings = retry_review_findings
+                        .into_iter()
+                        .map(|finding| format!("retry review: {finding}"))
+                        .collect::<Vec<_>>();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                }
+            }
+            Err(error) => {
+                review_findings.push(format!(
+                    "retry generation failed after narrow-review feedback: {error}"
+                ));
+            }
+        }
+    }
+    if !review_findings.is_empty() {
+        if let Some(recovered_draft) =
+            recover_single_field_draft_from_reasoning_spill(&final_generation_receipt)
+        {
+            let recovered_findings =
+                review_metric_card_field_draft(&recovered_draft, field_kind);
+            if recovered_findings.is_empty() {
+                field_draft = recovered_draft;
+                review_findings.clear();
+            } else {
+                review_findings = recovered_findings
+                    .into_iter()
+                    .map(|finding| format!("recovered review: {finding}"))
+                    .collect::<Vec<_>>();
+            }
+        }
+    }
+    if !review_findings.is_empty() {
+        if field_kind == "context"
+            && should_recommend_metric_card_context_decomposition(
+                &final_generation_receipt,
+                &review_findings,
+            )
+        {
+            let proposal_root = runtime_root.join("task_decomposition_proposals");
+            let inference_root = runtime_root.join("task_decomposition_inference_receipts");
+            let decomposition_root = runtime_root.join("task_decomposition_receipts");
+            let (proposal, mut inference, decomposition) = infer_semantic_sentence_clause_split(
+                task,
+                task_list,
+                &final_generation_receipt,
+                &generation_receipt_path,
+                &review_findings,
+                "metric_card_context_sentence",
+                &[
+                    "metric_card_context_clause_subject",
+                    "metric_card_context_clause_purpose",
+                ],
+                "host_compose_metric_card_context_sentence",
+            );
+            let proposal_path =
+                persist_task_decomposition_proposal(&proposal_root, &proposal)?;
+            inference.proposal_path = Some(proposal_path.display().to_string());
+            let inference_path =
+                persist_task_decomposition_inference_receipt(&inference_root, &inference)?;
+            let decomposition_receipt_path =
+                persist_task_decomposition_receipt(&decomposition_root, &decomposition)?;
+            let mut findings = review_findings.clone();
+            findings.push(format!(
+                "adaptive decomposition recommended; see {}",
+                decomposition_receipt_path.display()
+            ));
+            findings.push(format!(
+                "generic decomposition proposal persisted: {}",
+                proposal_path.display()
+            ));
+            findings.push(format!(
+                "generic decomposition inference persisted: {}",
+                inference_path.display()
+            ));
+            let receipt = PlanTaskModelAttemptReceipt {
+                attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+                request_id: task.request_id.clone(),
+                task_id: task.task_id.clone(),
+                project_name: task_list.project_name.clone(),
+                target_file: Some(target_file.clone()),
+                prompt_path: prompt_path.display().to_string(),
+                generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+                decomposition_receipt_path: Some(decomposition_receipt_path.display().to_string()),
+                raw_response_path: final_generation_receipt.raw_response_path.clone(),
+                model_path: Some(final_generation_receipt.model_path.clone()),
+                status: "decomposition_recommended".into(),
+                review_findings: findings,
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            };
+            let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+            return Ok((
+                TaskAttemptOutcome {
+                    status: "decomposition_recommended".into(),
+                    touched_files: Vec::new(),
+                    findings: vec![format!(
+                        "decomposed metric card field task `{field_kind}` recommended adaptive decomposition; see {}",
+                        receipt_path.display()
+                    )],
+                },
+                receipt_path,
+            ));
+        }
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+            decomposition_receipt_path: None,
+            raw_response_path: final_generation_receipt.raw_response_path.clone(),
+            model_path: Some(final_generation_receipt.model_path.clone()),
+            status: "blocked_by_review".into(),
+            review_findings,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "blocked_by_review".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed metric card field task `{field_kind}` was blocked by narrow review; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+
+    let field_dir = runtime_root
+        .join("model_task_metric_card_drafts")
+        .join(sanitize_filename(&task_list.request_id));
+    fs::create_dir_all(&field_dir)?;
+    let field_path = field_dir.join(format!(
+        "{}-{}.json",
+        sanitize_filename(&task_list.project_name),
+        field_kind
+    ));
+    persist_json_pretty(&field_path, &field_draft)?;
+
+    let mut touched_files = Vec::new();
+    let mut findings = vec![format!(
+        "decomposed metric card field task `{field_kind}` persisted a reviewed field draft"
+    )];
+    if let Some(metric_card_draft) =
+        try_compose_metric_card_from_field_drafts(&field_dir, &task_list.project_name)
+    {
+        let anchor = "            // native_window_feature_patch_anchor";
+        if original.contains(anchor) {
+            let rendered_block = render_metric_card_model_draft(&metric_card_draft);
+            let wrapped_block = format!(
+                "            // chattyfactory:feature:metric_card:start\n{}\n            // chattyfactory:feature:metric_card:end\n\n            // native_window_feature_patch_anchor",
+                indent_model_authored_block(&rendered_block, 12)
+            );
+            let updated = original.replacen(anchor, &wrapped_block, 1);
+            fs::write(&target_path, updated)?;
+            touched_files.push(target_file.clone());
+            findings.push(
+                "host composed the final metric card semantic draft from decomposed field drafts and rendered the metric card block".into(),
+            );
+        }
+    }
+
+    let receipt = PlanTaskModelAttemptReceipt {
+        attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        target_file: Some(target_file.clone()),
+        prompt_path: prompt_path.display().to_string(),
+        generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+        decomposition_receipt_path: None,
+        raw_response_path: final_generation_receipt.raw_response_path.clone(),
+        model_path: Some(final_generation_receipt.model_path.clone()),
+        status: "executed".into(),
+        review_findings: findings.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+    Ok((
+        TaskAttemptOutcome {
+            status: "executed".into(),
+            touched_files,
+            findings: vec![format!(
+                "decomposed metric card field task `{field_kind}` executed; see {}",
+                receipt_path.display()
+            )],
+        },
+        receipt_path,
+    ))
+}
+
+fn attempt_native_metric_card_context_clause_microtask(
+    runtime_root: &Path,
+    workspace_root: &Path,
+    project_dir: &Path,
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    planner: &HostPlannerOptions,
+    clause_kind: &str,
+) -> Result<(TaskAttemptOutcome, PathBuf)> {
+    let prompt_root = runtime_root.join("model_task_prompts");
+    let prompt_path = prompt_root.join(format!("{}-prompt.md", sanitize_filename(&task.task_id)));
+    let receipt_root = runtime_root.join("model_task_attempts");
+    let Some(target_file) = task
+        .target_files
+        .iter()
+        .find(|path| path.ends_with("src/main.rs"))
+        .cloned()
+    else {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: None,
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: None,
+            decomposition_receipt_path: None,
+            raw_response_path: None,
+            model_path: None,
+            status: "pending_not_attempted".into(),
+            review_findings: vec![format!(
+                "decomposed metric card context clause task `{clause_kind}` stayed pending because no Rust entrypoint target file was declared"
+            )],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "pending_not_attempted".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed metric card context clause task `{clause_kind}` stayed pending; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    };
+
+    let target_path = project_dir.join(&target_file);
+    let original = fs::read_to_string(&target_path)?;
+    let start_marker = "            // chattyfactory:feature:metric_card:start";
+    let end_marker = "            // chattyfactory:feature:metric_card:end";
+    if original.contains(start_marker) && original.contains(end_marker) {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: None,
+            decomposition_receipt_path: None,
+            raw_response_path: None,
+            model_path: None,
+            status: "no_change_needed".into(),
+            review_findings: vec![format!(
+                "decomposed metric card context clause task `{clause_kind}` found the bounded feature block already present"
+            )],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "no_change_needed".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed metric card context clause task `{clause_kind}` found the bounded feature block already present; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+
+    let prompt_markers = [
+        "            // native_window_feature_patch_anchor",
+        "            // bridge_status_panel_anchor",
+        "            // ready_toggle_anchor",
+    ];
+    let mut anchor_context = String::new();
+    for line in original.lines() {
+        if prompt_markers.iter().any(|marker| line.contains(marker)) {
+            anchor_context.push_str(line);
+            anchor_context.push('\n');
+        }
+    }
+    let (system_prompt, user_prompt) = build_metric_card_context_clause_prompts(
+        task,
+        task_list,
+        &target_file,
+        &anchor_context,
+        clause_kind,
+    );
+    fs::create_dir_all(&prompt_root)?;
+    fs::write(
+        &prompt_path,
+        format!("# System\n{}\n\n# User\n{}\n", system_prompt, user_prompt),
+    )?;
+
+    let models_root = workspace_root.join("models");
+    let discovery = discover_runtime(runtime_root, &models_root)?;
+    let catalog = build_runtime_model_catalog(&models_root)?;
+    let mut config = default_runtime_config(runtime_root, &models_root)?;
+    config.default_model_path = resolve_model_choice(
+        planner.requested_model.as_deref(),
+        &catalog,
+        discovery.preferred_model_path.as_deref(),
+    );
+    if let Some(port) = planner.requested_port {
+        config.port = port;
+    }
+    persist_json_pretty(&runtime_root.join("runtime_config.json"), &config)?;
+
+    let raw_response_dir = runtime_root.join("model_task_raw_responses");
+    let (raw_generated, generation_receipt) = match run_local_text_generation(
+        &config,
+        &task.request_id,
+        &task.task_id,
+        &system_prompt,
+        &user_prompt,
+        &raw_response_dir,
+        planner.requested_model.as_deref(),
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            let receipt = PlanTaskModelAttemptReceipt {
+                attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+                request_id: task.request_id.clone(),
+                task_id: task.task_id.clone(),
+                project_name: task_list.project_name.clone(),
+                target_file: Some(target_file.clone()),
+                prompt_path: prompt_path.display().to_string(),
+                generation_receipt_path: None,
+                decomposition_receipt_path: None,
+                raw_response_path: None,
+                model_path: config.default_model_path.clone(),
+                status: "pending_not_attempted".into(),
+                review_findings: vec![format!(
+                    "decomposed metric card context clause task `{clause_kind}` could not run local text generation: {error}"
+                )],
+                created_at: Some(chatty_factory_core::timestamp_id("created")),
+            };
+            let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+            return Ok((
+                TaskAttemptOutcome {
+                    status: "pending_not_attempted".into(),
+                    touched_files: Vec::new(),
+                    findings: vec![format!(
+                        "decomposed metric card context clause task `{clause_kind}` stayed pending because local generation failed; see {}",
+                        receipt_path.display()
+                    )],
+                },
+                receipt_path,
+            ));
+        }
+    };
+
+    let generation_receipt_root = runtime_root.join("model_task_generation_receipts");
+    let mut generation_receipt_path =
+        persist_model_task_generation_receipt(&generation_receipt_root, &generation_receipt)?;
+    let mut clause_draft = parse_metric_card_field_draft(&raw_generated).unwrap_or_default();
+    let mut review_findings = review_metric_card_context_clause_draft(&clause_draft, clause_kind);
+    let mut final_generation_receipt = generation_receipt;
+    if !review_findings.is_empty() {
+        let retry_user_prompt = build_metric_card_context_clause_retry_prompt(
+            &user_prompt,
+            &review_findings,
+            clause_kind,
+        );
+        fs::write(
+            &prompt_path,
+            format!(
+                "# System\n{}\n\n# User\n{}\n\n# Retry User\n{}\n",
+                system_prompt, user_prompt, retry_user_prompt
+            ),
+        )?;
+        match run_local_text_generation(
+            &config,
+            &task.request_id,
+            &format!("{}-retry-1", task.task_id),
+            &system_prompt,
+            &retry_user_prompt,
+            &raw_response_dir,
+            planner.requested_model.as_deref(),
+        ) {
+            Ok((retry_raw_generated, retry_generation_receipt)) => {
+                let retry_generation_receipt_path =
+                    persist_model_task_generation_receipt(
+                        &generation_receipt_root,
+                        &retry_generation_receipt,
+                    )?;
+                let retry_clause_draft =
+                    parse_metric_card_field_draft(&retry_raw_generated).unwrap_or_default();
+                let retry_review_findings =
+                    review_metric_card_context_clause_draft(&retry_clause_draft, clause_kind);
+                if retry_review_findings.is_empty() {
+                    clause_draft = retry_clause_draft;
+                    review_findings.clear();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                } else {
+                    review_findings = retry_review_findings
+                        .into_iter()
+                        .map(|finding| format!("retry review: {finding}"))
+                        .collect::<Vec<_>>();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                }
+            }
+            Err(error) => {
+                review_findings.push(format!(
+                    "retry generation failed after narrow-review feedback: {error}"
+                ));
+            }
+        }
+    }
+    if !review_findings.is_empty() {
+        if let Some(recovered_draft) =
+            recover_single_field_draft_from_reasoning_spill(&final_generation_receipt)
+        {
+            let recovered_findings =
+                review_metric_card_context_clause_draft(&recovered_draft, clause_kind);
+            if recovered_findings.is_empty() {
+                clause_draft = recovered_draft;
+                review_findings.clear();
+            } else {
+                review_findings = recovered_findings
+                    .into_iter()
+                    .map(|finding| format!("recovered review: {finding}"))
+                    .collect::<Vec<_>>();
+            }
+        }
+    }
+    if !review_findings.is_empty() {
+        let receipt = PlanTaskModelAttemptReceipt {
+            attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+            request_id: task.request_id.clone(),
+            task_id: task.task_id.clone(),
+            project_name: task_list.project_name.clone(),
+            target_file: Some(target_file.clone()),
+            prompt_path: prompt_path.display().to_string(),
+            generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+            decomposition_receipt_path: None,
+            raw_response_path: final_generation_receipt.raw_response_path.clone(),
+            model_path: Some(final_generation_receipt.model_path.clone()),
+            status: "blocked_by_review".into(),
+            review_findings,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+        return Ok((
+            TaskAttemptOutcome {
+                status: "blocked_by_review".into(),
+                touched_files: Vec::new(),
+                findings: vec![format!(
+                    "decomposed metric card context clause task `{clause_kind}` was blocked by narrow review; see {}",
+                    receipt_path.display()
+                )],
+            },
+            receipt_path,
+        ));
+    }
+
+    let clause_dir = runtime_root
+        .join("model_task_metric_card_context_clauses")
+        .join(sanitize_filename(&task_list.request_id));
+    fs::create_dir_all(&clause_dir)?;
+    let clause_path = clause_dir.join(format!(
+        "{}-{}.json",
+        sanitize_filename(&task_list.project_name),
+        clause_kind
+    ));
+    persist_json_pretty(&clause_path, &clause_draft)?;
+
+    let mut touched_files = Vec::new();
+    let mut findings = vec![format!(
+        "decomposed metric card context clause task `{clause_kind}` persisted a reviewed clause draft"
+    )];
+    if let Some(context_value) =
+        try_compose_metric_card_context_from_clause_drafts(&clause_dir, &task_list.project_name)
+    {
+        let field_dir = runtime_root
+            .join("model_task_metric_card_drafts")
+            .join(sanitize_filename(&task_list.request_id));
+        fs::create_dir_all(&field_dir)?;
+        let context_field_path = field_dir.join(format!(
+            "{}-context.json",
+            sanitize_filename(&task_list.project_name)
+        ));
+        persist_json_pretty(&context_field_path, &MetricCardFieldDraft { value: context_value })?;
+        if let Some(metric_card_draft) =
+            try_compose_metric_card_from_field_drafts(&field_dir, &task_list.project_name)
+        {
+            let anchor = "            // native_window_feature_patch_anchor";
+            if original.contains(anchor) {
+                let rendered_block = render_metric_card_model_draft(&metric_card_draft);
+                let wrapped_block = format!(
+                    "            // chattyfactory:feature:metric_card:start\n{}\n            // chattyfactory:feature:metric_card:end\n\n            // native_window_feature_patch_anchor",
+                    indent_model_authored_block(&rendered_block, 12)
+                );
+                let updated = original.replacen(anchor, &wrapped_block, 1);
+                fs::write(&target_path, updated)?;
+                touched_files.push(target_file.clone());
+                findings.push(
+                    "host composed the final metric card context sentence from clause drafts and rendered the metric card block".into(),
+                );
+            }
+        }
+    }
+
+    let receipt = PlanTaskModelAttemptReceipt {
+        attempt_id: chatty_factory_core::timestamp_id("model-task-attempt"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        target_file: Some(target_file.clone()),
+        prompt_path: prompt_path.display().to_string(),
+        generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+        decomposition_receipt_path: None,
+        raw_response_path: final_generation_receipt.raw_response_path.clone(),
+        model_path: Some(final_generation_receipt.model_path.clone()),
+        status: "executed".into(),
+        review_findings: findings.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
+    Ok((
+        TaskAttemptOutcome {
+            status: "executed".into(),
+            touched_files,
+            findings: vec![format!(
+                "decomposed metric card context clause task `{clause_kind}` executed; see {}",
+                receipt_path.display()
+            )],
+        },
+        receipt_path,
+    ))
 }
 
 fn attempt_native_action_toolbar_model_microtask(
@@ -2622,6 +3961,89 @@ fn build_action_toolbar_model_prompts(
     (system_prompt, user_prompt)
 }
 
+fn build_metric_card_model_prompts(
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    target_file: &str,
+    anchor_context: &str,
+) -> (String, String) {
+    let system_prompt = "Return exactly one minified JSON object and nothing else. Do not return Rust code. Do not return markdown. Do not use code fences. Do not add prose. Use exactly these keys: title, value, context.".to_string();
+    let user_prompt = format!(
+        "Task id: {task_id}\nProject: {project}\nTitle: {title}\nSummary: {summary}\nTarget file: {target_file}\nExpected symbols: {expected_symbols}\nVerification intent: {verification}\nAnchor context:\n{anchor_context}\n\nReturn exactly one minified JSON object for a tiny metric card semantic draft. Requirements:\n- use exactly these keys: `title`, `value`, `context`\n- `title` must be a short metric-card heading\n- `value` must be a short value line suitable for monospace display\n- `context` must be one short explanatory sentence\n- keep each field concise and useful for a real dashboard\n- do not use placeholder wording like `placeholder`, `todo`, `sample`, or `example`\n- no extra keys\n- no markdown\n- no prose\n- no Rust code\n- output must look like this shape exactly:\n{{\"title\":\"Room activity\",\"value\":\"24 active events\",\"context\":\"Shows the current shared-room activity snapshot.\"}}",
+        task_id = task.task_id,
+        project = task_list.project_name,
+        title = task.task_title,
+        summary = task.task_summary,
+        target_file = target_file,
+        expected_symbols = task.expected_symbols.join(", "),
+        verification = task.verification_steps.join(", "),
+        anchor_context = anchor_context.trim_end(),
+    );
+    (system_prompt, user_prompt)
+}
+
+fn build_metric_card_field_prompts(
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    target_file: &str,
+    anchor_context: &str,
+    field_kind: &str,
+) -> (String, String) {
+    let field_instruction = match field_kind {
+        "title" => "a short metric-card heading",
+        "value" => "a short value line suitable for monospace display",
+        _ => "one short explanatory sentence for the metric card",
+    };
+    let example = match field_kind {
+        "title" => "{\"value\":\"Room activity\"}",
+        "value" => "{\"value\":\"24 active events\"}",
+        _ => "{\"value\":\"Shows the current shared-room activity snapshot.\"}",
+    };
+    let system_prompt = "Return exactly one minified JSON object and nothing else. Do not return Rust code. Do not return markdown. Do not use code fences. Do not add prose. Use exactly one key: value.".to_string();
+    let user_prompt = format!(
+        "Task id: {task_id}\nProject: {project}\nTitle: {title}\nSummary: {summary}\nTarget file: {target_file}\nExpected symbols: {expected_symbols}\nVerification intent: {verification}\nAnchor context:\n{anchor_context}\n\nReturn exactly one minified JSON object for the metric card `{field_kind}` field only. Requirements:\n- use exactly one key: `value`\n- `value` must be {field_instruction}\n- keep it concrete and useful for a real dashboard\n- do not use placeholder wording like `placeholder`, `todo`, `sample`, or `example`\n- no extra keys\n- no markdown\n- no prose\n- no Rust code\n- output must look like this shape exactly:\n{example}",
+        task_id = task.task_id,
+        project = task_list.project_name,
+        title = task.task_title,
+        summary = task.task_summary,
+        target_file = target_file,
+        expected_symbols = task.expected_symbols.join(", "),
+        verification = task.verification_steps.join(", "),
+        anchor_context = anchor_context.trim_end(),
+    );
+    (system_prompt, user_prompt)
+}
+
+fn build_metric_card_context_clause_prompts(
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    target_file: &str,
+    anchor_context: &str,
+    clause_kind: &str,
+) -> (String, String) {
+    let field_instruction = match clause_kind {
+        "subject" => "a short fragment naming what the metric card is about",
+        _ => "a short fragment explaining why the metric matters",
+    };
+    let example = match clause_kind {
+        "subject" => "{\"value\":\"Shows current shared-room activity\"}",
+        _ => "{\"value\":\"for quick dashboard review.\"}",
+    };
+    let system_prompt = "Return exactly one minified JSON object and nothing else. Do not return Rust code. Do not return markdown. Do not use code fences. Do not add prose. Use exactly one key: value.".to_string();
+    let user_prompt = format!(
+        "Task id: {task_id}\nProject: {project}\nTitle: {title}\nSummary: {summary}\nTarget file: {target_file}\nExpected symbols: {expected_symbols}\nVerification intent: {verification}\nAnchor context:\n{anchor_context}\n\nReturn exactly one minified JSON object for the metric card context `{clause_kind}` clause only. Requirements:\n- use exactly one key: `value`\n- `value` must be {field_instruction}\n- keep it concrete and useful for a real dashboard\n- do not use placeholder wording like `placeholder`, `todo`, `sample`, or `example`\n- no extra keys\n- no markdown\n- no prose\n- no Rust code\n- output must look like this shape exactly:\n{example}",
+        task_id = task.task_id,
+        project = task_list.project_name,
+        title = task.task_title,
+        summary = task.task_summary,
+        target_file = target_file,
+        expected_symbols = task.expected_symbols.join(", "),
+        verification = task.verification_steps.join(", "),
+        anchor_context = anchor_context.trim_end(),
+    );
+    (system_prompt, user_prompt)
+}
+
 fn build_action_toolbar_label_sentence_prompts(
     task: &PlanTask,
     task_list: &PlanTaskList,
@@ -2765,11 +4187,327 @@ fn try_compose_toolbar_label_from_clause_drafts(
     Some(format!("{run_clause}. {clear_clause}."))
 }
 
+fn try_compose_metric_card_from_field_drafts(
+    field_dir: &Path,
+    project_name: &str,
+) -> Option<MetricCardSemanticDraft> {
+    let base = sanitize_filename(project_name);
+    let title_path = field_dir.join(format!("{base}-title.json"));
+    let value_path = field_dir.join(format!("{base}-value.json"));
+    let context_path = field_dir.join(format!("{base}-context.json"));
+    let title_contents = fs::read_to_string(title_path).ok()?;
+    let value_contents = fs::read_to_string(value_path).ok()?;
+    let context_contents = fs::read_to_string(context_path).ok()?;
+    let title_draft: MetricCardFieldDraft = serde_json::from_str(&title_contents).ok()?;
+    let value_draft: MetricCardFieldDraft = serde_json::from_str(&value_contents).ok()?;
+    let context_draft: MetricCardFieldDraft = serde_json::from_str(&context_contents).ok()?;
+    let title = title_draft.value.trim().to_string();
+    let value = value_draft.value.trim().to_string();
+    let context = context_draft.value.trim().to_string();
+    if title.is_empty() || value.is_empty() || context.is_empty() {
+        return None;
+    }
+    Some(MetricCardSemanticDraft {
+        title,
+        value,
+        context,
+    })
+}
+
+fn try_compose_metric_card_context_from_clause_drafts(
+    clause_dir: &Path,
+    project_name: &str,
+) -> Option<String> {
+    let base = sanitize_filename(project_name);
+    let subject_path = clause_dir.join(format!("{base}-subject.json"));
+    let purpose_path = clause_dir.join(format!("{base}-purpose.json"));
+    let subject_contents = fs::read_to_string(subject_path).ok()?;
+    let purpose_contents = fs::read_to_string(purpose_path).ok()?;
+    let subject_draft: MetricCardFieldDraft = serde_json::from_str(&subject_contents).ok()?;
+    let purpose_draft: MetricCardFieldDraft = serde_json::from_str(&purpose_contents).ok()?;
+    let subject = subject_draft.value.trim().trim_end_matches('.').to_string();
+    let purpose = purpose_draft.value.trim().to_string();
+    if subject.is_empty() || purpose.is_empty() {
+        return None;
+    }
+    let composed = if purpose.starts_with("for ") || purpose.starts_with("to ") {
+        format!("{subject} {purpose}")
+    } else {
+        format!("{subject}. {purpose}")
+    };
+    Some(composed.trim().trim_end_matches('.').to_string() + ".")
+}
+
 fn build_action_toolbar_retry_prompt(original_user_prompt: &str, review_findings: &[String]) -> String {
     format!(
         "{original_user_prompt}\n\nYour previous attempt was rejected for these exact reasons:\n- {}\n\nRetry once. Fix every violation exactly. Hard requirements for this retry:\n- return valid minified JSON only\n- use exactly these keys and no others: `title`, `label`, `primary_button`, `secondary_button`\n- `title` must be `Action toolbar`\n- `primary_button` must be `Run action`\n- `secondary_button` must be `Clear`\n- do not return prose, markdown, or code\nReturn only the corrected minified JSON object.",
         review_findings.join("\n- ")
     )
+}
+
+fn build_metric_card_retry_prompt(
+    original_user_prompt: &str,
+    review_findings: &[String],
+) -> String {
+    format!(
+        "{original_user_prompt}\n\nYour previous attempt was rejected for these exact reasons:\n- {}\n\nRetry once. Fix every violation exactly. Hard requirements for this retry:\n- return valid minified JSON only\n- use exactly these keys and no others: `title`, `value`, `context`\n- keep each field concrete, concise, and dashboard-appropriate\n- do not return prose, markdown, or code\nReturn only the corrected minified JSON object.",
+        review_findings.join("\n- ")
+    )
+}
+
+fn build_metric_card_field_retry_prompt(
+    original_user_prompt: &str,
+    review_findings: &[String],
+    field_kind: &str,
+) -> String {
+    format!(
+        "{original_user_prompt}\n\nYour previous `{field_kind}` field attempt was rejected for these exact reasons:\n- {}\n\nRetry once. Fix every violation exactly. Hard requirements for this retry:\n- return valid minified JSON only\n- use exactly one key and no others: `value`\n- keep the copy concrete and dashboard-appropriate\n- do not return prose, markdown, or code\nReturn only the corrected minified JSON object.",
+        review_findings.join("\n- ")
+    )
+}
+
+fn build_metric_card_context_clause_retry_prompt(
+    original_user_prompt: &str,
+    review_findings: &[String],
+    clause_kind: &str,
+) -> String {
+    format!(
+        "{original_user_prompt}\n\nYour previous metric card context `{clause_kind}` clause attempt was rejected for these exact reasons:\n- {}\n\nRetry once. Fix every violation exactly. Hard requirements for this retry:\n- return valid minified JSON only\n- use exactly one key and no others: `value`\n- keep the fragment concrete and dashboard-appropriate\n- do not return prose, markdown, or code\nReturn only the corrected minified JSON object.",
+        review_findings.join("\n- ")
+    )
+}
+
+fn review_metric_card_model_draft(draft: &MetricCardSemanticDraft) -> Vec<String> {
+    let mut findings = Vec::new();
+    let title = draft.title.trim();
+    let value = draft.value.trim();
+    let context = draft.context.trim();
+    if title.is_empty() || value.is_empty() || context.is_empty() {
+        findings.push("metric card semantic draft omitted one or more required fields".into());
+    }
+    for (field_name, field_value) in [
+        ("title", title),
+        ("value", value),
+        ("context", context),
+    ] {
+        if field_value.chars().count() > 120 {
+            findings.push(format!(
+                "metric card semantic draft field `{field_name}` was broader than the narrow microtask budget"
+            ));
+        }
+        for token in ["fn ", "struct ", "impl ", "use ", "mod ", "{", "}"] {
+            if field_value.contains(token) {
+                findings.push(format!(
+                    "metric card semantic draft field `{field_name}` included forbidden token `{token}`"
+                ));
+            }
+        }
+    }
+    let blocked_terms = [
+        "placeholder",
+        "todo",
+        "sample",
+        "example",
+        "lorem ipsum",
+    ];
+    for (field_name, field_value) in [
+        ("title", title.to_ascii_lowercase()),
+        ("value", value.to_ascii_lowercase()),
+        ("context", context.to_ascii_lowercase()),
+    ] {
+        if blocked_terms.iter().any(|term| field_value.contains(term)) {
+            findings.push(format!(
+                "metric card semantic draft field `{field_name}` used placeholder wording instead of real dashboard copy"
+            ));
+        }
+    }
+    findings
+}
+
+fn parse_metric_card_model_draft(raw: &str) -> Option<MetricCardSemanticDraft> {
+    let json = extract_first_json_object_local(raw)?;
+    serde_json::from_str(&json).ok()
+}
+
+fn render_metric_card_model_draft(draft: &MetricCardSemanticDraft) -> String {
+    [
+        "ui.group(|ui| {".to_string(),
+        format!("    ui.strong({:?});", draft.title.trim()),
+        format!("    ui.monospace({:?});", draft.value.trim()),
+        format!("    ui.label({:?});", draft.context.trim()),
+        "});".to_string(),
+    ]
+    .join("\n")
+}
+
+fn review_metric_card_field_draft(
+    draft: &MetricCardFieldDraft,
+    field_kind: &str,
+) -> Vec<String> {
+    let mut findings = Vec::new();
+    let trimmed = draft.value.trim();
+    if trimmed.is_empty() {
+        findings.push(format!(
+            "metric card `{field_kind}` field draft omitted the required `value` field"
+        ));
+    }
+    if trimmed.chars().count() > 120 {
+        findings.push(format!(
+            "metric card `{field_kind}` field draft was broader than the narrow microtask budget"
+        ));
+    }
+    for token in ["fn ", "struct ", "impl ", "use ", "mod ", "{", "}"] {
+        if trimmed.contains(token) {
+            findings.push(format!(
+                "metric card `{field_kind}` field draft included forbidden token `{token}`"
+            ));
+        }
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    for blocked in ["placeholder", "todo", "sample", "example", "lorem ipsum"] {
+        if lowered.contains(blocked) {
+            findings.push(format!(
+                "metric card `{field_kind}` field draft used placeholder wording instead of real dashboard copy"
+            ));
+        }
+    }
+    findings
+}
+
+fn parse_metric_card_field_draft(raw: &str) -> Option<MetricCardFieldDraft> {
+    let json = extract_first_json_object_local(raw)?;
+    serde_json::from_str(&json).ok()
+}
+
+fn recover_single_field_draft_from_reasoning_spill(
+    generation_receipt: &ModelTaskGenerationReceipt,
+) -> Option<MetricCardFieldDraft> {
+    if generation_receipt.response_content_mode.as_deref() != Some("reasoning_fallback")
+        || generation_receipt.content_present
+        || !generation_receipt.reasoning_content_present
+    {
+        return None;
+    }
+    let raw_path = generation_receipt.raw_response_path.as_ref()?;
+    let contents = fs::read_to_string(raw_path).ok()?;
+    let response: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let reasoning = response
+        .get("choices")?
+        .get(0)?
+        .get("message")?
+        .get("reasoning_content")?
+        .as_str()?;
+    let candidate = extract_best_quoted_candidate_from_reasoning(reasoning)?;
+    Some(MetricCardFieldDraft { value: candidate })
+}
+
+fn extract_best_quoted_candidate_from_reasoning(reasoning: &str) -> Option<String> {
+    let mut candidates = Vec::new();
+    let mut in_quote = false;
+    let mut start = 0usize;
+    for (index, ch) in reasoning.char_indices() {
+        if ch == '"' {
+            if in_quote {
+                let value = reasoning[start..index].trim().to_string();
+                if !value.is_empty() {
+                    candidates.push(value);
+                }
+                in_quote = false;
+            } else {
+                in_quote = true;
+                start = index + 1;
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            let lowered = candidate.to_ascii_lowercase();
+            let has_forbidden_code_token = ["fn ", "struct ", "impl ", "use ", "mod ", "{", "}"]
+                .iter()
+                .any(|token| lowered.contains(token));
+            candidate.len() >= 8
+                && candidate.len() <= 120
+                && candidate.contains(' ')
+                && lowered != "value"
+                && !lowered.starts_with("task id")
+                && !lowered.starts_with("project")
+                && !lowered.starts_with("target file")
+                && !lowered.starts_with("expected symbols")
+                && !has_forbidden_code_token
+        })
+        .max_by_key(|candidate| {
+            let lowered = candidate.to_ascii_lowercase();
+            let dashboard_bias = if lowered.contains("shows ")
+                || lowered.contains("current ")
+                || lowered.contains("shared-room")
+                || lowered.contains("dashboard")
+            {
+                1000
+            } else {
+                0
+            };
+            dashboard_bias + candidate.len()
+        })
+}
+
+fn review_metric_card_context_clause_draft(
+    draft: &MetricCardFieldDraft,
+    clause_kind: &str,
+) -> Vec<String> {
+    let mut findings = Vec::new();
+    let trimmed = draft.value.trim();
+    if trimmed.is_empty() {
+        findings.push(format!(
+            "metric card context `{clause_kind}` clause draft omitted the required `value` field"
+        ));
+    }
+    if trimmed.chars().count() > 120 {
+        findings.push(format!(
+            "metric card context `{clause_kind}` clause draft was broader than the narrow microtask budget"
+        ));
+    }
+    for token in ["fn ", "struct ", "impl ", "use ", "mod ", "{", "}"] {
+        if trimmed.contains(token) {
+            findings.push(format!(
+                "metric card context `{clause_kind}` clause draft included forbidden token `{token}`"
+            ));
+        }
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    for blocked in ["placeholder", "todo", "sample", "example", "lorem ipsum"] {
+        if lowered.contains(blocked) {
+            findings.push(format!(
+                "metric card context `{clause_kind}` clause draft used placeholder wording instead of real dashboard copy"
+            ));
+        }
+    }
+    if clause_kind == "subject" {
+        if lowered.contains("dashboard module")
+            || lowered.contains("rust dashboard")
+            || lowered.contains("project")
+            || lowered.contains("module for")
+        {
+            findings.push(
+                "metric card context `subject` clause draft echoed project scaffolding instead of metric-specific meaning"
+                    .into(),
+            );
+        }
+        if lowered.ends_with(" for") || lowered.ends_with(" to") {
+            findings.push(
+                "metric card context `subject` clause draft ended with a dangling preposition"
+                    .into(),
+            );
+        }
+    } else if clause_kind == "purpose" {
+        if !(lowered.starts_with("for ") || lowered.starts_with("to ")) {
+            findings.push(
+                "metric card context `purpose` clause draft should begin with `for` or `to`"
+                    .into(),
+            );
+        }
+    }
+    findings
 }
 
 fn review_action_toolbar_label_draft(draft: &ActionToolbarLabelDraft) -> Vec<String> {
@@ -2923,6 +4661,208 @@ fn should_recommend_action_toolbar_label_decomposition(
                 .any(|finding| finding.contains("label draft omitted the required `label` field")))
 }
 
+fn should_recommend_metric_card_decomposition(
+    generation_receipt: &ModelTaskGenerationReceipt,
+    review_findings: &[String],
+) -> bool {
+    generation_receipt.response_content_mode.as_deref() == Some("reasoning_fallback")
+        && !generation_receipt.content_present
+        && generation_receipt.reasoning_content_present
+        && (generation_receipt.finish_reason.as_deref() == Some("length")
+            || review_findings
+                .iter()
+                .any(|finding| finding.contains("metric card semantic draft omitted one or more required fields")))
+}
+
+fn should_recommend_metric_card_context_decomposition(
+    generation_receipt: &ModelTaskGenerationReceipt,
+    review_findings: &[String],
+) -> bool {
+    generation_receipt.response_content_mode.as_deref() == Some("reasoning_fallback")
+        && !generation_receipt.content_present
+        && generation_receipt.reasoning_content_present
+        && (generation_receipt.finish_reason.as_deref() == Some("length")
+            || review_findings
+                .iter()
+                .any(|finding| finding.contains("metric card `context` field draft omitted the required `value` field")))
+}
+
+fn infer_semantic_object_field_split(
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    generation_receipt: &ModelTaskGenerationReceipt,
+    generation_receipt_path: &Path,
+    review_findings: &[String],
+    task_subtype: &str,
+    required_fields: &[&str],
+    proposed_host_composition_task: &str,
+) -> (
+    TaskDecompositionProposal,
+    TaskDecompositionInferenceReceipt,
+    TaskDecompositionReceipt,
+) {
+    let constraint_principles = vec![
+        "do_not_exceed_task_granularity".to_string(),
+        "classify_before_proceeding".to_string(),
+        "use_reusable_decomposition_grammar_instead_of_bespoke_rule".to_string(),
+        "host_owns_syntax_glue_when_semantic_parts_are_enough".to_string(),
+    ];
+    let proposed_child_tasks = required_fields
+        .iter()
+        .map(|field| format!("{task_subtype}_{field}"))
+        .chain(std::iter::once(proposed_host_composition_task.to_string()))
+        .collect::<Vec<_>>();
+    let mut findings = vec![
+        "model-authored task returned empty `content` and relied on reasoning spillover".into(),
+        "current small-model attempt suggests the semantic object bundle should be split by field before retrying".into(),
+    ];
+    findings.extend(review_findings.iter().cloned());
+    let proposal = TaskDecompositionProposal {
+        proposal_id: chatty_factory_core::timestamp_id("task-decomposition-proposal"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        task_shape: "semantic_object_bundle".into(),
+        task_subtype: task_subtype.into(),
+        decomposition_pattern: "semantic_object_field_split".into(),
+        constraint_principles: constraint_principles.clone(),
+        required_fields: required_fields.iter().map(|field| field.to_string()).collect(),
+        proposed_child_tasks: proposed_child_tasks.clone(),
+        proposed_host_composition_task: Some(proposed_host_composition_task.into()),
+        confidence_posture: "pattern_match_from_failure_evidence".into(),
+        findings: findings.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let decomposition_receipt = TaskDecompositionReceipt {
+        decomposition_id: chatty_factory_core::timestamp_id("task-decomposition"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        task_shape: Some("semantic_object_bundle".into()),
+        task_subtype: task_subtype.into(),
+        constraint_principles: constraint_principles.clone(),
+        matched_grammar: Some("semantic_object_field_split".into()),
+        trigger_class: format!(
+            "generation_mode:{}",
+            generation_receipt
+                .response_content_mode
+                .as_deref()
+                .unwrap_or("unknown")
+        ),
+        decision: "decompose_before_retrying_task_subtype".into(),
+        source_generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+        findings: findings.clone(),
+        recommended_child_tasks: proposed_child_tasks.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let inference = TaskDecompositionInferenceReceipt {
+        inference_id: chatty_factory_core::timestamp_id("task-decomposition-inference"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        task_shape: "semantic_object_bundle".into(),
+        task_subtype: task_subtype.into(),
+        inference_pattern: "semantic_object_field_split".into(),
+        failure_class: "task_too_broad_for_current_generation_mode".into(),
+        constraint_principles,
+        trigger_class: decomposition_receipt.trigger_class.clone(),
+        decision: "propose_generic_field_split".into(),
+        source_generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+        proposal_path: None,
+        findings,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    (proposal, inference, decomposition_receipt)
+}
+
+fn infer_semantic_sentence_clause_split(
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    generation_receipt: &ModelTaskGenerationReceipt,
+    generation_receipt_path: &Path,
+    review_findings: &[String],
+    task_subtype: &str,
+    proposed_child_tasks: &[&str],
+    proposed_host_composition_task: &str,
+) -> (
+    TaskDecompositionProposal,
+    TaskDecompositionInferenceReceipt,
+    TaskDecompositionReceipt,
+) {
+    let constraint_principles = vec![
+        "do_not_exceed_task_granularity".to_string(),
+        "classify_before_proceeding".to_string(),
+        "use_reusable_decomposition_grammar_instead_of_bespoke_rule".to_string(),
+        "host_owns_syntax_glue_when_semantic_parts_are_enough".to_string(),
+    ];
+    let child_tasks = proposed_child_tasks
+        .iter()
+        .map(|task| (*task).to_string())
+        .chain(std::iter::once(proposed_host_composition_task.to_string()))
+        .collect::<Vec<_>>();
+    let mut findings = vec![
+        "model-authored sentence task returned empty `content` and relied on reasoning spillover".into(),
+        "current small-model attempt suggests the semantic sentence bundle should be split into smaller fragments before retrying".into(),
+    ];
+    findings.extend(review_findings.iter().cloned());
+    let proposal = TaskDecompositionProposal {
+        proposal_id: chatty_factory_core::timestamp_id("task-decomposition-proposal"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        task_shape: "semantic_sentence_bundle".into(),
+        task_subtype: task_subtype.into(),
+        decomposition_pattern: "sentence_clause_split".into(),
+        constraint_principles: constraint_principles.clone(),
+        required_fields: Vec::new(),
+        proposed_child_tasks: child_tasks.clone(),
+        proposed_host_composition_task: Some(proposed_host_composition_task.into()),
+        confidence_posture: "pattern_match_from_failure_evidence".into(),
+        findings: findings.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let decomposition_receipt = TaskDecompositionReceipt {
+        decomposition_id: chatty_factory_core::timestamp_id("task-decomposition"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        task_shape: Some("semantic_sentence_bundle".into()),
+        task_subtype: task_subtype.into(),
+        constraint_principles: constraint_principles.clone(),
+        matched_grammar: Some("sentence_clause_split".into()),
+        trigger_class: format!(
+            "generation_mode:{}",
+            generation_receipt
+                .response_content_mode
+                .as_deref()
+                .unwrap_or("unknown")
+        ),
+        decision: "decompose_before_retrying_task_subtype".into(),
+        source_generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+        findings: findings.clone(),
+        recommended_child_tasks: child_tasks.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let inference = TaskDecompositionInferenceReceipt {
+        inference_id: chatty_factory_core::timestamp_id("task-decomposition-inference"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        task_shape: "semantic_sentence_bundle".into(),
+        task_subtype: task_subtype.into(),
+        inference_pattern: "sentence_clause_split".into(),
+        failure_class: "task_too_broad_for_current_generation_mode".into(),
+        constraint_principles,
+        trigger_class: decomposition_receipt.trigger_class.clone(),
+        decision: "propose_generic_sentence_split".into(),
+        source_generation_receipt_path: Some(generation_receipt_path.display().to_string()),
+        proposal_path: None,
+        findings,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    (proposal, inference, decomposition_receipt)
+}
+
 fn build_action_toolbar_decomposition_receipt(
     task: &PlanTask,
     task_list: &PlanTaskList,
@@ -2935,12 +4875,21 @@ fn build_action_toolbar_decomposition_receipt(
         "current small-model attempt suggests this toolbar semantic draft should be decomposed before retrying".into(),
     ];
     findings.extend(review_findings.iter().cloned());
+    let constraint_principles = vec![
+        "do_not_exceed_task_granularity".to_string(),
+        "classify_before_proceeding".to_string(),
+        "use_reusable_decomposition_grammar_instead_of_bespoke_rule".to_string(),
+        "host_owns_syntax_glue_when_semantic_parts_are_enough".to_string(),
+    ];
     TaskDecompositionReceipt {
         decomposition_id: chatty_factory_core::timestamp_id("task-decomposition"),
         request_id: task.request_id.clone(),
         task_id: task.task_id.clone(),
         project_name: task_list.project_name.clone(),
+        task_shape: Some("semantic_object_bundle".into()),
         task_subtype: "toolbar_ui_block".into(),
+        constraint_principles,
+        matched_grammar: Some("semantic_object_field_split".into()),
         trigger_class: format!(
             "generation_mode:{}",
             generation_receipt
@@ -2974,12 +4923,21 @@ fn build_action_toolbar_label_decomposition_receipt(
         "current small-model attempt suggests this label microtask still needs a smaller execution shape or a different runtime mode".into(),
     ];
     findings.extend(review_findings.iter().cloned());
+    let constraint_principles = vec![
+        "do_not_exceed_task_granularity".to_string(),
+        "classify_before_proceeding".to_string(),
+        "use_reusable_decomposition_grammar_instead_of_bespoke_rule".to_string(),
+        "host_owns_syntax_glue_when_semantic_parts_are_enough".to_string(),
+    ];
     TaskDecompositionReceipt {
         decomposition_id: chatty_factory_core::timestamp_id("task-decomposition"),
         request_id: task.request_id.clone(),
         task_id: task.task_id.clone(),
         project_name: task_list.project_name.clone(),
+        task_shape: Some("semantic_sentence_bundle".into()),
         task_subtype: "toolbar_label_sentence".into(),
+        constraint_principles,
+        matched_grammar: Some("sentence_clause_split".into()),
         trigger_class: format!(
             "generation_mode:{}",
             generation_receipt
@@ -3055,6 +5013,30 @@ fn persist_task_decomposition_receipt(
 ) -> Result<PathBuf> {
     let path = receipt_root.join(format!(
         "{}-decomposition.json",
+        sanitize_filename(&receipt.task_id)
+    ));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_task_decomposition_proposal(
+    receipt_root: &Path,
+    receipt: &TaskDecompositionProposal,
+) -> Result<PathBuf> {
+    let path = receipt_root.join(format!(
+        "{}-proposal.json",
+        sanitize_filename(&receipt.task_id)
+    ));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_task_decomposition_inference_receipt(
+    receipt_root: &Path,
+    receipt: &TaskDecompositionInferenceReceipt,
+) -> Result<PathBuf> {
+    let path = receipt_root.join(format!(
+        "{}-inference.json",
         sanitize_filename(&receipt.task_id)
     ));
     persist_json_pretty(&path, receipt)?;

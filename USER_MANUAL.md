@@ -28,6 +28,9 @@ That now includes a newer execution idea:
 - if a frozen task is still too large for the current local model/runtime pair,
   the factory should learn to split that task into smaller children instead of
   calling it permanently unsupported
+- and the long-term goal is for the factory to infer those splits from its own
+  task receipts and failures instead of relying on us to hand-author every next
+  decomposition path
 
 ## License
 
@@ -213,6 +216,38 @@ This is now proven on one real build-side example:
 - then toolbar label sentence
 - then clause-level toolbar tasks
 - then host composition of the final label and Rust syntax
+
+That proof now goes all the way through:
+
+- one clause can succeed while another still fails
+- the failing clause can be tightened and retried separately
+
+The next architectural step is important:
+
+- ChattyFactory should stop needing us to manually teach each next task split
+- repeated failure evidence should increasingly produce automatic decomposition
+  proposals and generic split patterns
+- the factory should learn how to narrow work for the current model/runtime
+  pair from its own receipts over time
+
+The intended split of responsibility is:
+
+- constraint principles:
+  - generic architecture rules like "do not exceed current task granularity"
+- failure classes:
+  - generic labels chosen from evidence like reasoning fallback or omitted fields
+- decomposition grammars:
+  - reusable patterns like field split or clause split
+
+The goal is for the factory to match:
+
+- task shape
+- failure class
+- reusable grammar
+
+instead of asking a human to author one more specific rule every time a new
+task class stumbles.
+- once both clauses pass, the host composes the final sentence and renders the final toolbar block
 
 ## 5. Basic CLI Usage
 

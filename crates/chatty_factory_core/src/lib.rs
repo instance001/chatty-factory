@@ -17,7 +17,7 @@ pub use contracts::{
     BuildExecutionWorkOrder, BuildFeatureSlice, BuildPlanArtifact, BuildPlanReview, BuildReceipt,
     PlanTask, PlanTaskExecutionLog, PlanTaskExecutionReceipt, PlanTaskList,
     PlanTaskModelAttemptReceipt, PlanTaskVerificationLog, PlanTaskVerificationReceipt,
-    TaskDecompositionReceipt,
+    TaskDecompositionInferenceReceipt, TaskDecompositionProposal, TaskDecompositionReceipt,
     CapabilityTransition, ChattyCogBridgeCapabilities, ChattyCogBridgeSpec,
     ChattyCogCommandSpec, ChattyCogModuleSpec, ChattyCogVisualLoadSpec, ChattyEduModuleSpec,
     ClarificationRequest,

@@ -304,12 +304,59 @@ Why:
 
 Current notable fields:
 - `task_id`
+- `task_shape`
 - `task_subtype`
+- `constraint_principles`
+- `matched_grammar`
 - `trigger_class`
 - `decision`
 - `source_generation_receipt_path`
 - `findings`
 - `recommended_child_tasks`
+
+### `TaskDecompositionProposal`
+
+Purpose:
+- persist a proposed reusable decomposition rule inferred from a task-shape failure
+
+Why:
+- the factory should move from hand-authored rescue paths toward generic
+  decomposition patterns inferred from receipts
+- proposed child-task splits should be inspectable as their own artifacts
+
+Current notable fields:
+- `task_id`
+- `task_shape`
+- `task_subtype`
+- `decomposition_pattern`
+- `constraint_principles`
+- `required_fields`
+- `proposed_child_tasks`
+- `proposed_host_composition_task`
+- `confidence_posture`
+- `findings`
+
+### `TaskDecompositionInferenceReceipt`
+
+Purpose:
+- persist why the factory inferred a generic decomposition pattern from a model-authored task failure
+
+Why:
+- "this task should split" should be explained by failure evidence rather than
+  silently hardcoded into one more bespoke handler
+
+Current notable fields:
+- `task_id`
+- `task_shape`
+- `task_subtype`
+- `inference_pattern`
+- `failure_class`
+- `constraint_principles`
+- `trigger_class`
+- `decision`
+- `source_generation_receipt_path`
+- `proposal_path`
+- `findings`
 
 ### `ModelTaskGenerationReceipt`
 

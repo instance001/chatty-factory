@@ -388,7 +388,11 @@ pub struct TaskDecompositionReceipt {
     pub request_id: String,
     pub task_id: String,
     pub project_name: String,
+    pub task_shape: Option<String>,
     pub task_subtype: String,
+    #[serde(default)]
+    pub constraint_principles: Vec<String>,
+    pub matched_grammar: Option<String>,
     pub trigger_class: String,
     pub decision: String,
     pub source_generation_receipt_path: Option<String>,
@@ -396,6 +400,49 @@ pub struct TaskDecompositionReceipt {
     pub findings: Vec<String>,
     #[serde(default)]
     pub recommended_child_tasks: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TaskDecompositionProposal {
+    pub proposal_id: String,
+    pub request_id: String,
+    pub task_id: String,
+    pub project_name: String,
+    pub task_shape: String,
+    pub task_subtype: String,
+    pub decomposition_pattern: String,
+    #[serde(default)]
+    pub constraint_principles: Vec<String>,
+    #[serde(default)]
+    pub required_fields: Vec<String>,
+    #[serde(default)]
+    pub proposed_child_tasks: Vec<String>,
+    pub proposed_host_composition_task: Option<String>,
+    pub confidence_posture: String,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TaskDecompositionInferenceReceipt {
+    pub inference_id: String,
+    pub request_id: String,
+    pub task_id: String,
+    pub project_name: String,
+    pub task_shape: String,
+    pub task_subtype: String,
+    pub inference_pattern: String,
+    pub failure_class: String,
+    #[serde(default)]
+    pub constraint_principles: Vec<String>,
+    pub trigger_class: String,
+    pub decision: String,
+    pub source_generation_receipt_path: Option<String>,
+    pub proposal_path: Option<String>,
+    #[serde(default)]
+    pub findings: Vec<String>,
     pub created_at: Option<String>,
 }
 

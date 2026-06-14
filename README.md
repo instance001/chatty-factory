@@ -48,6 +48,15 @@ The active direction is:
 - model-planned feature work on top
 - host-owned freezing, review, and verification
 - adaptive decomposition when a task is still too broad for the current model/runtime pair
+- automatic decomposition inference from task failure evidence so the factory can learn how to shrink work from its own receipts instead of depending on us to hand-teach each next split
+
+The intended architecture distinction is now explicit:
+
+- constraint principles are generic and stable
+- failure classes are generic classifications selected from evidence
+- decomposition grammars are reusable split patterns
+- the factory should infer mappings between task shape, failure class, and grammar
+  instead of accumulating bespoke negative rules for each new task class
 
 ## What It Does Well
 
@@ -132,6 +141,8 @@ It is not claiming universal safe surgery across arbitrary unknown codebases.
 - [Starter Plus Plan Execution Pivot](./build-docs/plans/STARTER_PLUS_PLAN_EXECUTION_PIVOT.md)
 - [Atomized Microtask Execution Milestone](./build-docs/plans/ATOMIZED_MICROTASK_EXECUTION_MILESTONE.md)
 - [Adaptive Task Decomposition Milestone](./build-docs/plans/ADAPTIVE_TASK_DECOMPOSITION_MILESTONE.md)
+- [Automatic Decomposition Inference Milestone](./build-docs/plans/AUTOMATIC_DECOMPOSITION_INFERENCE_MILESTONE.md)
+- [Over The Line Execution Plan](./build-docs/plans/OVER_THE_LINE_EXECUTION_PLAN.md)
 - [Positive Lane Deprecation Plan](./build-docs/plans/POSITIVE_LANE_DEPRECATION_PLAN.md)
 - [HELPER_SERVICE_MILESTONE.md](./build-docs/milestones/HELPER_SERVICE_MILESTONE.md)
 - [Repository Layout](./docs/REPOSITORY_LAYOUT.md)
@@ -209,6 +220,7 @@ The build side now also persists reviewed task artifacts under `runtime/`, inclu
 - task execution and verification logs
 - model-authored task receipts
 - adaptive task decomposition receipts
+- decomposition inference should increasingly become generic and self-improving rather than hand-authored task by task
 
 If a request is too vague, ChattyFactory may emit clarification or planner
 handoff artifacts instead of guessing.
@@ -257,6 +269,10 @@ Current architectural posture:
   - to `toolbar_label_sentence`
   - to clause-level child tasks
   - with the host composing the final toolbar sentence and Rust block
+- one full build-side semantic proof now exists where:
+  - the model supplies only tiny clause-level semantic drafts
+  - the host composes the final sentence
+  - the host renders the final Rust UI block
 - ecosystem-native starters now exist as explicit mechanical choices:
   - `chattycog_native_window_module`
   - `chattyedu_native_window_module`

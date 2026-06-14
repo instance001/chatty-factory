@@ -34,6 +34,13 @@ The current factory has already proven one real build-side decomposition ladder:
 4. host composition of the final toolbar label sentence
 5. host rendering of the final Rust `ui.group(...)` block
 
+This proof has now gone one step further:
+
+- the factory can automatically apply the earned decomposition rule on the next run
+- a child task can earn its own second-level decomposition rule
+- the next run can automatically replace that child with smaller clause tasks
+- the host can then compose the final sentence from those clause drafts
+
 That matters because it proves the intended behavior:
 
 - a failing broad task does not automatically become "unsupported"
@@ -190,6 +197,15 @@ Potential child tasks:
 3. secondary button
 4. local wiring behavior
 
+Proven build-side ladder so far:
+
+1. `toolbar_ui_block`
+2. `toolbar_label_sentence`
+3. `action_toolbar_label_clause_run_action`
+4. `action_toolbar_label_clause_clear_action`
+5. host-composed final toolbar sentence
+6. host-rendered Rust block
+
 ### `helper_build`
 
 Potential child tasks:
@@ -294,6 +310,21 @@ Status:
 - earned decomposition now changes the next task graph automatically for:
   - `toolbar_ui_block`
   - `toolbar_label_sentence`
+
+### Wave 4
+
+- allow a child task to earn its own second-level decomposition rule
+- automatically apply that second-level rule on the next run
+- let the host compose the parent semantic artifact from the successful child drafts
+
+Status:
+- proven on the toolbar path
+- the current live example now supports:
+  - broad toolbar task
+  - label-sentence child task
+  - clause-level children
+  - host composition of the final label sentence
+  - host rendering of the final Rust toolbar block
 
 ### Wave 4
 
