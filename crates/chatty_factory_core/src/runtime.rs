@@ -21,6 +21,9 @@ struct PlannerParseOutcome {
     degraded_recovery_used: bool,
 }
 
+const DEFAULT_PLANNER_REQUEST_TIMEOUT_SECS: u64 = 420;
+const DEFAULT_MODEL_TASK_REQUEST_TIMEOUT_SECS: u64 = 300;
+
 pub fn default_runtime_config(runtime_root: &Path, models_root: &Path) -> Result<RuntimeConfig> {
     let runtime_root = runtime_root
         .canonicalize()
@@ -43,6 +46,9 @@ pub fn default_runtime_config(runtime_root: &Path, models_root: &Path) -> Result
         context_size: 2048,
         gpu_layers: 99,
         launch_timeout_secs: 90,
+        planner_request_timeout_secs: DEFAULT_PLANNER_REQUEST_TIMEOUT_SECS,
+        model_task_request_timeout_secs: DEFAULT_MODEL_TASK_REQUEST_TIMEOUT_SECS,
+        shell_timeout_buffer_secs: 60,
         created_at: Some(crate::timestamp_id("created")),
     })
 }
@@ -136,6 +142,7 @@ pub fn run_runtime_smoke(
     config: &RuntimeConfig,
     launch_server: bool,
 ) -> Result<RuntimeSmokeReceipt> {
+    let total_started = Instant::now();
     let runtime_root = PathBuf::from(&config.runtime_root);
     let server_executable = PathBuf::from(&config.server_executable);
     let version_output = run_version_probe(&server_executable, &runtime_root)?;
@@ -146,11 +153,16 @@ pub fn run_runtime_smoke(
         config_id: config.config_id.clone(),
         model_path: config.default_model_path.clone(),
         launch_args: Vec::new(),
+        launch_timeout_secs: config.launch_timeout_secs,
         version_probe_ok,
         server_launch_attempted: launch_server,
         server_started: false,
         http_probe_ok: false,
         process_killed: false,
+        timeout_cause: None,
+        final_outcome: None,
+        launch_elapsed_ms: None,
+        total_elapsed_ms: None,
         stdout_log_path: None,
         stderr_log_path: None,
         notes: Vec::new(),
@@ -161,6 +173,8 @@ pub fn run_runtime_smoke(
         receipt
             .notes
             .push("server launch skipped; version probe only".into());
+        receipt.final_outcome = Some("version_probe_only".into());
+        receipt.total_elapsed_ms = Some(total_started.elapsed().as_millis() as u64);
         return Ok(receipt);
     }
 
@@ -202,6 +216,7 @@ pub fn run_runtime_smoke(
         .stderr(Stdio::from(stderr_log))
         .spawn()?;
 
+    let launch_started = Instant::now();
     let deadline = Instant::now() + Duration::from_secs(config.launch_timeout_secs);
     let mut server_started = false;
     let mut http_probe_ok = false;
@@ -222,15 +237,21 @@ pub fn run_runtime_smoke(
 
     receipt.server_started = server_started;
     receipt.http_probe_ok = http_probe_ok;
+    receipt.launch_elapsed_ms = Some(launch_started.elapsed().as_millis() as u64);
 
     child.kill()?;
     let _ = child.wait();
     receipt.process_killed = true;
     if !server_started {
+        receipt.timeout_cause = Some("launch_timeout".into());
+        receipt.final_outcome = Some("launch_timeout".into());
         receipt
             .notes
             .push("server launch did not reach a responsive HTTP state before timeout".into());
+    } else {
+        receipt.final_outcome = Some("http_probe_ok".into());
     }
+    receipt.total_elapsed_ms = Some(total_started.elapsed().as_millis() as u64);
 
     Ok(receipt)
 }
@@ -242,6 +263,7 @@ pub fn run_local_planner(
     raw_response_dir: &Path,
     planner_model_override: Option<&str>,
 ) -> Result<(PlannerResponse, PlannerExecutionReceipt)> {
+    let total_started = Instant::now();
     let runtime_root = PathBuf::from(&config.runtime_root);
     let server_executable = PathBuf::from(&config.server_executable);
     let model_path = planner_model_override
@@ -288,11 +310,18 @@ pub fn run_local_planner(
         source_handoff_id: handoff.handoff_id.clone(),
         model_path: model_path.clone(),
         launch_args: launch_args.clone(),
+        launch_timeout_secs: config.launch_timeout_secs,
+        request_timeout_secs: config.planner_request_timeout_secs,
         response_path: None,
         raw_response_path: None,
         server_started: false,
         http_request_ok: false,
         process_killed: false,
+        timeout_cause: None,
+        final_outcome: None,
+        launch_elapsed_ms: None,
+        request_elapsed_ms: None,
+        total_elapsed_ms: None,
         parse_mode: None,
         finish_reason: None,
         degraded_recovery_used: false,
@@ -305,9 +334,11 @@ pub fn run_local_planner(
     };
 
     let result = (|| -> Result<PlannerResponse> {
+        let launch_started = Instant::now();
         let deadline = Instant::now() + Duration::from_secs(config.launch_timeout_secs);
         while Instant::now() < deadline {
             if let Some(status) = child.try_wait()? {
+                receipt.final_outcome = Some("server_exited_early".into());
                 receipt
                     .notes
                     .push(format!("planner server exited early with status {status}"));
@@ -319,19 +350,41 @@ pub fn run_local_planner(
             }
             thread::sleep(Duration::from_millis(750));
         }
+        receipt.launch_elapsed_ms = Some(launch_started.elapsed().as_millis() as u64);
 
         if !receipt.server_started {
+            if receipt.final_outcome.is_none() {
+                receipt.timeout_cause = Some("launch_timeout".into());
+                receipt.final_outcome = Some("launch_timeout".into());
+            }
             bail!("planner server did not become ready before timeout");
         }
 
         let request_body = build_planner_chat_request(handoff)?;
-        let raw_response = post_json_request(
+        let request_started = Instant::now();
+        let raw_response = match post_json_request_with_timeout(
             config.host.as_str(),
             config.port,
             "/v1/chat/completions",
             &request_body,
-        )?;
+            config.planner_request_timeout_secs,
+        ) {
+            Ok(response) => response,
+            Err(err) => {
+                receipt.request_elapsed_ms = Some(request_started.elapsed().as_millis() as u64);
+                let message = err.to_string();
+                if message.to_ascii_lowercase().contains("timed out") {
+                    receipt.timeout_cause = Some("request_timeout".into());
+                    receipt.final_outcome = Some("request_timeout".into());
+                } else {
+                    receipt.final_outcome = Some("request_error".into());
+                }
+                return Err(err);
+            }
+        };
+        receipt.request_elapsed_ms = Some(request_started.elapsed().as_millis() as u64);
         receipt.http_request_ok = true;
+        receipt.final_outcome = Some("request_completed".into());
 
         let raw_response_path =
             raw_response_dir.join(format!("planner-response-{}-raw.json", handoff.handoff_id));
@@ -364,6 +417,7 @@ pub fn run_local_planner(
     let _ = child.kill();
     let _ = child.wait();
     receipt.process_killed = true;
+    receipt.total_elapsed_ms = Some(total_started.elapsed().as_millis() as u64);
 
     match result {
         Ok(planner_response) => Ok((planner_response, receipt)),
@@ -380,6 +434,7 @@ pub fn run_local_text_generation(
     raw_response_dir: &Path,
     model_override: Option<&str>,
 ) -> Result<(String, ModelTaskGenerationReceipt)> {
+    let total_started = Instant::now();
     let runtime_root = PathBuf::from(&config.runtime_root);
     let server_executable = PathBuf::from(&config.server_executable);
     let model_path = model_override
@@ -426,10 +481,17 @@ pub fn run_local_text_generation(
         task_id: task_id.to_string(),
         model_path: model_path.clone(),
         launch_args: launch_args.clone(),
+        launch_timeout_secs: config.launch_timeout_secs,
+        request_timeout_secs: config.model_task_request_timeout_secs,
         raw_response_path: None,
         server_started: false,
         http_request_ok: false,
         process_killed: false,
+        timeout_cause: None,
+        final_outcome: None,
+        launch_elapsed_ms: None,
+        request_elapsed_ms: None,
+        total_elapsed_ms: None,
         finish_reason: None,
         response_content_mode: None,
         content_present: false,
@@ -442,9 +504,11 @@ pub fn run_local_text_generation(
     };
 
     let result = (|| -> Result<String> {
+        let launch_started = Instant::now();
         let deadline = Instant::now() + Duration::from_secs(config.launch_timeout_secs);
         while Instant::now() < deadline {
             if let Some(status) = child.try_wait()? {
+                receipt.final_outcome = Some("server_exited_early".into());
                 receipt
                     .notes
                     .push(format!("model task server exited early with status {status}"));
@@ -456,20 +520,41 @@ pub fn run_local_text_generation(
             }
             thread::sleep(Duration::from_millis(750));
         }
+        receipt.launch_elapsed_ms = Some(launch_started.elapsed().as_millis() as u64);
 
         if !receipt.server_started {
+            if receipt.final_outcome.is_none() {
+                receipt.timeout_cause = Some("launch_timeout".into());
+                receipt.final_outcome = Some("launch_timeout".into());
+            }
             bail!("model task server did not become ready before timeout");
         }
 
         let request_body = build_text_generation_chat_request(system_prompt, user_prompt)?;
-        let raw_response = post_json_request_with_timeout(
+        let request_started = Instant::now();
+        let raw_response = match post_json_request_with_timeout(
             config.host.as_str(),
             config.port,
             "/v1/chat/completions",
             &request_body,
-            300,
-        )?;
+            config.model_task_request_timeout_secs,
+        ) {
+            Ok(response) => response,
+            Err(err) => {
+                receipt.request_elapsed_ms = Some(request_started.elapsed().as_millis() as u64);
+                let message = err.to_string();
+                if message.to_ascii_lowercase().contains("timed out") {
+                    receipt.timeout_cause = Some("request_timeout".into());
+                    receipt.final_outcome = Some("request_timeout".into());
+                } else {
+                    receipt.final_outcome = Some("request_error".into());
+                }
+                return Err(err);
+            }
+        };
+        receipt.request_elapsed_ms = Some(request_started.elapsed().as_millis() as u64);
         receipt.http_request_ok = true;
+        receipt.final_outcome = Some("request_completed".into());
 
         let raw_response_path =
             raw_response_dir.join(format!("model-task-response-{safe_task_id}-raw.json"));
@@ -517,6 +602,7 @@ pub fn run_local_text_generation(
     let _ = child.kill();
     let _ = child.wait();
     receipt.process_killed = true;
+    receipt.total_elapsed_ms = Some(total_started.elapsed().as_millis() as u64);
 
     match result {
         Ok(content) => Ok((content, receipt)),
@@ -1003,10 +1089,6 @@ fn build_text_generation_chat_request(system_prompt: &str, user_prompt: &str) ->
         "stream": false
     });
     Ok(serde_json::to_string(&payload)?)
-}
-
-fn post_json_request(host: &str, port: u16, path: &str, body: &str) -> Result<String> {
-    post_json_request_with_timeout(host, port, path, body, 120)
 }
 
 fn post_json_request_with_timeout(

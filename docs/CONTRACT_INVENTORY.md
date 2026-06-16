@@ -294,6 +294,63 @@ Current notable fields:
 - `status`
 - `review_findings`
 
+Current notable review evidence:
+- `alternate methods exhausted for current model; escalating retry search to next model candidate: ...`
+- `alternate methods exhausted across the available model/runtime candidates ...`
+- `attempted retry methods: ...`
+- `attempted models: ...`
+
+### `TriangulationLoopSummaryReceipt`
+
+Purpose:
+- compact host-owned summary of provisional-failure evidence, triangulation state, and model-ladder pressure
+
+Why:
+- the UI should show whether the factory merely exhausted one model posture, exhausted the full candidate ladder, or is accumulating narrow convergent evidence that could justify a durable negative constraint later
+
+Current notable fields:
+- `open_provisional_vault_entries`
+- `triangulation_session_count`
+- `floor_level_convergent_failures`
+- `pending_promotion_candidates`
+- `current_model_only_exhaustion_count`
+- `full_model_ladder_exhaustion_count`
+- `latest_model_ladder_task_label`
+- `latest_model_ladder_posture`
+- `latest_model_ladder_attempted_models`
+
+### `RetrySearchProofReceipt`
+
+Purpose:
+- persist the factory-owned outcome of the retry-search model ladder proof, including its outer runtime budget
+
+Why:
+- once proofs span multiple models and retry postures, an external shell timeout is no longer a reliable pass/fail signal
+- the proof receipt should be the authority for whether the ladder passed, exhausted all candidates, observed an internal timeout, or was simply interrupted outside the factory
+
+Current notable fields:
+- `status`
+- `final_outcome`
+- `model_candidate_count`
+- `retry_posture_count`
+- `launch_timeout_secs`
+- `request_timeout_secs`
+- `cleanup_overhead_secs`
+- `expected_outer_timeout_secs`
+- `attempted_models`
+- `attempted_methods`
+- `generation_receipt_paths`
+- `method_space_exhausted`
+- `internal_timeout_observed`
+
+### `RuntimeConfig`
+
+Current notable timeout fields:
+- `launch_timeout_secs`
+- `planner_request_timeout_secs`
+- `model_task_request_timeout_secs`
+- `shell_timeout_buffer_secs`
+
 ### `TaskDecompositionReceipt`
 
 Purpose:
@@ -357,6 +414,90 @@ Current notable fields:
 - `source_generation_receipt_path`
 - `proposal_path`
 - `findings`
+
+### `AtomizationFloorDecision`
+
+Purpose:
+- record whether a failed task is still meaningfully decomposable or has reached the hard atomization floor
+
+Why:
+- adaptive decomposition needs an explicit stopping point so the factory does not atomize work into dust
+- once a task is at the floor, the next move should be alternate-method retry or triangulation, not smaller and smaller fragments
+
+Current notable fields:
+- `task_id`
+- `task_shape`
+- `task_subtype`
+- `current_granularity`
+- `decision`
+- `alternate_methods`
+- `findings`
+
+### `FailureVaultEntry`
+
+Purpose:
+- store provisional failed-task evidence before anything is promoted into the real negative library
+
+Why:
+- one failed attempt should not become a durable constraint
+- failures should first be held, compared, retried differently, and only later promoted if evidence converges
+
+Current notable fields:
+- `task_id`
+- `task_shape`
+- `task_subtype`
+- `task_kind`
+- `failure_class`
+- `trigger_class`
+- `triangulation_session_id`
+- `atomization_floor_decision_path`
+- `source_attempt_receipt_path`
+- `source_decomposition_receipt_path`
+- `status`
+- `decomposition_depth`
+- `findings`
+
+### `TriangulationSession`
+
+Purpose:
+- group related retries and variants while the factory narrows the true blocker for one task lineage
+
+Why:
+- the factory should compare failures across different methods before deciding something is genuinely non-viable
+- successful alternate attempts should resolve the session instead of letting one early failure poison the library
+
+Current notable fields:
+- `task_lineage_key`
+- `task_shape`
+- `task_subtype`
+- `status`
+- `convergence_posture`
+- `atomization_floor_decision_path`
+- `successful_alternate_method`
+- `attempts`
+- `findings`
+
+### `ConstraintPromotionCandidate`
+
+Purpose:
+- hold a high-confidence, reviewable candidate for promotion into the real negative constraint library
+
+Why:
+- durable constraints should only come from repeated convergent evidence at the atomization floor
+- this keeps the live library narrow and specific instead of turning it into a catalog of one-off failures
+
+Current notable fields:
+- `triangulation_session_id`
+- `task_shape`
+- `task_subtype`
+- `failure_class`
+- `trigger_class`
+- `confidence_posture`
+- `status`
+- `matched_constraint_principles`
+- `narrow_usage_pattern`
+- `evidence_receipt_paths`
+- `recommended_constraint_summary`
 
 ### `ModelTaskGenerationReceipt`
 
@@ -827,7 +968,9 @@ Suggested fields:
 ### `ProposedConstraintReceipt`
 
 Purpose:
-- host-owned proposal artifact for a new negative-rule candidate derived from a failed or fallbacked build verification
+- host-owned proposal artifact for a new negative-rule candidate derived from:
+  - a failed or fallbacked build verification
+  - or a triangulated floor-level task failure with convergent evidence
 
 Why:
 - the factory should improve from real failures in a reviewable way instead of silently mutating the active shelf
@@ -889,11 +1032,14 @@ Purpose:
 
 Why:
 - the negative bookshelf becomes trustworthy when each promotion has provenance, not just a mutated proposal file
+- that provenance should say whether the source proposal came from direct build verification failure or triangulated task-failure evidence
 
 Suggested fields:
 - `approval_id`
 - `request_id`
 - `proposal_id`
+- `proposal_origin`
+- `proposal_source_id`
 - `approved_constraint_id`
 - `status`
 - `shelf_path`
@@ -908,11 +1054,14 @@ Purpose:
 
 Why:
 - once the shelf becomes editable, state changes should be traceable instead of silently mutating the active rule set
+- and approval-side mutations should preserve proposal lineage when that lineage exists
 
 Suggested fields:
 - `mutation_id`
 - `constraint_id`
 - `action`
+- `proposal_origin`
+- `proposal_source_id`
 - `shelf_path`
 - `status`
 - `created_at`

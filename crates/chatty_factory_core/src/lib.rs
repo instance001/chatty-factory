@@ -15,9 +15,13 @@ pub mod starters;
 pub use contracts::{
     AcceptanceCheck, AcceptancePlan, AcceptanceRecipeStatus, BuildConstraintReviewReceipt,
     BuildExecutionWorkOrder, BuildFeatureSlice, BuildPlanArtifact, BuildPlanReview, BuildReceipt,
+    AtomizationFloorDecision, ConstraintPromotionCandidate,
+    FailureVaultEntry,
     PlanTask, PlanTaskExecutionLog, PlanTaskExecutionReceipt, PlanTaskList,
     PlanTaskModelAttemptReceipt, PlanTaskVerificationLog, PlanTaskVerificationReceipt,
     TaskDecompositionInferenceReceipt, TaskDecompositionProposal, TaskDecompositionReceipt,
+    TriangulationAttempt, TriangulationSession,
+    RetrySearchProofReceipt,
     CapabilityTransition, ChattyCogBridgeCapabilities, ChattyCogBridgeSpec,
     ChattyCogCommandSpec, ChattyCogModuleSpec, ChattyCogVisualLoadSpec, ChattyEduModuleSpec,
     ClarificationRequest,

@@ -301,6 +301,34 @@ impl ChattyFactoryUiApp {
     }
 
     fn render_proof_request_controls(&mut self, ui: &mut egui::Ui) {
+        let latest_retry_search_proof =
+            load_latest_retry_search_proof_receipt(&self.workspace_root);
+        let estimated_retry_search_outer_timeout_secs = latest_retry_search_proof
+            .as_ref()
+            .map(|(receipt, _)| receipt.expected_outer_timeout_secs)
+            .or_else(|| estimate_retry_search_outer_timeout_secs(
+                &self.runtime_status,
+                self.planner_model.trim(),
+            ));
+        let shell_timeout_buffer_secs = latest_retry_search_proof
+            .as_ref()
+            .and_then(|(receipt, _)| {
+                self.runtime_status
+                    .config
+                    .as_ref()
+                    .map(|config| config.shell_timeout_buffer_secs)
+                    .or_else(|| Some(receipt.cleanup_overhead_secs.max(60)))
+            })
+            .or_else(|| {
+                self.runtime_status
+                    .config
+                    .as_ref()
+                    .map(|config| config.shell_timeout_buffer_secs)
+            });
+        let recommended_shell_timeout_secs = estimated_retry_search_outer_timeout_secs
+            .zip(shell_timeout_buffer_secs)
+            .map(|(secs, buffer)| secs.saturating_add(buffer));
+
         ui.add(
             egui::TextEdit::multiline(&mut self.paired_proof_request_input)
                 .hint_text(
@@ -308,6 +336,96 @@ impl ChattyFactoryUiApp {
                 )
                 .desired_rows(3),
         );
+        ui.add_space(6.0);
+        ui.group(|ui| {
+            ui.label(
+                egui::RichText::new("Proof Runtime Posture")
+                    .strong()
+                    .color(egui::Color32::from_rgb(112, 148, 96)),
+            );
+            if let Some(config) = &self.runtime_status.config {
+                ui.label(format!(
+                    "Current runtime request budgets: launch {}s, planner {}s, model-task {}s",
+                    config.launch_timeout_secs,
+                    config.planner_request_timeout_secs,
+                    config.model_task_request_timeout_secs
+                ));
+            } else {
+                ui.label("No runtime config loaded yet; proof budgets will use the current runtime defaults on disk.");
+            }
+            ui.label(
+                "Shell timeout is not proof failure by itself. Treat the factory receipt as the source of truth for long-running proof work.",
+            );
+            if let Some((receipt, receipt_path)) = latest_retry_search_proof.as_ref() {
+                ui.label(format!(
+                    "Latest retry-search ladder proof: {} [{}]",
+                    receipt
+                        .final_outcome
+                        .as_deref()
+                        .unwrap_or(receipt.status.as_str()),
+                    receipt.status
+                ));
+                ui.label(format!(
+                    "Latest ladder ceiling: {}s across {} model candidate(s) and {} retry posture(s)",
+                    receipt.expected_outer_timeout_secs,
+                    receipt.model_candidate_count,
+                    receipt.retry_posture_count
+                ));
+                ui.label(format!(
+                    "Latest ladder receipt: {}",
+                    short_path(receipt_path.to_string_lossy().as_ref())
+                ));
+                if receipt.internal_timeout_observed {
+                    ui.label(
+                        "Latest ladder proof observed an internal timeout inside the factory runtime."
+                    );
+                } else if receipt.method_space_exhausted {
+                    ui.label(
+                        "Latest ladder proof exhausted the full available candidate ladder."
+                    );
+                } else if receipt.status == "running" {
+                    ui.label(
+                        "Latest ladder proof is still marked running, so an external cutoff should be treated as inconclusive."
+                    );
+                }
+            } else {
+                ui.label(
+                    "No retry-search ladder proof receipt found yet. Once one exists, this panel will show its budget and final outcome here."
+                );
+            }
+            ui.add_space(6.0);
+            if ui
+                .add_enabled(
+                    !self.task_running,
+                    egui::Button::new("Run Retry-Search Ladder Proof"),
+                )
+                .clicked()
+            {
+                self.spawn_task(UiTask::RunRetrySearchLadderProof {
+                    auto_planner: self.auto_planner,
+                    port: self.planner_port.trim().to_string(),
+                    model: self.planner_model.trim().to_string(),
+                });
+            }
+            if let Some(outer_timeout_secs) = estimated_retry_search_outer_timeout_secs {
+                ui.label(format!(
+                    "Factory-owned ladder ceiling: {}s",
+                    outer_timeout_secs
+                ));
+            }
+            if let Some(shell_timeout_secs) = recommended_shell_timeout_secs {
+                ui.label(format!(
+                    "Recommended shell timeout: {}s",
+                    shell_timeout_secs
+                ));
+            }
+            if let Some(buffer_secs) = shell_timeout_buffer_secs {
+                ui.label(format!(
+                    "Shell timeout buffer: {}s",
+                    buffer_secs
+                ));
+            }
+        });
         if ui
             .add_enabled(
                 !self.task_running,
@@ -357,4 +475,29 @@ impl ChattyFactoryUiApp {
             self.save_paired_proof_ui_preferences();
         }
     }
+}
+
+fn estimate_retry_search_outer_timeout_secs(
+    runtime_status: &RuntimeStatusView,
+    requested_model: &str,
+) -> Option<u64> {
+    let config = runtime_status.config.as_ref()?;
+    let retry_posture_count = 2u64;
+    let cleanup_overhead_secs = 15u64;
+    let model_candidate_count = if !requested_model.trim().is_empty() {
+        1u64
+    } else if runtime_status.catalog.is_some() {
+        3u64
+    } else {
+        1u64
+    };
+    let per_attempt_budget = config
+        .launch_timeout_secs
+        .saturating_add(config.model_task_request_timeout_secs)
+        .saturating_add(cleanup_overhead_secs);
+    Some(
+        retry_posture_count
+            .saturating_mul(model_candidate_count)
+            .saturating_mul(per_attempt_budget),
+    )
 }

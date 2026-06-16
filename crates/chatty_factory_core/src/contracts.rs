@@ -447,6 +447,103 @@ pub struct TaskDecompositionInferenceReceipt {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct AtomizationFloorDecision {
+    pub decision_id: String,
+    pub request_id: String,
+    pub task_id: String,
+    pub project_name: String,
+    pub task_shape: Option<String>,
+    pub task_subtype: Option<String>,
+    pub current_granularity: String,
+    pub decision: String,
+    #[serde(default)]
+    pub alternate_methods: Vec<String>,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct FailureVaultEntry {
+    pub vault_entry_id: String,
+    pub request_id: String,
+    pub task_id: String,
+    pub project_name: String,
+    pub task_shape: Option<String>,
+    pub task_subtype: Option<String>,
+    pub task_kind: String,
+    pub failure_class: String,
+    pub trigger_class: Option<String>,
+    pub triangulation_session_id: String,
+    pub atomization_floor_decision_path: Option<String>,
+    pub attempt_method: Option<String>,
+    pub source_attempt_receipt_path: String,
+    pub source_decomposition_receipt_path: Option<String>,
+    pub status: String,
+    pub decomposition_depth: usize,
+    #[serde(default)]
+    pub narrow_usage_pattern: Vec<String>,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TriangulationAttempt {
+    pub attempt_id: String,
+    pub task_id: String,
+    pub task_subtype: Option<String>,
+    pub attempt_method: String,
+    pub outcome: String,
+    pub failure_class: Option<String>,
+    pub source_attempt_receipt_path: Option<String>,
+    pub source_decomposition_receipt_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TriangulationSession {
+    pub session_id: String,
+    pub request_id: String,
+    pub project_name: String,
+    pub task_shape: Option<String>,
+    pub task_subtype: Option<String>,
+    pub task_lineage_key: String,
+    pub status: String,
+    pub convergence_posture: String,
+    pub atomization_floor_decision_path: Option<String>,
+    pub successful_alternate_method: bool,
+    #[serde(default)]
+    pub attempts: Vec<TriangulationAttempt>,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ConstraintPromotionCandidate {
+    pub candidate_id: String,
+    pub request_id: String,
+    pub triangulation_session_id: String,
+    pub project_name: String,
+    pub task_shape: Option<String>,
+    pub task_subtype: Option<String>,
+    pub failure_class: String,
+    pub trigger_class: Option<String>,
+    pub confidence_posture: String,
+    pub status: String,
+    #[serde(default)]
+    pub matched_constraint_principles: Vec<String>,
+    #[serde(default)]
+    pub narrow_usage_pattern: Vec<String>,
+    #[serde(default)]
+    pub evidence_receipt_paths: Vec<String>,
+    #[serde(default)]
+    pub findings: Vec<String>,
+    pub recommended_constraint_summary: String,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PlannerHandoff {
     pub handoff_id: String,
     pub request_id: String,
@@ -1106,6 +1203,10 @@ pub struct ConstraintApprovalReceipt {
     pub approval_id: String,
     pub request_id: String,
     pub proposal_id: String,
+    #[serde(default)]
+    pub proposal_origin: String,
+    #[serde(default)]
+    pub proposal_source_id: String,
     pub approved_constraint_id: String,
     pub status: String,
     pub shelf_path: String,
@@ -1119,6 +1220,10 @@ pub struct ConstraintShelfMutationReceipt {
     pub mutation_id: String,
     pub constraint_id: String,
     pub action: String,
+    #[serde(default)]
+    pub proposal_origin: Option<String>,
+    #[serde(default)]
+    pub proposal_source_id: Option<String>,
     pub shelf_path: String,
     pub status: String,
     pub created_at: Option<String>,
@@ -1183,6 +1288,9 @@ pub struct RuntimeConfig {
     pub context_size: u32,
     pub gpu_layers: i32,
     pub launch_timeout_secs: u64,
+    pub planner_request_timeout_secs: u64,
+    pub model_task_request_timeout_secs: u64,
+    pub shell_timeout_buffer_secs: u64,
     pub created_at: Option<String>,
 }
 
@@ -1246,11 +1354,16 @@ pub struct RuntimeSmokeReceipt {
     pub config_id: String,
     pub model_path: Option<String>,
     pub launch_args: Vec<String>,
+    pub launch_timeout_secs: u64,
     pub version_probe_ok: bool,
     pub server_launch_attempted: bool,
     pub server_started: bool,
     pub http_probe_ok: bool,
     pub process_killed: bool,
+    pub timeout_cause: Option<String>,
+    pub final_outcome: Option<String>,
+    pub launch_elapsed_ms: Option<u64>,
+    pub total_elapsed_ms: Option<u64>,
     pub stdout_log_path: Option<String>,
     pub stderr_log_path: Option<String>,
     pub notes: Vec<String>,
@@ -1264,11 +1377,18 @@ pub struct PlannerExecutionReceipt {
     pub source_handoff_id: String,
     pub model_path: String,
     pub launch_args: Vec<String>,
+    pub launch_timeout_secs: u64,
+    pub request_timeout_secs: u64,
     pub response_path: Option<String>,
     pub raw_response_path: Option<String>,
     pub server_started: bool,
     pub http_request_ok: bool,
     pub process_killed: bool,
+    pub timeout_cause: Option<String>,
+    pub final_outcome: Option<String>,
+    pub launch_elapsed_ms: Option<u64>,
+    pub request_elapsed_ms: Option<u64>,
+    pub total_elapsed_ms: Option<u64>,
     pub parse_mode: Option<String>,
     pub finish_reason: Option<String>,
     pub degraded_recovery_used: bool,
@@ -1284,10 +1404,17 @@ pub struct ModelTaskGenerationReceipt {
     pub task_id: String,
     pub model_path: String,
     pub launch_args: Vec<String>,
+    pub launch_timeout_secs: u64,
+    pub request_timeout_secs: u64,
     pub raw_response_path: Option<String>,
     pub server_started: bool,
     pub http_request_ok: bool,
     pub process_killed: bool,
+    pub timeout_cause: Option<String>,
+    pub final_outcome: Option<String>,
+    pub launch_elapsed_ms: Option<u64>,
+    pub request_elapsed_ms: Option<u64>,
+    pub total_elapsed_ms: Option<u64>,
     pub finish_reason: Option<String>,
     pub response_content_mode: Option<String>,
     pub content_present: bool,
@@ -1609,6 +1736,44 @@ pub struct PrimitiveProofHarnessReceipt {
     pub right_primitive_execution_plan_path: Option<String>,
     pub comparison_receipt_path: String,
     pub equivalent_capability_fulfillment: bool,
+    #[serde(default)]
+    pub notes: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RetrySearchProofReceipt {
+    pub receipt_id: String,
+    pub proof_kind: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub final_outcome: Option<String>,
+    pub requested_model_selector: Option<String>,
+    #[serde(default)]
+    pub model_candidate_count: usize,
+    #[serde(default)]
+    pub retry_posture_count: usize,
+    #[serde(default)]
+    pub launch_timeout_secs: u64,
+    #[serde(default)]
+    pub request_timeout_secs: u64,
+    #[serde(default)]
+    pub cleanup_overhead_secs: u64,
+    #[serde(default)]
+    pub expected_outer_timeout_secs: u64,
+    #[serde(default)]
+    pub attempted_models: Vec<String>,
+    #[serde(default)]
+    pub attempted_methods: Vec<String>,
+    #[serde(default)]
+    pub generation_receipt_paths: Vec<String>,
+    pub successful_model_path: Option<String>,
+    pub successful_method: Option<String>,
+    pub forced_initial_rejection: bool,
+    pub method_space_exhausted: bool,
+    #[serde(default)]
+    pub internal_timeout_observed: bool,
     #[serde(default)]
     pub notes: Vec<String>,
     pub created_at: Option<String>,

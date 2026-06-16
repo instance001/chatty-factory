@@ -80,6 +80,11 @@ enum UiTask {
         port: String,
         model: String,
     },
+    RunRetrySearchLadderProof {
+        auto_planner: bool,
+        port: String,
+        model: String,
+    },
     BuildRequest {
         request: String,
         starter_override_id: Option<String>,
@@ -237,6 +242,68 @@ struct StarterUsageSummaryView {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+struct TriangulationLoopSummaryView {
+    summary_id: String,
+    open_provisional_vault_entries: usize,
+    triangulation_session_count: usize,
+    floor_level_convergent_failures: usize,
+    pending_promotion_candidates: usize,
+    current_model_only_exhaustion_count: usize,
+    full_model_ladder_exhaustion_count: usize,
+    latest_floor_task_label: Option<String>,
+    latest_floor_granularity: Option<String>,
+    latest_floor_decision: Option<String>,
+    latest_session_label: Option<String>,
+    latest_session_convergence_posture: Option<String>,
+    latest_candidate_label: Option<String>,
+    latest_candidate_confidence_posture: Option<String>,
+    latest_candidate_proposal_path: Option<String>,
+    #[serde(default)]
+    latest_model_ladder_task_label: Option<String>,
+    #[serde(default)]
+    latest_model_ladder_posture: Option<String>,
+    #[serde(default)]
+    latest_model_ladder_attempted_models: Vec<String>,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RetrySearchProofReceiptView {
+    receipt_id: String,
+    proof_kind: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    final_outcome: Option<String>,
+    requested_model_selector: Option<String>,
+    #[serde(default)]
+    model_candidate_count: usize,
+    #[serde(default)]
+    retry_posture_count: usize,
+    #[serde(default)]
+    launch_timeout_secs: u64,
+    #[serde(default)]
+    request_timeout_secs: u64,
+    #[serde(default)]
+    cleanup_overhead_secs: u64,
+    #[serde(default)]
+    expected_outer_timeout_secs: u64,
+    #[serde(default)]
+    attempted_models: Vec<String>,
+    #[serde(default)]
+    attempted_methods: Vec<String>,
+    successful_model_path: Option<String>,
+    successful_method: Option<String>,
+    #[serde(default)]
+    method_space_exhausted: bool,
+    #[serde(default)]
+    internal_timeout_observed: bool,
+    #[serde(default)]
+    notes: Vec<String>,
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 struct BuildReceiptView {
     starter_override_id: Option<String>,
     starter_override_summary: Option<String>,
@@ -352,6 +419,10 @@ struct BuildVerificationReceiptView {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 struct ProposedConstraintReceiptView {
+    #[serde(default)]
+    proposal_id: Option<String>,
+    #[serde(default)]
+    source_verification_id: Option<String>,
     status: String,
     rationale: Vec<String>,
     proposed_constraint: ProposedConstraintView,
@@ -393,11 +464,110 @@ struct ConstraintShelfHistoryView {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+struct ConstraintApprovalReceiptView {
+    approved_constraint_id: String,
+    #[serde(default)]
+    proposal_origin: String,
+    #[serde(default)]
+    proposal_source_id: String,
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 struct ConstraintShelfMutationReceiptView {
     mutation_id: String,
     constraint_id: String,
     action: String,
+    #[serde(default)]
+    proposal_origin: Option<String>,
+    #[serde(default)]
+    proposal_source_id: Option<String>,
     status: String,
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct AtomizationFloorDecisionView {
+    task_id: String,
+    task_shape: Option<String>,
+    task_subtype: Option<String>,
+    current_granularity: String,
+    decision: String,
+    #[serde(default)]
+    alternate_methods: Vec<String>,
+    #[serde(default)]
+    findings: Vec<String>,
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct FailureVaultEntryView {
+    task_id: String,
+    task_shape: Option<String>,
+    task_subtype: Option<String>,
+    task_kind: String,
+    failure_class: String,
+    trigger_class: Option<String>,
+    triangulation_session_id: String,
+    atomization_floor_decision_path: Option<String>,
+    source_attempt_receipt_path: String,
+    source_decomposition_receipt_path: Option<String>,
+    status: String,
+    decomposition_depth: usize,
+    #[serde(default)]
+    findings: Vec<String>,
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct TriangulationAttemptView {
+    attempt_id: String,
+    task_id: String,
+    task_subtype: Option<String>,
+    attempt_method: String,
+    outcome: String,
+    failure_class: Option<String>,
+    source_attempt_receipt_path: Option<String>,
+    source_decomposition_receipt_path: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct TriangulationSessionView {
+    session_id: String,
+    task_shape: Option<String>,
+    task_subtype: Option<String>,
+    task_lineage_key: String,
+    status: String,
+    convergence_posture: String,
+    atomization_floor_decision_path: Option<String>,
+    successful_alternate_method: bool,
+    #[serde(default)]
+    attempts: Vec<TriangulationAttemptView>,
+    #[serde(default)]
+    findings: Vec<String>,
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ConstraintPromotionCandidateView {
+    candidate_id: String,
+    triangulation_session_id: String,
+    project_name: String,
+    task_shape: Option<String>,
+    task_subtype: Option<String>,
+    failure_class: String,
+    trigger_class: Option<String>,
+    confidence_posture: String,
+    status: String,
+    #[serde(default)]
+    matched_constraint_principles: Vec<String>,
+    #[serde(default)]
+    narrow_usage_pattern: Vec<String>,
+    #[serde(default)]
+    evidence_receipt_paths: Vec<String>,
+    #[serde(default)]
+    findings: Vec<String>,
+    recommended_constraint_summary: String,
     created_at: Option<String>,
 }
 
@@ -939,8 +1109,10 @@ struct ChattyFactoryUiApp {
     negative_shelf_show_unmatched_only: bool,
     negative_shelf_show_inactive_unmatched_only: bool,
     negative_shelf_show_low_value_active_only: bool,
+    negative_shelf_show_triangulated_origin_only: bool,
     negative_shelf_history_show_never_matched_only: bool,
     negative_shelf_history_show_historically_useful_only: bool,
+    negative_shelf_history_show_triangulated_origin_only: bool,
     auto_refresh_stale_proof_governance: bool,
     last_auto_proof_governance_refresh_unix_secs: Option<i64>,
     auto_refresh_stale_composition_governance: bool,
@@ -1058,6 +1230,7 @@ impl ChattyFactoryUiApp {
                 .as_ref()
                 .map(|prefs| prefs.negative_shelf_show_low_value_active_only)
                 .unwrap_or(false),
+            negative_shelf_show_triangulated_origin_only: false,
             negative_shelf_history_show_never_matched_only: paired_proof_ui_preferences
                 .as_ref()
                 .map(|prefs| prefs.negative_shelf_history_show_never_matched_only)
@@ -1066,6 +1239,7 @@ impl ChattyFactoryUiApp {
                 .as_ref()
                 .map(|prefs| prefs.negative_shelf_history_show_historically_useful_only)
                 .unwrap_or(false),
+            negative_shelf_history_show_triangulated_origin_only: false,
             auto_refresh_stale_proof_governance: paired_proof_ui_preferences
                 .as_ref()
                 .map(|prefs| prefs.auto_refresh_stale_proof_governance)
@@ -1988,6 +2162,9 @@ impl ChattyFactoryUiApp {
             }
             UiTask::RunProofTemplate { template_id, .. } => {
                 format!("Running proof template {template_id}")
+            }
+            UiTask::RunRetrySearchLadderProof { .. } => {
+                "Running retry-search ladder proof".to_string()
             }
             UiTask::BuildRequest { .. } => "Running build request".to_string(),
             UiTask::PatchRequest { .. } => "Running patch request".to_string(),
@@ -4862,11 +5039,54 @@ impl App for ChattyFactoryUiApp {
                     ));
                 }
                 let recent_mutations = load_recent_constraint_shelf_mutations(&self.workspace_root);
+                let approval_origins =
+                    load_latest_constraint_approval_origins(&self.workspace_root);
+                let recent_failure_vault_entries =
+                    load_recent_failure_vault_entries(&self.workspace_root);
+                let recent_triangulation_sessions =
+                    load_recent_triangulation_sessions(&self.workspace_root);
+                let recent_promotion_candidates =
+                    load_recent_constraint_promotion_candidates(&self.workspace_root);
+                let recent_floor_decisions =
+                    load_recent_atomization_floor_decisions(&self.workspace_root);
                 let total_match_events: usize = match_counts.values().sum();
+                let triangulated_origin_count = shelf
+                    .constraints
+                    .iter()
+                    .filter(|constraint| {
+                        approval_origins
+                            .get(&constraint.constraint_id)
+                            .map(|receipt| receipt.proposal_origin == "triangulated_task_failure")
+                            .unwrap_or(false)
+                    })
+                    .count();
+                let build_verification_origin_count = shelf
+                    .constraints
+                    .iter()
+                    .filter(|constraint| {
+                        approval_origins
+                            .get(&constraint.constraint_id)
+                            .map(|receipt| receipt.proposal_origin == "build_verification_failure")
+                            .unwrap_or(false)
+                    })
+                    .count();
                 ui.label(format!(
                     "Recent match events: {} across {} approved rule(s)",
                     total_match_events,
                     match_counts.len()
+                ));
+                ui.label(format!(
+                    "Approved rule origins: {} triangulated, {} build verification",
+                    triangulated_origin_count, build_verification_origin_count
+                ));
+                ui.label(format!(
+                    "Provisional vault evidence: {} entries across {} triangulation session(s)",
+                    recent_failure_vault_entries.len(),
+                    recent_triangulation_sessions.len()
+                ));
+                ui.label(format!(
+                    "Promotion candidates waiting for review: {}",
+                    recent_promotion_candidates.len()
                 ));
                 if !recent_mutations.is_empty() {
                     let mutation_counts = summarize_constraint_shelf_mutation_actions(&recent_mutations);
@@ -4956,6 +5176,10 @@ impl App for ChattyFactoryUiApp {
                 {
                     self.save_paired_proof_ui_preferences();
                 }
+                ui.checkbox(
+                    &mut self.negative_shelf_show_triangulated_origin_only,
+                    "Show triangulated-origin approved only",
+                );
                 let mut sorted_constraints = shelf.constraints.clone();
                 sorted_constraints.sort_by(|left, right| {
                     let right_matches = match_counts
@@ -4985,11 +5209,27 @@ impl App for ChattyFactoryUiApp {
                         let low_value_active_ok =
                             !self.negative_shelf_show_low_value_active_only
                                 || (constraint.active && match_count == 0);
-                        unmatched_ok && inactive_unmatched_ok && low_value_active_ok
+                        let triangulated_origin_ok =
+                            !self.negative_shelf_show_triangulated_origin_only
+                                || approval_origins
+                                    .get(&constraint.constraint_id)
+                                    .map(|receipt| {
+                                        receipt.proposal_origin
+                                            == "triangulated_task_failure"
+                                    })
+                                    .unwrap_or(false);
+                        unmatched_ok
+                            && inactive_unmatched_ok
+                            && low_value_active_ok
+                            && triangulated_origin_ok
                     })
                     .collect::<Vec<_>>();
                 if filtered_constraints.is_empty() {
-                    if self.negative_shelf_show_low_value_active_only {
+                    if self.negative_shelf_show_triangulated_origin_only {
+                        ui.label(
+                            "No approved constraints are currently visible from triangulated origin under this shelf filter.",
+                        );
+                    } else if self.negative_shelf_show_low_value_active_only {
                         ui.label(
                             "No approved constraints are currently both active and unmatched.",
                         );
@@ -5082,6 +5322,17 @@ impl App for ChattyFactoryUiApp {
                     if let Some(tool_kind) = &constraint.tool_kind {
                         ui.label(format!("Tool: {tool_kind}"));
                     }
+                    if let Some(approval) = approval_origins.get(&constraint.constraint_id) {
+                        let origin = if approval.proposal_origin.is_empty() {
+                            "unknown-origin"
+                        } else {
+                            approval.proposal_origin.as_str()
+                        };
+                        ui.label(format!("Origin: {origin}"));
+                        if !approval.proposal_source_id.is_empty() {
+                            ui.label(format!("Origin source id: {}", approval.proposal_source_id));
+                        }
+                    }
                     if let Some(guidance) = constraint.replacement_guidance.as_deref() {
                         ui.label(format!("Guidance: {guidance}"));
                     }
@@ -5132,9 +5383,332 @@ impl App for ChattyFactoryUiApp {
                             "{} [{}]",
                             mutation.constraint_id, mutation.action
                         ));
+                        if let Some(origin) = mutation.proposal_origin.as_deref() {
+                            ui.label(format!("Origin: {origin}"));
+                        }
+                        if let Some(source_id) = mutation.proposal_source_id.as_deref() {
+                            ui.label(format!("Source id: {source_id}"));
+                        }
                         ui.label(format!("Status: {}", mutation.status));
                         if let Some(created_at) = mutation.created_at.as_deref() {
                             ui.label(format!("When: {created_at}"));
+                        }
+                    }
+                }
+                if !recent_failure_vault_entries.is_empty() {
+                    ui.separator();
+                    ui.label("Provisional Failure Vault");
+                    if let Some((_, decision)) = recent_floor_decisions.first() {
+                        ui.label(format!(
+                            "Latest floor decision: {} [{} | {}]",
+                            decision.task_id,
+                            decision.current_granularity,
+                            decision.decision
+                        ));
+                        if let Some(shape) = decision.task_shape.as_deref() {
+                            ui.label(format!("Shape: {shape}"));
+                        }
+                        if let Some(subtype) = decision.task_subtype.as_deref() {
+                            ui.label(format!("Subtype: {subtype}"));
+                        }
+                        if !decision.alternate_methods.is_empty() {
+                            ui.label(format!(
+                                "Alternates: {}",
+                                decision.alternate_methods.join(" | ")
+                            ));
+                        }
+                        for finding in decision.findings.iter().take(1) {
+                            ui.label(format!("- floor: {finding}"));
+                        }
+                    }
+                    for (path, entry) in recent_failure_vault_entries.iter().take(4) {
+                        ui.separator();
+                        ui.label(format!(
+                            "{} [{} | {}]",
+                            entry.task_subtype.as_deref().unwrap_or(&entry.task_id),
+                            entry.task_shape.as_deref().unwrap_or("unknown-shape"),
+                            entry.failure_class
+                        ));
+                        ui.label(format!(
+                            "Vault status: {} | depth {} | task kind {}",
+                            entry.status, entry.decomposition_depth, entry.task_kind
+                        ));
+                        ui.label(format!(
+                            "Triangulation session: {}",
+                            entry.triangulation_session_id
+                        ));
+                        if let Some(trigger) = entry.trigger_class.as_deref() {
+                            ui.label(format!("Trigger: {trigger}"));
+                        }
+                        for finding in entry.findings.iter().take(1) {
+                            ui.label(format!("- finding: {finding}"));
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.small_button("Reveal Vault Entry").clicked() {
+                                self.reveal_governed_artifact(
+                                    path,
+                                    "Revealed failure vault entry",
+                                    "Open failed",
+                                    "Revealed failure vault entry",
+                                    "Open failed",
+                                    None,
+                                );
+                            }
+                            if let Some(floor_path) = entry.atomization_floor_decision_path.as_deref()
+                            {
+                                if ui.small_button("Reveal Floor Decision").clicked() {
+                                    self.reveal_governed_artifact(
+                                        floor_path,
+                                        "Revealed atomization floor decision",
+                                        "Open failed",
+                                        "Revealed atomization floor decision",
+                                        "Open failed",
+                                        None,
+                                    );
+                                }
+                            }
+                            if ui.small_button("Reveal Task Attempt").clicked() {
+                                self.reveal_governed_artifact(
+                                    &entry.source_attempt_receipt_path,
+                                    "Revealed task attempt receipt",
+                                    "Open failed",
+                                    "Revealed task attempt receipt",
+                                    "Open failed",
+                                    None,
+                                );
+                            }
+                            if let Some(decomposition_path) =
+                                entry.source_decomposition_receipt_path.as_deref()
+                            {
+                                if ui.small_button("Reveal Decomposition").clicked() {
+                                    self.reveal_governed_artifact(
+                                        decomposition_path,
+                                        "Revealed decomposition receipt",
+                                        "Open failed",
+                                        "Revealed decomposition receipt",
+                                        "Open failed",
+                                        None,
+                                    );
+                                }
+                            }
+                        });
+                    }
+                }
+                if !recent_triangulation_sessions.is_empty() {
+                    ui.separator();
+                    ui.label("Recent Triangulation Sessions");
+                    for (path, session) in recent_triangulation_sessions.iter().take(4) {
+                        ui.separator();
+                        ui.label(format!(
+                            "{} [{}]",
+                            session
+                                .task_subtype
+                                .as_deref()
+                                .unwrap_or(&session.task_lineage_key),
+                            session.convergence_posture
+                        ));
+                        ui.label(format!(
+                            "Session status: {} | success closed: {}",
+                            session.status, session.successful_alternate_method
+                        ));
+                        if let Some(shape) = session.task_shape.as_deref() {
+                            ui.label(format!("Shape: {shape}"));
+                        }
+                        ui.label(format!("Attempts tracked: {}", session.attempts.len()));
+                        for attempt in session.attempts.iter().take(1) {
+                            ui.label(format!(
+                                "- latest: {} via {} [{}]",
+                                attempt.task_id, attempt.attempt_method, attempt.outcome
+                            ));
+                            if let Some(subtype) = attempt.task_subtype.as_deref() {
+                                ui.label(format!("  subtype: {subtype}"));
+                            }
+                            if let Some(failure_class) = attempt.failure_class.as_deref() {
+                                ui.label(format!("  failure class: {failure_class}"));
+                            }
+                        }
+                        for finding in session.findings.iter().take(1) {
+                            ui.label(format!("- session: {finding}"));
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.small_button("Reveal Session").clicked() {
+                                self.reveal_governed_artifact(
+                                    path,
+                                    "Revealed triangulation session",
+                                    "Open failed",
+                                    "Revealed triangulation session",
+                                    "Open failed",
+                                    None,
+                                );
+                            }
+                            if let Some(floor_path) =
+                                session.atomization_floor_decision_path.as_deref()
+                            {
+                                if ui.small_button("Reveal Session Floor").clicked() {
+                                    self.reveal_governed_artifact(
+                                        floor_path,
+                                        "Revealed session floor decision",
+                                        "Open failed",
+                                        "Revealed session floor decision",
+                                        "Open failed",
+                                        None,
+                                    );
+                                }
+                            }
+                            if let Some(attempt) = session.attempts.first() {
+                                if let Some(attempt_path) =
+                                    attempt.source_attempt_receipt_path.as_deref()
+                                {
+                                    if ui.small_button("Reveal Attempt").clicked() {
+                                        self.reveal_governed_artifact(
+                                            attempt_path,
+                                            "Revealed triangulation attempt",
+                                            "Open failed",
+                                            "Revealed triangulation attempt",
+                                            "Open failed",
+                                            None,
+                                        );
+                                    }
+                                }
+                                if let Some(decomposition_path) =
+                                    attempt.source_decomposition_receipt_path.as_deref()
+                                {
+                                    if ui.small_button("Reveal Attempt Decomposition").clicked() {
+                                        self.reveal_governed_artifact(
+                                            decomposition_path,
+                                            "Revealed attempt decomposition",
+                                            "Open failed",
+                                            "Revealed attempt decomposition",
+                                            "Open failed",
+                                            None,
+                                        );
+                                    }
+                                }
+                                ui.label(format!("Attempt id: {}", attempt.attempt_id));
+                            }
+                        });
+                    }
+                }
+                if !recent_promotion_candidates.is_empty() {
+                    ui.separator();
+                    ui.label("Constraint Promotion Candidates");
+                    for (path, candidate) in recent_promotion_candidates.iter().take(4) {
+                        ui.separator();
+                        ui.label(format!(
+                            "{} [{} | {}]",
+                            candidate
+                                .task_subtype
+                                .as_deref()
+                                .unwrap_or(&candidate.candidate_id),
+                            candidate
+                                .task_shape
+                                .as_deref()
+                                .unwrap_or("unknown-shape"),
+                            candidate.failure_class
+                        ));
+                        ui.label(format!(
+                            "Confidence: {} | Status: {}",
+                            candidate.confidence_posture, candidate.status
+                        ));
+                        ui.label(format!("Project: {}", candidate.project_name));
+                        ui.label(format!(
+                            "Summary: {}",
+                            candidate.recommended_constraint_summary
+                        ));
+                        if let Some(trigger) = candidate.trigger_class.as_deref() {
+                            ui.label(format!("Trigger: {trigger}"));
+                        }
+                        if !candidate.narrow_usage_pattern.is_empty() {
+                            ui.label(format!(
+                                "Usage pattern: {}",
+                                candidate.narrow_usage_pattern.join(" | ")
+                            ));
+                        }
+                        if !candidate.matched_constraint_principles.is_empty() {
+                            ui.label(format!(
+                                "Principles: {}",
+                                candidate.matched_constraint_principles.join(" | ")
+                            ));
+                        }
+                        for finding in candidate.findings.iter().take(1) {
+                            ui.label(format!("- candidate: {finding}"));
+                        }
+                        if let Some((proposal_path, proposal)) =
+                            find_proposed_constraint_for_triangulation_session(
+                                &self.workspace_root,
+                                &candidate.triangulation_session_id,
+                            )
+                        {
+                            ui.label(format!(
+                                "Derived proposal: {} [{}]",
+                                proposal
+                                    .proposed_constraint
+                                    .constraint_scope,
+                                proposal.status
+                            ));
+                            ui.label(format!(
+                                "Proposal origin: {}",
+                                proposal_origin_label(&proposal)
+                            ));
+                            if let Some(proposal_id) = proposal.proposal_id.as_deref() {
+                                ui.label(format!("Proposal id: {proposal_id}"));
+                            }
+                            ui.horizontal(|ui| {
+                                if ui.small_button("Reveal Promotion Candidate").clicked() {
+                                    self.reveal_governed_artifact(
+                                        path,
+                                        "Revealed promotion candidate",
+                                        "Open failed",
+                                        "Revealed promotion candidate",
+                                        "Open failed",
+                                        None,
+                                    );
+                                }
+                                if ui.small_button("Reveal Derived Proposal").clicked() {
+                                    self.reveal_governed_artifact(
+                                        &proposal_path,
+                                        "Revealed proposed constraint receipt",
+                                        "Open failed",
+                                        "Revealed proposed constraint receipt",
+                                        "Open failed",
+                                        None,
+                                    );
+                                }
+                                if let Some(evidence_path) =
+                                    candidate.evidence_receipt_paths.first()
+                                {
+                                    if ui.small_button("Reveal Evidence").clicked() {
+                                        self.reveal_governed_artifact(
+                                            evidence_path,
+                                            "Revealed promotion evidence",
+                                            "Open failed",
+                                            "Revealed promotion evidence",
+                                            "Open failed",
+                                            None,
+                                        );
+                                    }
+                                }
+                                if proposal.status != "approved"
+                                    && ui.small_button("Approve Candidate").clicked()
+                                {
+                                    self.spawn_task(UiTask::ApproveProposedConstraint {
+                                        request_id_or_path: proposal_path,
+                                    });
+                                }
+                            });
+                        } else {
+                            ui.horizontal(|ui| {
+                                if ui.small_button("Reveal Promotion Candidate").clicked() {
+                                    self.reveal_governed_artifact(
+                                        path,
+                                        "Revealed promotion candidate",
+                                        "Open failed",
+                                        "Revealed promotion candidate",
+                                        "Open failed",
+                                        None,
+                                    );
+                                }
+                            });
                         }
                     }
                 }
@@ -5150,6 +5724,32 @@ impl App for ChattyFactoryUiApp {
                             .iter()
                             .filter(|entry| entry.archived_match_count > 0)
                             .count();
+                        let triangulated_archived_count = history
+                            .archived_constraints
+                            .iter()
+                            .filter(|entry| {
+                                approval_origins
+                                    .get(&entry.constraint.constraint_id)
+                                    .map(|receipt| {
+                                        receipt.proposal_origin
+                                            == "triangulated_task_failure"
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .count();
+                        let build_verification_archived_count = history
+                            .archived_constraints
+                            .iter()
+                            .filter(|entry| {
+                                approval_origins
+                                    .get(&entry.constraint.constraint_id)
+                                    .map(|receipt| {
+                                        receipt.proposal_origin
+                                            == "build_verification_failure"
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .count();
                         ui.separator();
                         ui.label(format!("Shelf History [{}]", history.history_id));
                         if let Some(updated_at) = history.updated_at.as_deref() {
@@ -5158,6 +5758,10 @@ impl App for ChattyFactoryUiApp {
                         ui.label(format!(
                             "Archived rules: {} never matched, {} historically useful",
                             never_matched_archived_count, historically_useful_archived_count
+                        ));
+                        ui.label(format!(
+                            "Archived rule origins: {} triangulated, {} build verification",
+                            triangulated_archived_count, build_verification_archived_count
                         ));
                         if ui
                             .checkbox(
@@ -5177,6 +5781,10 @@ impl App for ChattyFactoryUiApp {
                         {
                             self.save_paired_proof_ui_preferences();
                         }
+                        ui.checkbox(
+                            &mut self.negative_shelf_history_show_triangulated_origin_only,
+                            "Show triangulated-origin archived only",
+                        );
                         let mut sorted_history = history
                             .archived_constraints
                             .iter()
@@ -5188,7 +5796,19 @@ impl App for ChattyFactoryUiApp {
                                     !self
                                         .negative_shelf_history_show_historically_useful_only
                                         || entry.archived_match_count > 0;
-                                never_matched_ok && historically_useful_ok
+                                let triangulated_origin_ok =
+                                    !self
+                                        .negative_shelf_history_show_triangulated_origin_only
+                                        || approval_origins
+                                            .get(&entry.constraint.constraint_id)
+                                            .map(|receipt| {
+                                                receipt.proposal_origin
+                                                    == "triangulated_task_failure"
+                                            })
+                                            .unwrap_or(false);
+                                never_matched_ok
+                                    && historically_useful_ok
+                                    && triangulated_origin_ok
                             })
                             .collect::<Vec<_>>();
                         sorted_history.sort_by(|left, right| {
@@ -5224,9 +5844,15 @@ impl App for ChattyFactoryUiApp {
                             }
                         });
                         if sorted_history.is_empty() {
-                            ui.label(
-                                "No archived constraints match the current shelf-history filter.",
-                            );
+                            if self.negative_shelf_history_show_triangulated_origin_only {
+                                ui.label(
+                                    "No archived constraints of triangulated origin match the current shelf-history filter.",
+                                );
+                            } else {
+                                ui.label(
+                                    "No archived constraints match the current shelf-history filter.",
+                                );
+                            }
                         } else {
                             if self.negative_shelf_history_show_historically_useful_only
                                 && !self.negative_shelf_history_show_never_matched_only
@@ -5256,6 +5882,22 @@ impl App for ChattyFactoryUiApp {
                             }
                             if let Some(archived_at) = entry.archived_at.as_deref() {
                                 ui.label(format!("Archived at: {archived_at}"));
+                            }
+                            if let Some(approval) =
+                                approval_origins.get(&entry.constraint.constraint_id)
+                            {
+                                let origin = if approval.proposal_origin.is_empty() {
+                                    "unknown-origin"
+                                } else {
+                                    approval.proposal_origin.as_str()
+                                };
+                                ui.label(format!("Origin: {origin}"));
+                                if !approval.proposal_source_id.is_empty() {
+                                    ui.label(format!(
+                                        "Origin source id: {}",
+                                        approval.proposal_source_id
+                                    ));
+                                }
                             }
                             if let Some(shelf_id) = entry.archived_from_shelf_id.as_deref() {
                                 ui.label(format!("Archived from shelf: {shelf_id}"));
@@ -5386,6 +6028,13 @@ fn run_ui_task(workspace_root: &Path, task: UiTask) -> anyhow::Result<UiTaskResu
             } else {
                 Some(request.as_str())
             },
+            &planner_options(auto_planner, &port, &model),
+        )?),
+        UiTask::RunRetrySearchLadderProof {
+            auto_planner,
+            port,
+            model,
+        } => map_host_action_result(bridge.run_retry_search_model_escalation_proof(
             &planner_options(auto_planner, &port, &model),
         )?),
         UiTask::BuildRequest {
@@ -5587,6 +6236,16 @@ fn load_proposed_constraint_receipt(path: &str) -> Option<ProposedConstraintRece
     serde_json::from_str(&contents).ok()
 }
 
+fn proposal_origin_label(
+    proposal: &ProposedConstraintReceiptView,
+) -> &'static str {
+    match proposal.source_verification_id.as_deref() {
+        Some(source) if source.starts_with("triangulation-") => "triangulated",
+        Some(_) => "build-verification",
+        None => "unknown-origin",
+    }
+}
+
 fn load_approved_constraint_shelf(
     workspace_root: &Path,
 ) -> Option<ApprovedConstraintShelfView> {
@@ -5605,6 +6264,37 @@ fn load_constraint_shelf_history(
         .join("constraint_shelf_history.json");
     let contents = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&contents).ok()
+}
+
+fn load_latest_constraint_approval_origins(
+    workspace_root: &Path,
+) -> BTreeMap<String, ConstraintApprovalReceiptView> {
+    let path = workspace_root.join("runtime").join("constraint_approvals");
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return BTreeMap::new();
+    };
+    let mut latest = BTreeMap::new();
+    for entry in entries.flatten() {
+        let contents = match std::fs::read_to_string(entry.path()) {
+            Ok(contents) => contents,
+            Err(_) => continue,
+        };
+        let receipt = match serde_json::from_str::<ConstraintApprovalReceiptView>(&contents) {
+            Ok(receipt) => receipt,
+            Err(_) => continue,
+        };
+        let replace = latest
+            .get(&receipt.approved_constraint_id)
+            .map(|existing: &ConstraintApprovalReceiptView| {
+                receipt.created_at.as_deref().unwrap_or("")
+                    > existing.created_at.as_deref().unwrap_or("")
+            })
+            .unwrap_or(true);
+        if replace {
+            latest.insert(receipt.approved_constraint_id.clone(), receipt);
+        }
+    }
+    latest
 }
 
 fn load_recent_constraint_shelf_mutations(
@@ -5630,6 +6320,154 @@ fn load_recent_constraint_shelf_mutations(
             .then_with(|| left.mutation_id.cmp(&right.mutation_id))
     });
     receipts
+}
+
+fn load_recent_failure_vault_entries(
+    workspace_root: &Path,
+) -> Vec<(String, FailureVaultEntryView)> {
+    let path = workspace_root.join("runtime").join("failure_vault");
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return Vec::new();
+    };
+    let mut receipts = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let path_text = path.display().to_string();
+            let contents = std::fs::read_to_string(&path).ok()?;
+            let receipt = serde_json::from_str::<FailureVaultEntryView>(&contents).ok()?;
+            Some((path_text, receipt))
+        })
+        .collect::<Vec<_>>();
+    receipts.sort_by(|left, right| {
+        right
+            .1
+            .created_at
+            .as_deref()
+            .unwrap_or("")
+            .cmp(left.1.created_at.as_deref().unwrap_or(""))
+            .then_with(|| left.1.task_id.cmp(&right.1.task_id))
+    });
+    receipts
+}
+
+fn load_recent_triangulation_sessions(
+    workspace_root: &Path,
+) -> Vec<(String, TriangulationSessionView)> {
+    let path = workspace_root.join("runtime").join("triangulation_sessions");
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return Vec::new();
+    };
+    let mut receipts = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let path_text = path.display().to_string();
+            let contents = std::fs::read_to_string(&path).ok()?;
+            let receipt = serde_json::from_str::<TriangulationSessionView>(&contents).ok()?;
+            Some((path_text, receipt))
+        })
+        .collect::<Vec<_>>();
+    receipts.sort_by(|left, right| {
+        right
+            .1
+            .created_at
+            .as_deref()
+            .unwrap_or("")
+            .cmp(left.1.created_at.as_deref().unwrap_or(""))
+            .then_with(|| left.1.session_id.cmp(&right.1.session_id))
+    });
+    receipts
+}
+
+fn load_recent_constraint_promotion_candidates(
+    workspace_root: &Path,
+) -> Vec<(String, ConstraintPromotionCandidateView)> {
+    let path = workspace_root
+        .join("runtime")
+        .join("constraint_promotion_candidates");
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return Vec::new();
+    };
+    let mut receipts = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let path_text = path.display().to_string();
+            let contents = std::fs::read_to_string(&path).ok()?;
+            let receipt =
+                serde_json::from_str::<ConstraintPromotionCandidateView>(&contents).ok()?;
+            Some((path_text, receipt))
+        })
+        .collect::<Vec<_>>();
+    receipts.sort_by(|left, right| {
+        right
+            .1
+            .created_at
+            .as_deref()
+            .unwrap_or("")
+            .cmp(left.1.created_at.as_deref().unwrap_or(""))
+            .then_with(|| left.1.candidate_id.cmp(&right.1.candidate_id))
+    });
+    receipts
+}
+
+fn load_recent_atomization_floor_decisions(
+    workspace_root: &Path,
+) -> Vec<(String, AtomizationFloorDecisionView)> {
+    let path = workspace_root
+        .join("runtime")
+        .join("atomization_floor_decisions");
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return Vec::new();
+    };
+    let mut receipts = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let path_text = path.display().to_string();
+            let contents = std::fs::read_to_string(&path).ok()?;
+            let receipt = serde_json::from_str::<AtomizationFloorDecisionView>(&contents).ok()?;
+            Some((path_text, receipt))
+        })
+        .collect::<Vec<_>>();
+    receipts.sort_by(|left, right| {
+        right
+            .1
+            .created_at
+            .as_deref()
+            .unwrap_or("")
+            .cmp(left.1.created_at.as_deref().unwrap_or(""))
+            .then_with(|| left.1.task_id.cmp(&right.1.task_id))
+    });
+    receipts
+}
+
+fn find_proposed_constraint_for_triangulation_session(
+    workspace_root: &Path,
+    triangulation_session_id: &str,
+) -> Option<(String, ProposedConstraintReceiptView)> {
+    let path = workspace_root
+        .join("runtime")
+        .join("proposed_constraint_receipts");
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return None;
+    };
+    entries.flatten().find_map(|entry| {
+        let path = entry.path();
+        let path_text = path.display().to_string();
+        let contents = std::fs::read_to_string(&path).ok()?;
+        let receipt = serde_json::from_str::<ProposedConstraintReceiptView>(&contents).ok()?;
+        if receipt
+            .source_verification_id
+            .as_deref()
+            == Some(triangulation_session_id)
+        {
+            Some((path_text, receipt))
+        } else {
+            None
+        }
+    })
 }
 
 fn summarize_constraint_shelf_mutation_actions(
@@ -5904,6 +6742,16 @@ fn load_starter_usage_summary(workspace_root: &Path) -> Option<StarterUsageSumma
     serde_json::from_str::<StarterUsageSummaryView>(&contents).ok()
 }
 
+fn load_triangulation_loop_summary(
+    workspace_root: &Path,
+) -> Option<TriangulationLoopSummaryView> {
+    let path = workspace_root
+        .join("runtime")
+        .join("triangulation_loop_summary.json");
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<TriangulationLoopSummaryView>(&contents).ok()
+}
+
 fn load_recent_build_receipts(workspace_root: &Path) -> Vec<BuildReceiptView> {
     let receipts_dir = workspace_root.join("runtime").join("build_receipts");
     let Ok(entries) = fs::read_dir(receipts_dir) else {
@@ -6115,6 +6963,29 @@ fn load_cross_family_paired_proof_receipts(
             Some((receipt, path))
         })
         .collect()
+}
+
+fn load_latest_retry_search_proof_receipt(
+    workspace_root: &Path,
+) -> Option<(RetrySearchProofReceiptView, PathBuf)> {
+    let dir = workspace_root.join("runtime").join("retry_search_proofs");
+    let mut paths = fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("json"))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    paths.sort_by(|a, b| b.cmp(a));
+    paths.into_iter().find_map(|path| {
+        let contents = fs::read_to_string(&path).ok()?;
+        let receipt = serde_json::from_str::<RetrySearchProofReceiptView>(&contents).ok()?;
+        Some((receipt, path))
+    })
 }
 
 fn load_capability_comparison_receipt(path: &str) -> Option<CapabilityComparisonReceiptSummary> {

@@ -49,6 +49,7 @@ The active direction is:
 - host-owned freezing, review, and verification
 - adaptive decomposition when a task is still too broad for the current model/runtime pair
 - automatic decomposition inference from task failure evidence so the factory can learn how to shrink work from its own receipts instead of depending on us to hand-teach each next split
+- a future triangulation-first negative architecture where failures enter a provisional vault, retries narrow the true blocker, and only high-confidence converged evidence can promote into the real constraint library
 
 The intended architecture distinction is now explicit:
 
@@ -57,6 +58,8 @@ The intended architecture distinction is now explicit:
 - decomposition grammars are reusable split patterns
 - the factory should infer mappings between task shape, failure class, and grammar
   instead of accumulating bespoke negative rules for each new task class
+- and negative constraints should be promoted from triangulated provisional evidence,
+  not written directly from one-off failures
 
 ## What It Does Well
 
@@ -142,6 +145,7 @@ It is not claiming universal safe surgery across arbitrary unknown codebases.
 - [Atomized Microtask Execution Milestone](./build-docs/plans/ATOMIZED_MICROTASK_EXECUTION_MILESTONE.md)
 - [Adaptive Task Decomposition Milestone](./build-docs/plans/ADAPTIVE_TASK_DECOMPOSITION_MILESTONE.md)
 - [Automatic Decomposition Inference Milestone](./build-docs/plans/AUTOMATIC_DECOMPOSITION_INFERENCE_MILESTONE.md)
+- [Triangulation And Atomization Floor Plan](./build-docs/plans/TRIANGULATION_AND_ATOMIZATION_FLOOR_PLAN.md)
 - [Over The Line Execution Plan](./build-docs/plans/OVER_THE_LINE_EXECUTION_PLAN.md)
 - [Positive Lane Deprecation Plan](./build-docs/plans/POSITIVE_LANE_DEPRECATION_PLAN.md)
 - [HELPER_SERVICE_MILESTONE.md](./build-docs/milestones/HELPER_SERVICE_MILESTONE.md)
@@ -209,6 +213,13 @@ The UI now defaults to a summary-first layout:
 - the main workspace scrolls cleanly
 - dense governance and diagnostic sections are collapsible
 - project, result, and fallback views keep the most important signal visible first
+- runtime status now surfaces:
+  - the configured shell timeout buffer
+  - the latest retry-search ladder proof status and outer budget
+- the proof controls now surface:
+  - proof runtime posture guidance
+  - the latest ladder-proof receipt status
+  - a dedicated `Run Retry-Search Ladder Proof` action
 
 The build side now also persists reviewed task artifacts under `runtime/`, including:
 
@@ -221,6 +232,55 @@ The build side now also persists reviewed task artifacts under `runtime/`, inclu
 - model-authored task receipts
 - adaptive task decomposition receipts
 - decomposition inference should increasingly become generic and self-improving rather than hand-authored task by task
+
+Runtime receipts now also capture phase timing and timeout posture so we can tell
+the difference between:
+
+- model server launch timeout
+- planner request timeout
+- model-task request timeout
+- normal completion followed by host cleanup
+
+The current default local runtime budgets are:
+
+- model server launch wait: 90 seconds
+- planner HTTP request window: 420 seconds
+- model-authored task HTTP request window: 300 seconds
+- shell timeout buffer recommendation: 60 seconds
+
+The triangulation loop summary now also distinguishes between:
+
+- current-model-only exhaustion:
+  - the retry posture for one model was spent and the factory had to climb to the next model candidate
+- full model-ladder exhaustion:
+  - the factory spent the available retry methods across the available model/runtime candidates and the failure should stay provisional until triangulation converges narrowly enough
+
+The retry-search model proof now persists an explicit outer budget based on:
+
+- retry posture count
+- model candidate count
+- per-attempt launch timeout
+- per-attempt request timeout
+- cleanup overhead
+
+The recommended operator shell timeout is now also factory-owned:
+
+- `expected_outer_timeout_secs + shell_timeout_buffer_secs`
+- default shell timeout buffer recommendation: `60s`
+
+That means a shell-side timeout during a long ladder proof should not be read as
+factory failure by itself. The deciding evidence is the proof receipt:
+
+- `final_outcome=passed`
+- `final_outcome=full_model_ladder_exhausted`
+- `final_outcome=internal_timeout_observed`
+- or an unfinished `status=running` receipt if an outer shell killed the command first
+
+The UI now reflects that same rule directly:
+
+- `Runtime Status` shows the configured shell timeout buffer
+- `Retry-Search Proof` shows the latest proof status, outcome, and ceiling
+- `Proof Runtime Posture` shows the current runtime budgets, recommended shell timeout, and a direct ladder-proof launch button
 
 If a request is too vague, ChattyFactory may emit clarification or planner
 handoff artifacts instead of guessing.

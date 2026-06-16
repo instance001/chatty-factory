@@ -25,10 +25,12 @@ use chatty_factory_core::{
     built_in_capability_comparison_bundles, built_in_proof_templates,
     AcceptanceCheck, AcceptanceRecipeStatus, ApprovedConstraintShelf, BuildConstraintReviewReceipt,
     BuildExecutionWorkOrder, BuildFeatureSlice, BuildPlanArtifact, BuildPlanReview,
-    ChattyCogBridgeCapabilities, ClarificationRequest, ModelTaskGenerationReceipt, PlanTask, PlanTaskExecutionLog,
+    AtomizationFloorDecision, ChattyCogBridgeCapabilities, ClarificationRequest, ConstraintPromotionCandidate,
+    FailureVaultEntry, ModelTaskGenerationReceipt, PlanTask, PlanTaskExecutionLog,
     PlanTaskExecutionReceipt, PlanTaskList, PlanTaskVerificationLog,
     PlanTaskModelAttemptReceipt, PlanTaskVerificationReceipt, TaskDecompositionInferenceReceipt,
-    TaskDecompositionProposal, TaskDecompositionReceipt,
+    TaskDecompositionProposal, TaskDecompositionReceipt, TriangulationAttempt,
+    TriangulationSession,
     capability_comparison_bundle_by_id, capability_comparison_bundle_by_id_from_root,
     proof_template_by_id, proof_template_by_id_from_root, BuildVerificationReceipt,
     ComposableRoutePlan, CompositionRouteClass, ConstraintApprovalReceipt, ConstraintShelfHistory,
@@ -39,6 +41,7 @@ use chatty_factory_core::{
     HelperRuntimeReceipt, HelperServiceSpec,
     OperatorBundleStatus, PatchLaneStatus, PatchReceipt, PlannerDispatchReceipt, PlannerHandoff,
     PlannerResponse, PlannedFileOperation, PrimitiveExecutionPlan, PrimitiveExecutionStep, PrimitiveProofHarnessReceipt,
+    RetrySearchProofReceipt,
     PrimitiveProofEnrichmentBinding, PrimitiveProofFamilyRequestBinding, PrimitiveProofTemplate, CapabilityComparisonBundle, ConstraintReviewReceipt, ConstraintViolation, ImplementationConstraint, ProjectBrowserState, ProjectPatchDiagnosis, PatchIntentFreeze, PatchPlanReview, ProjectSession, ProjectSpec, ProposedConstraintReceipt, RuntimeConfig,
     RequestMode, RequestPlan, RequestRecord, RuntimeModelCatalogReceipt, RuntimeSmokeReceipt,
     patch_primitive_classes_for_kinds,
@@ -353,6 +356,29 @@ struct StarterUsageSummaryReceipt {
     pub matched_recommendation_builds: usize,
     pub overridden_recommendation_builds: usize,
     pub starters: Vec<StarterUsageEntry>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct TriangulationLoopSummaryReceipt {
+    pub summary_id: String,
+    pub open_provisional_vault_entries: usize,
+    pub triangulation_session_count: usize,
+    pub floor_level_convergent_failures: usize,
+    pub pending_promotion_candidates: usize,
+    pub current_model_only_exhaustion_count: usize,
+    pub full_model_ladder_exhaustion_count: usize,
+    pub latest_floor_task_label: Option<String>,
+    pub latest_floor_granularity: Option<String>,
+    pub latest_floor_decision: Option<String>,
+    pub latest_session_label: Option<String>,
+    pub latest_session_convergence_posture: Option<String>,
+    pub latest_candidate_label: Option<String>,
+    pub latest_candidate_confidence_posture: Option<String>,
+    pub latest_candidate_proposal_path: Option<String>,
+    pub latest_model_ladder_task_label: Option<String>,
+    pub latest_model_ladder_posture: Option<String>,
+    pub latest_model_ladder_attempted_models: Vec<String>,
     pub updated_at: String,
 }
 
@@ -1600,6 +1626,12 @@ fn execute_first_model_authored_microtasks(
             )?;
             outcomes.insert(task.task_id.clone(), outcome);
             receipt_paths.push(receipt_path);
+            let _learning_paths = maybe_persist_model_attempt_learning_artifacts(
+                runtime_root,
+                task,
+                task_list,
+                receipt_paths.last().expect("attempt receipt path just pushed"),
+            )?;
         } else if task
             .expected_symbols
             .iter()
@@ -1615,6 +1647,12 @@ fn execute_first_model_authored_microtasks(
             )?;
             outcomes.insert(task.task_id.clone(), outcome);
             receipt_paths.push(receipt_path);
+            let _learning_paths = maybe_persist_model_attempt_learning_artifacts(
+                runtime_root,
+                task,
+                task_list,
+                receipt_paths.last().expect("attempt receipt path just pushed"),
+            )?;
         } else if task
             .expected_symbols
             .iter()
@@ -1643,6 +1681,12 @@ fn execute_first_model_authored_microtasks(
             )?;
             outcomes.insert(task.task_id.clone(), outcome);
             receipt_paths.push(receipt_path);
+            let _learning_paths = maybe_persist_model_attempt_learning_artifacts(
+                runtime_root,
+                task,
+                task_list,
+                receipt_paths.last().expect("attempt receipt path just pushed"),
+            )?;
         } else if task
             .expected_symbols
             .iter()
@@ -1678,6 +1722,12 @@ fn execute_first_model_authored_microtasks(
             )?;
             outcomes.insert(task.task_id.clone(), outcome);
             receipt_paths.push(receipt_path);
+            let _learning_paths = maybe_persist_model_attempt_learning_artifacts(
+                runtime_root,
+                task,
+                task_list,
+                receipt_paths.last().expect("attempt receipt path just pushed"),
+            )?;
         } else if task
             .expected_symbols
             .iter()
@@ -1706,6 +1756,12 @@ fn execute_first_model_authored_microtasks(
             )?;
             outcomes.insert(task.task_id.clone(), outcome);
             receipt_paths.push(receipt_path);
+            let _learning_paths = maybe_persist_model_attempt_learning_artifacts(
+                runtime_root,
+                task,
+                task_list,
+                receipt_paths.last().expect("attempt receipt path just pushed"),
+            )?;
         } else if task
             .expected_symbols
             .iter()
@@ -1721,6 +1777,12 @@ fn execute_first_model_authored_microtasks(
             )?;
             outcomes.insert(task.task_id.clone(), outcome);
             receipt_paths.push(receipt_path);
+            let _learning_paths = maybe_persist_model_attempt_learning_artifacts(
+                runtime_root,
+                task,
+                task_list,
+                receipt_paths.last().expect("attempt receipt path just pushed"),
+            )?;
         }
     }
     Ok((outcomes, receipt_paths))
@@ -1891,60 +1953,40 @@ fn attempt_native_metric_card_model_microtask(
     };
 
     let generation_receipt_root = runtime_root.join("model_task_generation_receipts");
-    let mut generation_receipt_path =
+    let initial_generation_receipt_path =
         persist_model_task_generation_receipt(&generation_receipt_root, &generation_receipt)?;
-    let mut semantic_draft = parse_metric_card_model_draft(&raw_generated).unwrap_or_default();
-    let mut review_findings = review_metric_card_model_draft(&semantic_draft);
-    let mut final_generation_receipt = generation_receipt;
-    if !review_findings.is_empty() {
-        let retry_user_prompt = build_metric_card_retry_prompt(&user_prompt, &review_findings);
-        fs::write(
-            &prompt_path,
-            format!(
-                "# System\n{}\n\n# User\n{}\n\n# Retry User\n{}\n",
-                system_prompt, user_prompt, retry_user_prompt
-            ),
-        )?;
-        match run_local_text_generation(
-            &config,
-            &task.request_id,
-            &format!("{}-retry-1", task.task_id),
-            &system_prompt,
-            &retry_user_prompt,
-            &raw_response_dir,
-            planner.requested_model.as_deref(),
-        ) {
-            Ok((retry_raw_generated, retry_generation_receipt)) => {
-                let retry_generation_receipt_path =
-                    persist_model_task_generation_receipt(
-                        &generation_receipt_root,
-                        &retry_generation_receipt,
-                    )?;
-                let retry_semantic_draft =
-                    parse_metric_card_model_draft(&retry_raw_generated).unwrap_or_default();
-                let retry_review_findings =
-                    review_metric_card_model_draft(&retry_semantic_draft);
-                if retry_review_findings.is_empty() {
-                    semantic_draft = retry_semantic_draft;
-                    review_findings.clear();
-                    generation_receipt_path = retry_generation_receipt_path;
-                    final_generation_receipt = retry_generation_receipt;
-                } else {
-                    review_findings = retry_review_findings
-                        .into_iter()
-                        .map(|finding| format!("retry review: {finding}"))
-                        .collect::<Vec<_>>();
-                    generation_receipt_path = retry_generation_receipt_path;
-                    final_generation_receipt = retry_generation_receipt;
-                }
-            }
-            Err(error) => {
-                review_findings.push(format!(
-                    "retry generation failed after narrow-review feedback: {error}"
-                ));
-            }
-        }
-    }
+    let retry_search = run_bounded_retry_search(
+        &config,
+        &catalog,
+        task,
+        &system_prompt,
+        &user_prompt,
+        &prompt_path,
+        &raw_response_dir,
+        &generation_receipt_root,
+        planner.requested_model.as_deref(),
+        parse_metric_card_model_draft(&raw_generated).unwrap_or_default(),
+        review_metric_card_model_draft(&parse_metric_card_model_draft(&raw_generated).unwrap_or_default()),
+        generation_receipt,
+        initial_generation_receipt_path,
+        |raw| parse_metric_card_model_draft(raw).unwrap_or_default(),
+        |draft| review_metric_card_model_draft(draft),
+        |attempt_index, findings, _| match attempt_index {
+            0 => Some(RetryMethodDirective {
+                method_id: "strict_json_contract".into(),
+                retry_user_prompt: build_metric_card_retry_prompt(&user_prompt, findings),
+            }),
+            1 => Some(RetryMethodDirective {
+                method_id: "fieldwise_recovery_posture".into(),
+                retry_user_prompt: build_metric_card_recovery_prompt(&user_prompt, findings),
+            }),
+            _ => None,
+        },
+    )?;
+    let generation_receipt_path = retry_search.generation_receipt_path;
+    let semantic_draft = retry_search.draft;
+    let review_findings = retry_search.review_findings;
+    let final_generation_receipt = retry_search.final_generation_receipt;
     if !review_findings.is_empty() {
         if should_recommend_metric_card_decomposition(&final_generation_receipt, &review_findings)
         {
@@ -2020,8 +2062,23 @@ fn attempt_native_metric_card_model_microtask(
             decomposition_receipt_path: None,
             raw_response_path: final_generation_receipt.raw_response_path.clone(),
             model_path: Some(final_generation_receipt.model_path.clone()),
-            status: "blocked_by_review".into(),
-            review_findings,
+            status: if retry_search.method_space_exhausted {
+                "method_space_exhausted".into()
+            } else {
+                "blocked_by_review".into()
+            },
+            review_findings: {
+                let mut findings = review_findings;
+                findings.push(format!(
+                    "attempted retry methods: {}",
+                    retry_search.attempted_methods.join(", ")
+                ));
+                findings.push(format!(
+                    "attempted models: {}",
+                    retry_search.attempted_models.join(", ")
+                ));
+                findings
+            },
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
         let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
@@ -2280,64 +2337,49 @@ fn attempt_native_metric_card_field_microtask(
     };
 
     let generation_receipt_root = runtime_root.join("model_task_generation_receipts");
-    let mut generation_receipt_path =
+    let initial_generation_receipt_path =
         persist_model_task_generation_receipt(&generation_receipt_root, &generation_receipt)?;
-    let mut field_draft = parse_metric_card_field_draft(&raw_generated).unwrap_or_default();
-    let mut review_findings = review_metric_card_field_draft(&field_draft, field_kind);
-    let mut final_generation_receipt = generation_receipt;
-    if !review_findings.is_empty() {
-        let retry_user_prompt = build_metric_card_field_retry_prompt(
-            &user_prompt,
-            &review_findings,
-            field_kind,
-        );
-        fs::write(
-            &prompt_path,
-            format!(
-                "# System\n{}\n\n# User\n{}\n\n# Retry User\n{}\n",
-                system_prompt, user_prompt, retry_user_prompt
-            ),
-        )?;
-        match run_local_text_generation(
-            &config,
-            &task.request_id,
-            &format!("{}-retry-1", task.task_id),
-            &system_prompt,
-            &retry_user_prompt,
-            &raw_response_dir,
-            planner.requested_model.as_deref(),
-        ) {
-            Ok((retry_raw_generated, retry_generation_receipt)) => {
-                let retry_generation_receipt_path =
-                    persist_model_task_generation_receipt(
-                        &generation_receipt_root,
-                        &retry_generation_receipt,
-                    )?;
-                let retry_field_draft =
-                    parse_metric_card_field_draft(&retry_raw_generated).unwrap_or_default();
-                let retry_review_findings =
-                    review_metric_card_field_draft(&retry_field_draft, field_kind);
-                if retry_review_findings.is_empty() {
-                    field_draft = retry_field_draft;
-                    review_findings.clear();
-                    generation_receipt_path = retry_generation_receipt_path;
-                    final_generation_receipt = retry_generation_receipt;
-                } else {
-                    review_findings = retry_review_findings
-                        .into_iter()
-                        .map(|finding| format!("retry review: {finding}"))
-                        .collect::<Vec<_>>();
-                    generation_receipt_path = retry_generation_receipt_path;
-                    final_generation_receipt = retry_generation_receipt;
-                }
-            }
-            Err(error) => {
-                review_findings.push(format!(
-                    "retry generation failed after narrow-review feedback: {error}"
-                ));
-            }
-        }
-    }
+    let initial_field_draft = parse_metric_card_field_draft(&raw_generated).unwrap_or_default();
+    let retry_search = run_bounded_retry_search(
+        &config,
+        &catalog,
+        task,
+        &system_prompt,
+        &user_prompt,
+        &prompt_path,
+        &raw_response_dir,
+        &generation_receipt_root,
+        planner.requested_model.as_deref(),
+        initial_field_draft.clone(),
+        review_metric_card_field_draft(&initial_field_draft, field_kind),
+        generation_receipt,
+        initial_generation_receipt_path,
+        |raw| parse_metric_card_field_draft(raw).unwrap_or_default(),
+        |draft| review_metric_card_field_draft(draft, field_kind),
+        |attempt_index, findings, _| match attempt_index {
+            0 => Some(RetryMethodDirective {
+                method_id: format!("{field_kind}_strict_json_contract"),
+                retry_user_prompt: build_metric_card_field_retry_prompt(
+                    &user_prompt,
+                    findings,
+                    field_kind,
+                ),
+            }),
+            1 => Some(RetryMethodDirective {
+                method_id: format!("{field_kind}_field_recovery_posture"),
+                retry_user_prompt: build_metric_card_field_recovery_prompt(
+                    &user_prompt,
+                    findings,
+                    field_kind,
+                ),
+            }),
+            _ => None,
+        },
+    )?;
+    let generation_receipt_path = retry_search.generation_receipt_path;
+    let mut field_draft = retry_search.draft;
+    let mut review_findings = retry_search.review_findings;
+    let final_generation_receipt = retry_search.final_generation_receipt;
     if !review_findings.is_empty() {
         if let Some(recovered_draft) =
             recover_single_field_draft_from_reasoning_spill(&final_generation_receipt)
@@ -2437,8 +2479,23 @@ fn attempt_native_metric_card_field_microtask(
             decomposition_receipt_path: None,
             raw_response_path: final_generation_receipt.raw_response_path.clone(),
             model_path: Some(final_generation_receipt.model_path.clone()),
-            status: "blocked_by_review".into(),
-            review_findings,
+            status: if retry_search.method_space_exhausted {
+                "method_space_exhausted".into()
+            } else {
+                "blocked_by_review".into()
+            },
+            review_findings: {
+                let mut findings = review_findings;
+                findings.push(format!(
+                    "attempted retry methods: {}",
+                    retry_search.attempted_methods.join(", ")
+                ));
+                findings.push(format!(
+                    "attempted models: {}",
+                    retry_search.attempted_models.join(", ")
+                ));
+                findings
+            },
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
         let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
@@ -2693,56 +2750,55 @@ fn attempt_native_metric_card_context_clause_microtask(
     let mut review_findings = review_metric_card_context_clause_draft(&clause_draft, clause_kind);
     let mut final_generation_receipt = generation_receipt;
     if !review_findings.is_empty() {
-        let retry_user_prompt = build_metric_card_context_clause_retry_prompt(
-            &user_prompt,
-            &review_findings,
-            clause_kind,
-        );
-        fs::write(
-            &prompt_path,
-            format!(
-                "# System\n{}\n\n# User\n{}\n\n# Retry User\n{}\n",
-                system_prompt, user_prompt, retry_user_prompt
-            ),
-        )?;
-        match run_local_text_generation(
+        let retry_search = run_bounded_retry_search(
             &config,
-            &task.request_id,
-            &format!("{}-retry-1", task.task_id),
+            &catalog,
+            task,
             &system_prompt,
-            &retry_user_prompt,
+            &user_prompt,
+            &prompt_path,
             &raw_response_dir,
+            &generation_receipt_root,
             planner.requested_model.as_deref(),
-        ) {
-            Ok((retry_raw_generated, retry_generation_receipt)) => {
-                let retry_generation_receipt_path =
-                    persist_model_task_generation_receipt(
-                        &generation_receipt_root,
-                        &retry_generation_receipt,
-                    )?;
-                let retry_clause_draft =
-                    parse_metric_card_field_draft(&retry_raw_generated).unwrap_or_default();
-                let retry_review_findings =
-                    review_metric_card_context_clause_draft(&retry_clause_draft, clause_kind);
-                if retry_review_findings.is_empty() {
-                    clause_draft = retry_clause_draft;
-                    review_findings.clear();
-                    generation_receipt_path = retry_generation_receipt_path;
-                    final_generation_receipt = retry_generation_receipt;
-                } else {
-                    review_findings = retry_review_findings
-                        .into_iter()
-                        .map(|finding| format!("retry review: {finding}"))
-                        .collect::<Vec<_>>();
-                    generation_receipt_path = retry_generation_receipt_path;
-                    final_generation_receipt = retry_generation_receipt;
-                }
-            }
-            Err(error) => {
-                review_findings.push(format!(
-                    "retry generation failed after narrow-review feedback: {error}"
-                ));
-            }
+            clause_draft.clone(),
+            review_findings,
+            final_generation_receipt,
+            generation_receipt_path.clone(),
+            |raw| parse_metric_card_field_draft(raw).unwrap_or_default(),
+            |draft| review_metric_card_context_clause_draft(draft, clause_kind),
+            |attempt_index, findings, _| match attempt_index {
+                0 => Some(RetryMethodDirective {
+                    method_id: format!("{clause_kind}_strict_json_contract"),
+                    retry_user_prompt: build_metric_card_context_clause_retry_prompt(
+                        &user_prompt,
+                        findings,
+                        clause_kind,
+                    ),
+                }),
+                1 => Some(RetryMethodDirective {
+                    method_id: format!("{clause_kind}_clause_recovery_posture"),
+                    retry_user_prompt: build_metric_card_context_clause_recovery_prompt(
+                        &user_prompt,
+                        findings,
+                        clause_kind,
+                    ),
+                }),
+                _ => None,
+            },
+        )?;
+        clause_draft = retry_search.draft;
+        review_findings = retry_search.review_findings;
+        generation_receipt_path = retry_search.generation_receipt_path;
+        final_generation_receipt = retry_search.final_generation_receipt;
+        if retry_search.method_space_exhausted {
+            review_findings.push(format!(
+                "attempted retry methods: {}",
+                retry_search.attempted_methods.join(", ")
+            ));
+            review_findings.push(format!(
+                "attempted models: {}",
+                retry_search.attempted_models.join(", ")
+            ));
         }
     }
     if !review_findings.is_empty() {
@@ -2774,7 +2830,14 @@ fn attempt_native_metric_card_context_clause_microtask(
             decomposition_receipt_path: None,
             raw_response_path: final_generation_receipt.raw_response_path.clone(),
             model_path: Some(final_generation_receipt.model_path.clone()),
-            status: "blocked_by_review".into(),
+            status: if review_findings
+                .iter()
+                .any(|finding| finding.contains("attempted retry methods:"))
+            {
+                "method_space_exhausted".into()
+            } else {
+                "blocked_by_review".into()
+            },
             review_findings,
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
@@ -3043,57 +3106,42 @@ fn attempt_native_action_toolbar_model_microtask(
     };
 
     let generation_receipt_root = runtime_root.join("model_task_generation_receipts");
-    let mut generation_receipt_path =
+    let initial_generation_receipt_path =
         persist_model_task_generation_receipt(&generation_receipt_root, &generation_receipt)?;
-    let mut semantic_draft = parse_action_toolbar_model_draft(&raw_generated).unwrap_or_default();
-    let mut review_findings = review_action_toolbar_model_draft(&semantic_draft);
-    let mut final_generation_receipt = generation_receipt;
-    if !review_findings.is_empty() {
-        let retry_user_prompt = build_action_toolbar_retry_prompt(&user_prompt, &review_findings);
-        fs::write(
-            &prompt_path,
-            format!(
-                "# System\n{}\n\n# User\n{}\n\n# Retry User\n{}\n",
-                system_prompt, user_prompt, retry_user_prompt
-            ),
-        )?;
-        match run_local_text_generation(
-            &config,
-            &task.request_id,
-            &format!("{}-retry-1", task.task_id),
-            &system_prompt,
-            &retry_user_prompt,
-            &raw_response_dir,
-            planner.requested_model.as_deref(),
-        ) {
-            Ok((retry_raw_generated, retry_generation_receipt)) => {
-                let retry_generation_receipt_path =
-                    persist_model_task_generation_receipt(&generation_receipt_root, &retry_generation_receipt)?;
-                let retry_semantic_draft =
-                    parse_action_toolbar_model_draft(&retry_raw_generated).unwrap_or_default();
-                let retry_review_findings =
-                    review_action_toolbar_model_draft(&retry_semantic_draft);
-                if retry_review_findings.is_empty() {
-                    semantic_draft = retry_semantic_draft;
-                    review_findings.clear();
-                    generation_receipt_path = retry_generation_receipt_path;
-                    final_generation_receipt = retry_generation_receipt;
-                } else {
-                    review_findings = retry_review_findings
-                        .into_iter()
-                        .map(|finding| format!("retry review: {finding}"))
-                        .collect::<Vec<_>>();
-                    generation_receipt_path = retry_generation_receipt_path;
-                    final_generation_receipt = retry_generation_receipt;
-                }
-            }
-            Err(error) => {
-                review_findings.push(format!(
-                    "retry generation failed after narrow-review feedback: {error}"
-                ));
-            }
-        }
-    }
+    let initial_semantic_draft =
+        parse_action_toolbar_model_draft(&raw_generated).unwrap_or_default();
+    let retry_search = run_bounded_retry_search(
+        &config,
+        &catalog,
+        task,
+        &system_prompt,
+        &user_prompt,
+        &prompt_path,
+        &raw_response_dir,
+        &generation_receipt_root,
+        planner.requested_model.as_deref(),
+        initial_semantic_draft.clone(),
+        review_action_toolbar_model_draft(&initial_semantic_draft),
+        generation_receipt,
+        initial_generation_receipt_path,
+        |raw| parse_action_toolbar_model_draft(raw).unwrap_or_default(),
+        |draft| review_action_toolbar_model_draft(draft),
+        |attempt_index, findings, _| match attempt_index {
+            0 => Some(RetryMethodDirective {
+                method_id: "strict_json_contract".into(),
+                retry_user_prompt: build_action_toolbar_retry_prompt(&user_prompt, findings),
+            }),
+            1 => Some(RetryMethodDirective {
+                method_id: "fieldwise_recovery_posture".into(),
+                retry_user_prompt: build_action_toolbar_recovery_prompt(&user_prompt, findings),
+            }),
+            _ => None,
+        },
+    )?;
+    let generation_receipt_path = retry_search.generation_receipt_path;
+    let semantic_draft = retry_search.draft;
+    let review_findings = retry_search.review_findings;
+    let final_generation_receipt = retry_search.final_generation_receipt;
     if !review_findings.is_empty() {
         if should_recommend_action_toolbar_decomposition(&final_generation_receipt, &review_findings)
         {
@@ -3151,8 +3199,23 @@ fn attempt_native_action_toolbar_model_microtask(
             decomposition_receipt_path: None,
             raw_response_path: final_generation_receipt.raw_response_path.clone(),
             model_path: Some(final_generation_receipt.model_path.clone()),
-            status: "blocked_by_review".into(),
-            review_findings,
+            status: if retry_search.method_space_exhausted {
+                "method_space_exhausted".into()
+            } else {
+                "blocked_by_review".into()
+            },
+            review_findings: {
+                let mut findings = review_findings;
+                findings.push(format!(
+                    "attempted retry methods: {}",
+                    retry_search.attempted_methods.join(", ")
+                ));
+                findings.push(format!(
+                    "attempted models: {}",
+                    retry_search.attempted_models.join(", ")
+                ));
+                findings
+            },
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
         let receipt_path = persist_plan_task_model_attempt_receipt(&receipt_root, &receipt)?;
@@ -3467,50 +3530,53 @@ fn attempt_native_action_toolbar_label_sentence_microtask(
         ));
     }
     if !review_findings.is_empty() {
-        let retry_user_prompt =
-            build_action_toolbar_label_sentence_retry_prompt(&user_prompt, &review_findings);
-        fs::write(
-            &prompt_path,
-            format!(
-                "# System\n{}\n\n# User\n{}\n\n# Retry User\n{}\n",
-                system_prompt, user_prompt, retry_user_prompt
-            ),
-        )?;
-        match run_local_text_generation(
+        let retry_search = run_bounded_retry_search(
             &config,
-            &task.request_id,
-            &format!("{}-retry-1", task.task_id),
+            &catalog,
+            task,
             &system_prompt,
-            &retry_user_prompt,
+            &user_prompt,
+            &prompt_path,
             &raw_response_dir,
+            &generation_receipt_root,
             planner.requested_model.as_deref(),
-        ) {
-            Ok((retry_raw_generated, retry_generation_receipt)) => {
-                let retry_generation_receipt_path =
-                    persist_model_task_generation_receipt(&generation_receipt_root, &retry_generation_receipt)?;
-                let retry_label_draft =
-                    parse_action_toolbar_label_draft(&retry_raw_generated).unwrap_or_default();
-                let retry_review_findings =
-                    review_action_toolbar_label_draft(&retry_label_draft);
-                if retry_review_findings.is_empty() {
-                    label_draft = retry_label_draft;
-                    review_findings.clear();
-                    generation_receipt_path = retry_generation_receipt_path;
-                    final_generation_receipt = retry_generation_receipt;
-                } else {
-                    review_findings = retry_review_findings
-                        .into_iter()
-                        .map(|finding| format!("retry review: {finding}"))
-                        .collect::<Vec<_>>();
-                    generation_receipt_path = retry_generation_receipt_path;
-                    final_generation_receipt = retry_generation_receipt;
-                }
-            }
-            Err(error) => {
-                review_findings.push(format!(
-                    "retry generation failed after narrow-review feedback: {error}"
-                ));
-            }
+            label_draft.clone(),
+            review_findings,
+            final_generation_receipt,
+            generation_receipt_path.clone(),
+            |raw| parse_action_toolbar_label_draft(raw).unwrap_or_default(),
+            |draft| review_action_toolbar_label_draft(draft),
+            |attempt_index, findings, _| match attempt_index {
+                0 => Some(RetryMethodDirective {
+                    method_id: "sentence_strict_json_contract".into(),
+                    retry_user_prompt: build_action_toolbar_label_sentence_retry_prompt(
+                        &user_prompt,
+                        findings,
+                    ),
+                }),
+                1 => Some(RetryMethodDirective {
+                    method_id: "sentence_recovery_posture".into(),
+                    retry_user_prompt: build_action_toolbar_label_sentence_recovery_prompt(
+                        &user_prompt,
+                        findings,
+                    ),
+                }),
+                _ => None,
+            },
+        )?;
+        label_draft = retry_search.draft;
+        review_findings = retry_search.review_findings;
+        generation_receipt_path = retry_search.generation_receipt_path;
+        final_generation_receipt = retry_search.final_generation_receipt;
+        if retry_search.method_space_exhausted {
+            review_findings.push(format!(
+                "attempted retry methods: {}",
+                retry_search.attempted_methods.join(", ")
+            ));
+            review_findings.push(format!(
+                "attempted models: {}",
+                retry_search.attempted_models.join(", ")
+            ));
         }
     }
 
@@ -3526,7 +3592,14 @@ fn attempt_native_action_toolbar_label_sentence_microtask(
             decomposition_receipt_path: None,
             raw_response_path: final_generation_receipt.raw_response_path.clone(),
             model_path: Some(final_generation_receipt.model_path.clone()),
-            status: "blocked_by_review".into(),
+            status: if review_findings
+                .iter()
+                .any(|finding| finding.contains("attempted retry methods:"))
+            {
+                "method_space_exhausted".into()
+            } else {
+                "blocked_by_review".into()
+            },
             review_findings,
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
@@ -3797,53 +3870,55 @@ fn attempt_native_action_toolbar_label_clause_microtask(
     let mut final_generation_receipt = generation_receipt;
     let mut generation_receipt_path = generation_receipt_path;
     if !review_findings.is_empty() {
-        let retry_user_prompt = build_action_toolbar_label_clause_retry_prompt(
-            &user_prompt,
-            &review_findings,
-            clause_kind,
-        );
-        fs::write(
-            &prompt_path,
-            format!(
-                "# System\n{}\n\n# User\n{}\n\n# Retry User\n{}\n",
-                system_prompt, user_prompt, retry_user_prompt
-            ),
-        )?;
-        match run_local_text_generation(
+        let retry_search = run_bounded_retry_search(
             &config,
-            &task.request_id,
-            &format!("{}-retry-1", task.task_id),
+            &catalog,
+            task,
             &system_prompt,
-            &retry_user_prompt,
+            &user_prompt,
+            &prompt_path,
             &raw_response_dir,
+            &generation_receipt_root,
             planner.requested_model.as_deref(),
-        ) {
-            Ok((retry_raw_generated, retry_generation_receipt)) => {
-                let retry_generation_receipt_path =
-                    persist_model_task_generation_receipt(&generation_receipt_root, &retry_generation_receipt)?;
-                let retry_clause_draft =
-                    parse_action_toolbar_clause_draft(&retry_raw_generated).unwrap_or_default();
-                let retry_review_findings =
-                    review_action_toolbar_clause_draft(&retry_clause_draft, clause_kind);
-                if retry_review_findings.is_empty() {
-                    clause_draft = retry_clause_draft;
-                    review_findings.clear();
-                    generation_receipt_path = retry_generation_receipt_path;
-                    final_generation_receipt = retry_generation_receipt;
-                } else {
-                    review_findings = retry_review_findings
-                        .into_iter()
-                        .map(|finding| format!("retry review: {finding}"))
-                        .collect::<Vec<_>>();
-                    generation_receipt_path = retry_generation_receipt_path;
-                    final_generation_receipt = retry_generation_receipt;
-                }
-            }
-            Err(error) => {
-                review_findings.push(format!(
-                    "retry generation failed after narrow-review feedback: {error}"
-                ));
-            }
+            clause_draft.clone(),
+            review_findings,
+            final_generation_receipt,
+            generation_receipt_path.clone(),
+            |raw| parse_action_toolbar_clause_draft(raw).unwrap_or_default(),
+            |draft| review_action_toolbar_clause_draft(draft, clause_kind),
+            |attempt_index, findings, _| match attempt_index {
+                0 => Some(RetryMethodDirective {
+                    method_id: format!("{clause_kind}_strict_json_contract"),
+                    retry_user_prompt: build_action_toolbar_label_clause_retry_prompt(
+                        &user_prompt,
+                        findings,
+                        clause_kind,
+                    ),
+                }),
+                1 => Some(RetryMethodDirective {
+                    method_id: format!("{clause_kind}_clause_recovery_posture"),
+                    retry_user_prompt: build_action_toolbar_label_clause_recovery_prompt(
+                        &user_prompt,
+                        findings,
+                        clause_kind,
+                    ),
+                }),
+                _ => None,
+            },
+        )?;
+        clause_draft = retry_search.draft;
+        review_findings = retry_search.review_findings;
+        generation_receipt_path = retry_search.generation_receipt_path;
+        final_generation_receipt = retry_search.final_generation_receipt;
+        if retry_search.method_space_exhausted {
+            review_findings.push(format!(
+                "attempted retry methods: {}",
+                retry_search.attempted_methods.join(", ")
+            ));
+            review_findings.push(format!(
+                "attempted models: {}",
+                retry_search.attempted_models.join(", ")
+            ));
         }
     }
     if !review_findings.is_empty() {
@@ -3858,7 +3933,14 @@ fn attempt_native_action_toolbar_label_clause_microtask(
             decomposition_receipt_path: None,
             raw_response_path: final_generation_receipt.raw_response_path.clone(),
             model_path: Some(final_generation_receipt.model_path.clone()),
-            status: "blocked_by_review".into(),
+            status: if review_findings
+                .iter()
+                .any(|finding| finding.contains("attempted retry methods:"))
+            {
+                "method_space_exhausted".into()
+            } else {
+                "blocked_by_review".into()
+            },
             review_findings,
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
@@ -4075,6 +4157,16 @@ fn build_action_toolbar_label_sentence_retry_prompt(
     )
 }
 
+fn build_action_toolbar_label_sentence_recovery_prompt(
+    original_user_prompt: &str,
+    review_findings: &[String],
+) -> String {
+    format!(
+        "{original_user_prompt}\n\nPrevious toolbar label sentence attempts failed for these exact reasons:\n- {}\n\nUse a different recovery posture now. Hard requirements:\n- return valid minified JSON only\n- use exactly one key and no others: `label`\n- `label` must be one complete short sentence suitable for a toolbar description\n- keep the sentence imperative and concrete\n- do not return prose, markdown, or extra keys\nReturn only the corrected minified JSON object.",
+        review_findings.join("\n- ")
+    )
+}
+
 fn build_action_toolbar_label_clause_prompts(
     task: &PlanTask,
     task_list: &PlanTaskList,
@@ -4126,6 +4218,17 @@ fn build_action_toolbar_label_clause_retry_prompt(
     };
     format!(
         "{original_user_prompt}\n\nYour previous attempt was rejected for these exact reasons:\n- {}\n\nRetry once. Fix every violation exactly. Hard requirements for this retry:\n- return valid minified JSON only\n- use exactly one key and no others: `clause`\n{hard_clause_rule}\n- do not return prose, markdown, or code\n- return this exact object shape with your own clause value if needed:\n{exact_shape}\nReturn only the corrected minified JSON object.",
+        review_findings.join("\n- ")
+    )
+}
+
+fn build_action_toolbar_label_clause_recovery_prompt(
+    original_user_prompt: &str,
+    review_findings: &[String],
+    clause_kind: &str,
+) -> String {
+    format!(
+        "{original_user_prompt}\n\nPrevious toolbar `{clause_kind}` clause attempts failed for these exact reasons:\n- {}\n\nUse a different recovery posture now. Hard requirements:\n- return valid minified JSON only\n- use exactly one key and no others: `value`\n- return only the `{clause_kind}` clause fragment and nothing else\n- do not return prose, markdown, or explanation\nReturn only the corrected minified JSON object.",
         review_findings.join("\n- ")
     )
 }
@@ -4245,12 +4348,32 @@ fn build_action_toolbar_retry_prompt(original_user_prompt: &str, review_findings
     )
 }
 
+fn build_action_toolbar_recovery_prompt(
+    original_user_prompt: &str,
+    review_findings: &[String],
+) -> String {
+    format!(
+        "{original_user_prompt}\n\nPrevious attempts failed for these exact reasons:\n- {}\n\nTry a different method now. Hard requirements:\n- think of each required field separately before emitting the final answer\n- return valid minified JSON only\n- use exactly these keys and no others: `title`, `label`, `primary_button`, `secondary_button`\n- `title` must be `Action toolbar`\n- `primary_button` must be `Run action`\n- `secondary_button` must be `Clear`\n- `label` must be one short imperative sentence and not a fragment\n- do not return prose, markdown, code fences, explanations, or extra keys\nReturn only the corrected minified JSON object.",
+        review_findings.join("\n- ")
+    )
+}
+
 fn build_metric_card_retry_prompt(
     original_user_prompt: &str,
     review_findings: &[String],
 ) -> String {
     format!(
         "{original_user_prompt}\n\nYour previous attempt was rejected for these exact reasons:\n- {}\n\nRetry once. Fix every violation exactly. Hard requirements for this retry:\n- return valid minified JSON only\n- use exactly these keys and no others: `title`, `value`, `context`\n- keep each field concrete, concise, and dashboard-appropriate\n- do not return prose, markdown, or code\nReturn only the corrected minified JSON object.",
+        review_findings.join("\n- ")
+    )
+}
+
+fn build_metric_card_recovery_prompt(
+    original_user_prompt: &str,
+    review_findings: &[String],
+) -> String {
+    format!(
+        "{original_user_prompt}\n\nPrevious attempts failed for these exact reasons:\n- {}\n\nUse a different recovery posture now. Hard requirements:\n- return valid minified JSON only\n- use exactly these keys and no others: `title`, `value`, `context`\n- generate each field as a concrete dashboard fact before assembling the final object\n- `title` must be short and noun-like\n- `value` must be compact and scannable\n- `context` must be a complete sentence\n- do not return prose, markdown, or code\nReturn only the corrected minified JSON object.",
         review_findings.join("\n- ")
     )
 }
@@ -4266,6 +4389,17 @@ fn build_metric_card_field_retry_prompt(
     )
 }
 
+fn build_metric_card_field_recovery_prompt(
+    original_user_prompt: &str,
+    review_findings: &[String],
+    field_kind: &str,
+) -> String {
+    format!(
+        "{original_user_prompt}\n\nPrevious `{field_kind}` attempts failed for these exact reasons:\n- {}\n\nUse a different recovery posture now. Hard requirements:\n- return valid minified JSON only\n- use exactly one key and no others: `value`\n- output one concrete final `{field_kind}` value only\n- do not include rationale, labels, markdown, or extra keys\nReturn only the corrected minified JSON object.",
+        review_findings.join("\n- ")
+    )
+}
+
 fn build_metric_card_context_clause_retry_prompt(
     original_user_prompt: &str,
     review_findings: &[String],
@@ -4273,6 +4407,17 @@ fn build_metric_card_context_clause_retry_prompt(
 ) -> String {
     format!(
         "{original_user_prompt}\n\nYour previous metric card context `{clause_kind}` clause attempt was rejected for these exact reasons:\n- {}\n\nRetry once. Fix every violation exactly. Hard requirements for this retry:\n- return valid minified JSON only\n- use exactly one key and no others: `value`\n- keep the fragment concrete and dashboard-appropriate\n- do not return prose, markdown, or code\nReturn only the corrected minified JSON object.",
+        review_findings.join("\n- ")
+    )
+}
+
+fn build_metric_card_context_clause_recovery_prompt(
+    original_user_prompt: &str,
+    review_findings: &[String],
+    clause_kind: &str,
+) -> String {
+    format!(
+        "{original_user_prompt}\n\nPrevious metric card context `{clause_kind}` clause attempts failed for these exact reasons:\n- {}\n\nUse a different recovery posture now. Hard requirements:\n- return valid minified JSON only\n- use exactly one key and no others: `value`\n- the value must be a usable clause fragment only, not a complete paragraph\n- do not return prose, markdown, or extra explanation\nReturn only the corrected minified JSON object.",
         review_findings.join("\n- ")
     )
 }
@@ -4322,6 +4467,234 @@ fn review_metric_card_model_draft(draft: &MetricCardSemanticDraft) -> Vec<String
         }
     }
     findings
+}
+
+#[derive(Debug, Clone)]
+struct RetryMethodDirective {
+    method_id: String,
+    retry_user_prompt: String,
+}
+
+#[derive(Debug)]
+struct RetrySearchOutcome<T> {
+    draft: T,
+    review_findings: Vec<String>,
+    generation_receipt_path: PathBuf,
+    final_generation_receipt: ModelTaskGenerationReceipt,
+    attempted_methods: Vec<String>,
+    attempted_models: Vec<String>,
+    method_space_exhausted: bool,
+}
+
+fn run_bounded_retry_search<T, FParse, FReview, FMethod>(
+    config: &RuntimeConfig,
+    catalog: &RuntimeModelCatalogReceipt,
+    task: &PlanTask,
+    system_prompt: &str,
+    user_prompt: &str,
+    prompt_path: &Path,
+    raw_response_dir: &Path,
+    generation_receipt_root: &Path,
+    requested_model: Option<&str>,
+    initial_draft: T,
+    initial_review_findings: Vec<String>,
+    initial_generation_receipt: ModelTaskGenerationReceipt,
+    initial_generation_receipt_path: PathBuf,
+    parse_draft: FParse,
+    review_draft: FReview,
+    next_method: FMethod,
+) -> Result<RetrySearchOutcome<T>>
+where
+    T: Clone,
+    FParse: Fn(&str) -> T,
+    FReview: Fn(&T) -> Vec<String>,
+    FMethod: Fn(usize, &[String], &ModelTaskGenerationReceipt) -> Option<RetryMethodDirective>,
+{
+    let mut draft = initial_draft;
+    let mut review_findings = initial_review_findings;
+    let mut final_generation_receipt = initial_generation_receipt;
+    let mut generation_receipt_path = initial_generation_receipt_path;
+    let mut attempt_index = 0usize;
+    let mut attempted_methods = vec!["initial_generation".to_string()];
+    let mut attempted_models = vec![final_generation_receipt.model_path.clone()];
+    let mut method_space_exhausted = false;
+    let model_candidates = model_task_model_candidates(
+        requested_model,
+        catalog,
+        Some(&final_generation_receipt.model_path),
+    );
+    let mut current_model_index = 0usize;
+
+    while !review_findings.is_empty() {
+        let Some(directive) = next_method(attempt_index, &review_findings, &final_generation_receipt) else {
+            if requested_model.is_none() && current_model_index + 1 < model_candidates.len() {
+                current_model_index += 1;
+                let next_model_path = model_candidates[current_model_index].clone();
+                attempted_models.push(next_model_path.clone());
+                final_generation_receipt.model_path = next_model_path.clone();
+                review_findings.push(format!(
+                    "alternate methods exhausted for current model; escalating retry search to next model candidate: {}",
+                    next_model_path
+                ));
+                attempt_index = 0;
+                continue;
+            } else {
+                method_space_exhausted = true;
+                review_findings.push(
+                    "alternate methods exhausted across the available model/runtime candidates; preserve this failure search in the vault and escalate model tier inventory if the same narrow blocker persists".into(),
+                );
+                break;
+            }
+        };
+        attempt_index += 1;
+        let active_model_path = if requested_model.is_none() {
+            model_candidates
+                .get(current_model_index)
+                .cloned()
+                .unwrap_or_else(|| final_generation_receipt.model_path.clone())
+        } else {
+            final_generation_receipt.model_path.clone()
+        };
+        attempted_methods.push(format!(
+            "{}@{}",
+            directive.method_id, active_model_path
+        ));
+        fs::write(
+            prompt_path,
+            format!(
+                "# System\n{}\n\n# User\n{}\n\n# Retry Model\n{}\n\n# Retry Method\n{}\n\n# Retry User\n{}\n",
+                system_prompt,
+                user_prompt,
+                active_model_path,
+                directive.method_id,
+                directive.retry_user_prompt
+            ),
+        )?;
+        let mut retry_config = config.clone();
+        retry_config.default_model_path = Some(active_model_path.clone());
+        match run_local_text_generation(
+            &retry_config,
+            &task.request_id,
+            &format!("{}-{}", task.task_id, sanitize_filename(&directive.method_id)),
+            system_prompt,
+            &directive.retry_user_prompt,
+            raw_response_dir,
+            Some(&active_model_path),
+        ) {
+            Ok((retry_raw_generated, retry_generation_receipt)) => {
+                let retry_generation_receipt_path =
+                    persist_model_task_generation_receipt(
+                        generation_receipt_root,
+                        &retry_generation_receipt,
+                    )?;
+                let retry_draft = parse_draft(&retry_raw_generated);
+                let retry_review_findings = review_draft(&retry_draft);
+                if retry_review_findings.is_empty() {
+                    draft = retry_draft;
+                    review_findings.clear();
+                    generation_receipt_path = retry_generation_receipt_path;
+                    final_generation_receipt = retry_generation_receipt;
+                    break;
+                }
+                draft = retry_draft;
+                review_findings = retry_review_findings
+                    .into_iter()
+                    .map(|finding| format!("{} review: {finding}", directive.method_id))
+                    .collect::<Vec<_>>();
+                generation_receipt_path = retry_generation_receipt_path;
+                final_generation_receipt = retry_generation_receipt;
+            }
+            Err(error) => {
+                review_findings.push(format!(
+                    "{} generation failed on model {}: {error}",
+                    directive.method_id,
+                    active_model_path
+                ));
+            }
+        }
+    }
+
+    Ok(RetrySearchOutcome {
+        draft,
+        review_findings,
+        generation_receipt_path,
+        final_generation_receipt,
+        attempted_methods,
+        attempted_models,
+        method_space_exhausted,
+    })
+}
+
+fn model_task_model_candidates(
+    requested_model: Option<&str>,
+    catalog: &RuntimeModelCatalogReceipt,
+    fallback_model_path: Option<&str>,
+) -> Vec<String> {
+    if let Some(selected) = resolve_model_choice(requested_model, catalog, fallback_model_path) {
+        if requested_model.is_some() {
+            return vec![selected];
+        }
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(fallback) = fallback_model_path {
+        candidates.push(fallback.to_string());
+    }
+    for profile in ["fast", "balanced", "heavy"] {
+        if let Some(model_path) = resolve_model_choice(Some(profile), catalog, None) {
+            if !candidates.contains(&model_path) {
+                candidates.push(model_path);
+            }
+        }
+    }
+    candidates
+}
+
+fn parse_retry_search_proof_value(raw: &str) -> Option<String> {
+    let json = extract_first_json_object_local(raw)?;
+    let value: serde_json::Value = serde_json::from_str(&json).ok()?;
+    value
+        .get("value")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn persist_retry_search_proof_receipt(
+    runtime_root: &Path,
+    receipt: &RetrySearchProofReceipt,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("retry_search_proofs")
+        .join(format!("{}.json", receipt.receipt_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn retry_search_proof_cleanup_overhead_secs() -> u64 {
+    15
+}
+
+fn retry_search_proof_expected_outer_timeout_secs(
+    launch_timeout_secs: u64,
+    request_timeout_secs: u64,
+    cleanup_overhead_secs: u64,
+    retry_posture_count: usize,
+    model_candidate_count: usize,
+) -> u64 {
+    let attempt_count = (retry_posture_count as u64).saturating_mul(model_candidate_count as u64);
+    let per_attempt_budget = launch_timeout_secs
+        .saturating_add(request_timeout_secs)
+        .saturating_add(cleanup_overhead_secs);
+    attempt_count.saturating_mul(per_attempt_budget)
+}
+
+fn looks_like_internal_timeout(error: &anyhow::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("timeout")
+        || message.contains("timed out")
+        || message.contains("did not become ready before timeout")
 }
 
 fn parse_metric_card_model_draft(raw: &str) -> Option<MetricCardSemanticDraft> {
@@ -5052,6 +5425,538 @@ fn persist_plan_task_model_attempt_receipt(
     Ok(path)
 }
 
+fn persist_atomization_floor_decision(
+    receipt_root: &Path,
+    receipt: &AtomizationFloorDecision,
+) -> Result<PathBuf> {
+    let path = receipt_root.join(format!("{}-floor.json", sanitize_filename(&receipt.task_id)));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_failure_vault_entry(
+    receipt_root: &Path,
+    receipt: &FailureVaultEntry,
+) -> Result<PathBuf> {
+    let path = receipt_root.join(format!(
+        "{}-vault.json",
+        sanitize_filename(&receipt.task_id)
+    ));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_triangulation_session(
+    receipt_root: &Path,
+    receipt: &TriangulationSession,
+) -> Result<PathBuf> {
+    let path = receipt_root.join(format!(
+        "{}-triangulation.json",
+        sanitize_filename(&receipt.task_lineage_key)
+    ));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn persist_constraint_promotion_candidate(
+    receipt_root: &Path,
+    receipt: &ConstraintPromotionCandidate,
+) -> Result<PathBuf> {
+    let path = receipt_root.join(format!(
+        "{}-promotion.json",
+        sanitize_filename(&receipt.triangulation_session_id)
+    ));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn derive_proposed_constraint_from_promotion_candidate(
+    candidate: &ConstraintPromotionCandidate,
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+) -> ProposedConstraintReceipt {
+    let subtype = candidate
+        .task_subtype
+        .clone()
+        .unwrap_or_else(|| "unknown_task_subtype".into());
+    let shape = candidate
+        .task_shape
+        .clone()
+        .unwrap_or_else(|| "unknown_task_shape".into());
+    let failure_class_slug = sanitize_filename_like(&candidate.failure_class);
+    let constraint_id = format!(
+        "triangulated-task-constraint:{}:{}:{}",
+        sanitize_filename_like(&shape),
+        sanitize_filename_like(&subtype),
+        failure_class_slug
+    );
+    let replacement_guidance = Some(
+        "change method or execution posture before retrying the exact same floor-level task shape; repeated convergent failures suggest the current usage pattern is non-viable".to_string(),
+    );
+    ProposedConstraintReceipt {
+        proposal_id: chatty_factory_core::timestamp_id("constraint-proposal"),
+        request_id: candidate.request_id.clone(),
+        source_verification_id: candidate.triangulation_session_id.clone(),
+        status: "proposed_unapproved".into(),
+        rationale: {
+            let mut rationale = candidate.findings.clone();
+            rationale.extend(candidate.narrow_usage_pattern.clone());
+            rationale.push(format!(
+                "confidence posture: {}",
+                candidate.confidence_posture
+            ));
+            rationale
+        },
+        proposed_constraint: ImplementationConstraint {
+            constraint_id,
+            constraint_scope: format!("triangulated_task_shape:{shape}"),
+            constraint_origin: "triangulated_task_failure".into(),
+            family_id: task_list.family_id.clone(),
+            tool_kind: Some(task.task_kind.clone()),
+            language_id: None,
+            constraint_kind: candidate.failure_class.clone(),
+            forbidden_method_summary: candidate.recommended_constraint_summary.clone(),
+            forbidden_markers: Vec::new(),
+            required_markers: Vec::new(),
+            forbidden_surface_groups: Vec::new(),
+            violation_reason_template: candidate
+                .findings
+                .first()
+                .cloned()
+                .unwrap_or_else(|| {
+                    "repeated floor-level triangulation converged on the same narrow blocker"
+                        .into()
+                }),
+            replacement_guidance,
+            severity: "error".into(),
+            active: false,
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        },
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn persist_trianguated_proposed_constraint_receipt(
+    runtime_root: &Path,
+    receipt: &ProposedConstraintReceipt,
+) -> Result<PathBuf> {
+    let path = runtime_root
+        .join("proposed_constraint_receipts")
+        .join(format!("{}-proposed-constraint.json", receipt.proposal_id));
+    persist_json_pretty(&path, receipt)?;
+    Ok(path)
+}
+
+fn infer_task_shape_and_subtype(
+    task: &PlanTask,
+    decomposition: Option<&TaskDecompositionReceipt>,
+) -> (Option<String>, Option<String>) {
+    if let Some(receipt) = decomposition {
+        return (
+            receipt.task_shape.clone(),
+            Some(receipt.task_subtype.clone()),
+        );
+    }
+    let symbols = &task.expected_symbols;
+    if symbols.iter().any(|s| s == "feature:action_toolbar") {
+        return (
+            Some("semantic_ui_bundle".into()),
+            Some("toolbar_ui_block".into()),
+        );
+    }
+    if symbols
+        .iter()
+        .any(|s| s == "feature:action_toolbar_label_sentence")
+    {
+        return (
+            Some("semantic_sentence_bundle".into()),
+            Some("toolbar_label_sentence".into()),
+        );
+    }
+    if symbols.iter().any(|s| {
+        s == "feature:action_toolbar_label_clause_run_action"
+            || s == "feature:action_toolbar_label_clause_clear_action"
+    }) {
+        return (
+            Some("semantic_clause".into()),
+            Some("toolbar_label_clause".into()),
+        );
+    }
+    if symbols.iter().any(|s| s == "feature:metric_card") {
+        return (
+            Some("semantic_object_bundle".into()),
+            Some("metric_card_block".into()),
+        );
+    }
+    if symbols.iter().any(|s| s == "feature:metric_card_context_sentence") {
+        return (
+            Some("semantic_sentence_bundle".into()),
+            Some("metric_card_context_sentence".into()),
+        );
+    }
+    if symbols.iter().any(|s| {
+        s == "feature:metric_card_context_clause_subject"
+            || s == "feature:metric_card_context_clause_purpose"
+    }) {
+        return (
+            Some("semantic_clause".into()),
+            Some("metric_card_context_clause".into()),
+        );
+    }
+    if symbols.iter().any(|s| s == "feature:metric_card_title_literal") {
+        return (
+            Some("semantic_field".into()),
+            Some("metric_card_title_literal".into()),
+        );
+    }
+    if symbols.iter().any(|s| s == "feature:metric_card_value_line") {
+        return (
+            Some("semantic_field".into()),
+            Some("metric_card_value_line".into()),
+        );
+    }
+    (None, None)
+}
+
+fn infer_failure_class_from_attempt(
+    receipt: &PlanTaskModelAttemptReceipt,
+    decomposition: Option<&TaskDecompositionReceipt>,
+) -> String {
+    if let Some(decomposition) = decomposition {
+        if !decomposition.trigger_class.trim().is_empty() {
+            return decomposition.trigger_class.clone();
+        }
+    }
+    let findings = receipt.review_findings.join(" ").to_ascii_lowercase();
+    if findings.contains("reasoning_fallback") || findings.contains("reasoning spill") {
+        return "generation_mode:reasoning_fallback".into();
+    }
+    if findings.contains("omitted") || findings.contains("missing") {
+        return "semantic_contract:omitted_fields".into();
+    }
+    if findings.contains("placeholder") {
+        return "semantic_quality:placeholder_output".into();
+    }
+    if receipt.status == "method_space_exhausted" {
+        return "model_attempt:method_space_exhausted".into();
+    }
+    if receipt.status == "blocked_by_review" {
+        return "review_block:narrow_review".into();
+    }
+    if receipt.status.contains("decomposition") {
+        return "granularity:decomposition_needed".into();
+    }
+    "model_attempt:generic_failure".into()
+}
+
+fn estimate_decomposition_depth(task: &PlanTask) -> usize {
+    let symbols = &task.expected_symbols;
+    if symbols.iter().any(|s| {
+        s == "feature:action_toolbar_label_clause_run_action"
+            || s == "feature:action_toolbar_label_clause_clear_action"
+            || s == "feature:metric_card_context_clause_subject"
+            || s == "feature:metric_card_context_clause_purpose"
+    }) {
+        2
+    } else if symbols.iter().any(|s| {
+        s == "feature:action_toolbar_label_sentence"
+            || s == "feature:metric_card_title_literal"
+            || s == "feature:metric_card_value_line"
+            || s == "feature:metric_card_context_sentence"
+    }) {
+        1
+    } else {
+        0
+    }
+}
+
+fn build_atomization_floor_decision(
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    task_shape: Option<String>,
+    task_subtype: Option<String>,
+) -> AtomizationFloorDecision {
+    let (current_granularity, decision, findings, alternate_methods) = match task_shape.as_deref() {
+        Some("semantic_object_bundle") | Some("semantic_sentence_bundle") | Some("semantic_ui_bundle") => (
+            "bundle".into(),
+            "above_floor".into(),
+            vec![
+                "task is still above the atomization floor because it combines multiple semantic concerns".into(),
+            ],
+            vec![
+                "decompose_by_matched_grammar".into(),
+                "switch_to_host_rendered_semantic_parts".into(),
+                "retry_with_narrower_generation_shape".into(),
+            ],
+        ),
+        Some("semantic_field") | Some("semantic_clause") => (
+            "leaf_semantic_unit".into(),
+            "at_floor".into(),
+            vec![
+                "task has reached a minimal meaningful semantic unit, so further decomposition would risk atomizing into dust".into(),
+            ],
+            vec![
+                "retry_with_alternate_prompt_posture".into(),
+                "retry_with_extraction_or_recovery_mode".into(),
+                "compare_convergent_failures_for_constraint_promotion".into(),
+            ],
+        ),
+        _ => (
+            "unknown".into(),
+            "above_floor".into(),
+            vec![
+                "task shape was not yet classified strongly enough to declare a hard atomization floor".into(),
+            ],
+            vec![
+                "classify_task_shape_more_narrowly".into(),
+                "retry_with_alternate_method_before_promotion".into(),
+            ],
+        ),
+    };
+
+    AtomizationFloorDecision {
+        decision_id: chatty_factory_core::timestamp_id("atomization-floor"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        task_shape,
+        task_subtype,
+        current_granularity,
+        decision,
+        alternate_methods,
+        findings,
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    }
+}
+
+fn load_failure_vault_entries_for_lineage(
+    receipt_root: &Path,
+    lineage_key: &str,
+) -> Vec<FailureVaultEntry> {
+    let mut entries = Vec::new();
+    let Ok(dir) = fs::read_dir(receipt_root) else {
+        return entries;
+    };
+    for entry in dir.flatten() {
+        let Ok(contents) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let Ok(receipt) = serde_json::from_str::<FailureVaultEntry>(&contents) else {
+            continue;
+        };
+        if receipt.task_subtype.as_deref() == Some(lineage_key) {
+            entries.push(receipt);
+        }
+    }
+    entries
+}
+
+fn maybe_persist_model_attempt_learning_artifacts(
+    runtime_root: &Path,
+    task: &PlanTask,
+    task_list: &PlanTaskList,
+    attempt_receipt_path: &Path,
+) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    let attempt: PlanTaskModelAttemptReceipt =
+        serde_json::from_str(&fs::read_to_string(attempt_receipt_path)?)?;
+    let decomposition = attempt
+        .decomposition_receipt_path
+        .as_ref()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|contents| serde_json::from_str::<TaskDecompositionReceipt>(&contents).ok());
+
+    let (task_shape, task_subtype) = infer_task_shape_and_subtype(task, decomposition.as_ref());
+    if task_shape.is_none() && task_subtype.is_none() {
+        return Ok(paths);
+    }
+
+    let lineage_key = task_subtype
+        .clone()
+        .unwrap_or_else(|| task.task_id.clone());
+    let vault_root = runtime_root.join("failure_vault");
+    let prior_entries = load_failure_vault_entries_for_lineage(&vault_root, &lineage_key);
+
+    if matches!(attempt.status.as_str(), "executed" | "no_change_needed") && prior_entries.is_empty()
+    {
+        return Ok(paths);
+    }
+
+    let floor_root = runtime_root.join("atomization_floor_decisions");
+    let floor_decision = build_atomization_floor_decision(
+        task,
+        task_list,
+        task_shape.clone(),
+        task_subtype.clone(),
+    );
+    let floor_path = persist_atomization_floor_decision(&floor_root, &floor_decision)?;
+    paths.push(floor_path.clone());
+
+    let vault_status = match attempt.status.as_str() {
+        "executed" | "no_change_needed" => "closed_by_successful_alternate",
+        "pending_not_attempted" => return Ok(paths),
+        _ => "provisional_open",
+    }
+    .to_string();
+    let failure_class = if vault_status == "closed_by_successful_alternate" {
+        "success:alternate_method_validated".into()
+    } else {
+        infer_failure_class_from_attempt(&attempt, decomposition.as_ref())
+    };
+
+    let session_id = format!(
+        "triangulation-{}",
+        sanitize_filename(&format!("{}-{}", task_list.request_id, lineage_key))
+    );
+
+    let vault_entry = FailureVaultEntry {
+        vault_entry_id: chatty_factory_core::timestamp_id("failure-vault"),
+        request_id: task.request_id.clone(),
+        task_id: task.task_id.clone(),
+        project_name: task_list.project_name.clone(),
+        task_shape: task_shape.clone(),
+        task_subtype: task_subtype.clone(),
+        task_kind: task.task_kind.clone(),
+        failure_class: failure_class.clone(),
+        trigger_class: decomposition.as_ref().map(|d| d.trigger_class.clone()),
+        triangulation_session_id: session_id.clone(),
+        atomization_floor_decision_path: Some(floor_path.display().to_string()),
+        attempt_method: Some(if attempt.decomposition_receipt_path.is_some() {
+            "decomposition_or_retry_variant".into()
+        } else {
+            "direct_model_attempt".into()
+        }),
+        source_attempt_receipt_path: attempt_receipt_path.display().to_string(),
+        source_decomposition_receipt_path: attempt.decomposition_receipt_path.clone(),
+        status: vault_status.clone(),
+        decomposition_depth: estimate_decomposition_depth(task),
+        narrow_usage_pattern: vec![
+            format!("task_kind={}", task.task_kind),
+            format!("lineage_key={}", lineage_key),
+            format!("failure_class={}", failure_class),
+        ],
+        findings: attempt.review_findings.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let vault_path = persist_failure_vault_entry(&vault_root, &vault_entry)?;
+    paths.push(vault_path.clone());
+
+    let same_failure_count = prior_entries
+        .iter()
+        .filter(|entry| {
+            entry.failure_class == failure_class && entry.status == "provisional_open"
+        })
+        .count();
+    let any_success = prior_entries
+        .iter()
+        .any(|entry| entry.status == "closed_by_successful_alternate");
+
+    let triangulation_root = runtime_root.join("triangulation_sessions");
+    let session = TriangulationSession {
+        session_id: session_id.clone(),
+        request_id: task.request_id.clone(),
+        project_name: task_list.project_name.clone(),
+        task_shape,
+        task_subtype: task_subtype.clone(),
+        task_lineage_key: lineage_key.clone(),
+        status: if vault_status == "closed_by_successful_alternate" {
+            "resolved_by_successful_variant".into()
+        } else {
+            "provisional_open".into()
+        },
+        convergence_posture: if vault_status == "closed_by_successful_alternate" {
+            "success_closed_session".into()
+        } else if same_failure_count >= 2 {
+            "repeated_convergent_failure".into()
+        } else {
+            "single_observation".into()
+        },
+        atomization_floor_decision_path: Some(floor_path.display().to_string()),
+        successful_alternate_method: any_success || vault_status == "closed_by_successful_alternate",
+        attempts: vec![TriangulationAttempt {
+            attempt_id: attempt.attempt_id.clone(),
+            task_id: task.task_id.clone(),
+            task_subtype: task_subtype.clone(),
+            attempt_method: if attempt.decomposition_receipt_path.is_some() {
+                "decomposition_or_retry_variant".into()
+            } else {
+                "direct_model_attempt".into()
+            },
+            outcome: attempt.status.clone(),
+            failure_class: Some(failure_class.clone()),
+            source_attempt_receipt_path: Some(attempt_receipt_path.display().to_string()),
+            source_decomposition_receipt_path: attempt.decomposition_receipt_path.clone(),
+        }],
+        findings: vec![
+            format!("vault entry status: {}", vault_status),
+            format!("same-failure observations for lineage so far: {}", same_failure_count),
+        ],
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let triangulation_path = persist_triangulation_session(&triangulation_root, &session)?;
+    paths.push(triangulation_path.clone());
+
+    if floor_decision.decision == "at_floor"
+        && !session.successful_alternate_method
+        && same_failure_count >= 2
+    {
+        let promotion_root = runtime_root.join("constraint_promotion_candidates");
+        let candidate = ConstraintPromotionCandidate {
+            candidate_id: chatty_factory_core::timestamp_id("constraint-promotion"),
+            request_id: task.request_id.clone(),
+            triangulation_session_id: session_id,
+            project_name: task_list.project_name.clone(),
+            task_shape: session.task_shape.clone(),
+            task_subtype: task_subtype.clone(),
+            failure_class: failure_class.clone(),
+            trigger_class: decomposition.as_ref().map(|d| d.trigger_class.clone()),
+            confidence_posture: "triangulated_floor_level_repeated_failure".into(),
+            status: "proposed_for_review".into(),
+            matched_constraint_principles: decomposition
+                .as_ref()
+                .map(|d| d.constraint_principles.clone())
+                .unwrap_or_else(|| {
+                    vec![
+                        "do_not_exceed_current_task_granularity".into(),
+                        "classify_failure_before_proceeding".into(),
+                        "do_not_promote_one_off_failures".into(),
+                    ]
+                }),
+            narrow_usage_pattern: vec![
+                format!("task_subtype={}", lineage_key),
+                format!("failure_class={}", failure_class),
+                format!("execution_posture={}", task.task_kind),
+            ],
+            evidence_receipt_paths: vec![
+                attempt_receipt_path.display().to_string(),
+                vault_path.display().to_string(),
+                triangulation_path.display().to_string(),
+            ],
+            findings: vec![
+                "promotion candidate was created only after repeated convergent provisional failures at the atomization floor".into(),
+            ],
+            recommended_constraint_summary: format!(
+                "Avoid promoting `{}` under `{}` without changing method or posture; repeated floor-level triangulation kept converging on the same blocker.",
+                lineage_key, failure_class
+            ),
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let promotion_path =
+            persist_constraint_promotion_candidate(&promotion_root, &candidate)?;
+        paths.push(promotion_path);
+        let proposed_constraint =
+            derive_proposed_constraint_from_promotion_candidate(&candidate, task, task_list);
+        let proposed_constraint_path =
+            persist_trianguated_proposed_constraint_receipt(runtime_root, &proposed_constraint)?;
+        paths.push(proposed_constraint_path);
+    }
+
+    let summary_path = refresh_triangulation_loop_summary(runtime_root)?;
+    paths.push(summary_path);
+
+    Ok(paths)
+}
+
 fn sanitize_filename(value: &str) -> String {
     value
         .chars()
@@ -5501,6 +6406,191 @@ fn derive_starter_usage_summary(runtime_root: &Path) -> Result<StarterUsageSumma
         matched_recommendation_builds,
         overridden_recommendation_builds,
         starters,
+        updated_at: chatty_factory_core::timestamp_id("updated"),
+    })
+}
+
+fn derive_triangulation_loop_summary(runtime_root: &Path) -> Result<TriangulationLoopSummaryReceipt> {
+    #[derive(Debug, Clone)]
+    struct ModelLadderExhaustionEvidence {
+        task_label: String,
+        posture: String,
+        attempted_models: Vec<String>,
+    }
+
+    let load_sorted_paths = |dir_name: &str| -> Vec<PathBuf> {
+        let dir = runtime_root.join(dir_name);
+        let Ok(entries) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut paths = entries
+            .flatten()
+            .filter_map(|entry| {
+                let modified = entry.metadata().ok()?.modified().ok()?;
+                Some((modified, entry.path()))
+            })
+            .collect::<Vec<_>>();
+        paths.sort_by(|left, right| right.0.cmp(&left.0));
+        paths.into_iter().map(|(_, path)| path).collect()
+    };
+
+    let floor_paths = load_sorted_paths("atomization_floor_decisions");
+    let vault_paths = load_sorted_paths("failure_vault");
+    let session_paths = load_sorted_paths("triangulation_sessions");
+    let candidate_paths = load_sorted_paths("constraint_promotion_candidates");
+    let model_attempt_paths = load_sorted_paths("model_task_attempts");
+
+    let latest_floor = floor_paths
+        .first()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|contents| serde_json::from_str::<AtomizationFloorDecision>(&contents).ok());
+    let sessions = session_paths
+        .iter()
+        .filter_map(|path| fs::read_to_string(path).ok())
+        .filter_map(|contents| serde_json::from_str::<TriangulationSession>(&contents).ok())
+        .collect::<Vec<_>>();
+    let vault_entries = vault_paths
+        .iter()
+        .filter_map(|path| fs::read_to_string(path).ok())
+        .filter_map(|contents| serde_json::from_str::<FailureVaultEntry>(&contents).ok())
+        .collect::<Vec<_>>();
+    let model_attempts = model_attempt_paths
+        .iter()
+        .filter_map(|path| fs::read_to_string(path).ok())
+        .filter_map(|contents| serde_json::from_str::<PlanTaskModelAttemptReceipt>(&contents).ok())
+        .collect::<Vec<_>>();
+    let latest_candidate = candidate_paths
+        .first()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|contents| serde_json::from_str::<ConstraintPromotionCandidate>(&contents).ok());
+
+    let model_ladder_evidence = model_attempts
+        .iter()
+        .filter_map(|attempt| {
+            let attempted_models = attempt
+                .review_findings
+                .iter()
+                .find_map(|finding| {
+                    finding
+                        .strip_prefix("attempted models: ")
+                        .map(|value| {
+                            value
+                                .split(", ")
+                                .map(str::trim)
+                                .filter(|item| !item.is_empty())
+                                .map(str::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                })
+                .unwrap_or_default();
+            let current_model_exhausted = attempt.review_findings.iter().any(|finding| {
+                finding.starts_with(
+                    "alternate methods exhausted for current model; escalating retry search to next model candidate:"
+                )
+            });
+            let full_ladder_exhausted = attempt.status == "method_space_exhausted"
+                || attempt.review_findings.iter().any(|finding| {
+                    finding.starts_with(
+                        "alternate methods exhausted across the available model/runtime candidates"
+                    )
+                });
+
+            let posture = if full_ladder_exhausted {
+                Some("full_model_ladder_exhausted")
+            } else if current_model_exhausted {
+                Some("current_model_only_exhausted")
+            } else {
+                None
+            }?;
+
+            Some(ModelLadderExhaustionEvidence {
+                task_label: attempt.task_id.clone(),
+                posture: posture.into(),
+                attempted_models,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let current_model_only_exhaustion_count = model_ladder_evidence
+        .iter()
+        .filter(|entry| entry.posture == "current_model_only_exhausted")
+        .count();
+    let full_model_ladder_exhaustion_count = model_ladder_evidence
+        .iter()
+        .filter(|entry| entry.posture == "full_model_ladder_exhausted")
+        .count();
+    let latest_model_ladder = model_ladder_evidence.first();
+
+    let latest_candidate_proposal_path = latest_candidate.as_ref().and_then(|candidate| {
+        let dir = runtime_root.join("proposed_constraint_receipts");
+        let Ok(entries) = fs::read_dir(dir) else {
+            return None;
+        };
+        entries.flatten().find_map(|entry| {
+            let path = entry.path();
+            let contents = fs::read_to_string(&path).ok()?;
+            let receipt = serde_json::from_str::<ProposedConstraintReceipt>(&contents).ok()?;
+            if receipt.source_verification_id == candidate.triangulation_session_id {
+                Some(path.display().to_string())
+            } else {
+                None
+            }
+        })
+    });
+
+    Ok(TriangulationLoopSummaryReceipt {
+        summary_id: chatty_factory_core::timestamp_id("triangulation-loop-summary"),
+        open_provisional_vault_entries: vault_entries
+            .iter()
+            .filter(|entry| entry.status == "provisional_open")
+            .count(),
+        triangulation_session_count: sessions.len(),
+        floor_level_convergent_failures: sessions
+            .iter()
+            .filter(|session| {
+                session.convergence_posture == "repeated_convergent_failure"
+                    && !session.successful_alternate_method
+            })
+            .count(),
+        pending_promotion_candidates: candidate_paths.len(),
+        current_model_only_exhaustion_count,
+        full_model_ladder_exhaustion_count,
+        latest_floor_task_label: latest_floor.as_ref().map(|decision| {
+            decision
+                .task_subtype
+                .clone()
+                .unwrap_or_else(|| decision.task_id.clone())
+        }),
+        latest_floor_granularity: latest_floor
+            .as_ref()
+            .map(|decision| decision.current_granularity.clone()),
+        latest_floor_decision: latest_floor
+            .as_ref()
+            .map(|decision| decision.decision.clone()),
+        latest_session_label: sessions.first().map(|session| {
+            session
+                .task_subtype
+                .clone()
+                .unwrap_or_else(|| session.task_lineage_key.clone())
+        }),
+        latest_session_convergence_posture: sessions
+            .first()
+            .map(|session| session.convergence_posture.clone()),
+        latest_candidate_label: latest_candidate.as_ref().map(|candidate| {
+            candidate
+                .task_subtype
+                .clone()
+                .unwrap_or_else(|| candidate.candidate_id.clone())
+        }),
+        latest_candidate_confidence_posture: latest_candidate
+            .as_ref()
+            .map(|candidate| candidate.confidence_posture.clone()),
+        latest_candidate_proposal_path,
+        latest_model_ladder_task_label: latest_model_ladder.map(|entry| entry.task_label.clone()),
+        latest_model_ladder_posture: latest_model_ladder.map(|entry| entry.posture.clone()),
+        latest_model_ladder_attempted_models: latest_model_ladder
+            .map(|entry| entry.attempted_models.clone())
+            .unwrap_or_default(),
         updated_at: chatty_factory_core::timestamp_id("updated"),
     })
 }
@@ -6226,6 +7316,255 @@ impl HostBridge {
         self.run_declarative_proof_template(proof_template, comparison_bundle, planner)
     }
 
+    pub fn run_retry_search_model_escalation_proof(
+        &self,
+        planner: &HostPlannerOptions,
+    ) -> Result<HostActionResult> {
+        let receipt_id = chatty_factory_core::timestamp_id("retry-search-proof");
+        let models_root = self.workspace_root.join("models");
+        let discovery = discover_runtime(&self.runtime_root, &models_root)?;
+        let catalog = build_runtime_model_catalog(&models_root)?;
+        let mut config = default_runtime_config(&self.runtime_root, &models_root)?;
+        config.default_model_path = resolve_model_choice(
+            planner.requested_model.as_deref(),
+            &catalog,
+            discovery.preferred_model_path.as_deref(),
+        );
+        if let Some(port) = planner.requested_port {
+            config.port = port;
+        }
+        persist_json_pretty(&self.runtime_root.join("runtime_config.json"), &config)?;
+
+        let model_candidates = model_task_model_candidates(
+            planner.requested_model.as_deref(),
+            &catalog,
+            config.default_model_path.as_deref(),
+        );
+        if model_candidates.is_empty() {
+            anyhow::bail!("no model candidates available for retry-search proof");
+        }
+
+        let raw_response_dir = self.runtime_root.join("model_task_raw_responses");
+        let generation_receipt_root = self.runtime_root.join("model_task_generation_receipts");
+        let methods = [
+            (
+                "strict_json_contract",
+                "Return valid minified JSON only with exactly one key `value` and a short concrete dashboard phrase.",
+            ),
+            (
+                "fieldwise_recovery_posture",
+                "Use a different recovery posture. Think of the final phrase first, then return valid minified JSON only with exactly one key `value` and no prose.",
+            ),
+        ];
+        let cleanup_overhead_secs = retry_search_proof_cleanup_overhead_secs();
+        let expected_outer_timeout_secs = retry_search_proof_expected_outer_timeout_secs(
+            config.launch_timeout_secs,
+            config.model_task_request_timeout_secs,
+            cleanup_overhead_secs,
+            methods.len(),
+            model_candidates.len(),
+        );
+
+        let mut attempted_models = Vec::new();
+        let mut attempted_methods = Vec::new();
+        let mut generation_receipt_paths = Vec::new();
+        let mut successful_model_path = None;
+        let mut successful_method = None;
+        let mut notes = Vec::new();
+        let mut forced_initial_rejection = false;
+        let mut method_space_exhausted = true;
+        let mut internal_timeout_observed = false;
+
+        let mut receipt = RetrySearchProofReceipt {
+            receipt_id: receipt_id.clone(),
+            proof_kind: "model_escalation".into(),
+            status: "running".into(),
+            final_outcome: None,
+            requested_model_selector: planner.requested_model.clone(),
+            model_candidate_count: model_candidates.len(),
+            retry_posture_count: methods.len(),
+            launch_timeout_secs: config.launch_timeout_secs,
+            request_timeout_secs: config.model_task_request_timeout_secs,
+            cleanup_overhead_secs,
+            expected_outer_timeout_secs,
+            attempted_models: Vec::new(),
+            attempted_methods: Vec::new(),
+            generation_receipt_paths: Vec::new(),
+            successful_model_path: None,
+            successful_method: None,
+            forced_initial_rejection: false,
+            method_space_exhausted: false,
+            internal_timeout_observed: false,
+            notes: vec![
+                format!(
+                    "outer proof timeout ceiling budgeted for worst-case ladder traversal: {} retry postures x {} model candidates x (launch {}s + request {}s + cleanup {}s) = {}s",
+                    methods.len(),
+                    model_candidates.len(),
+                    config.launch_timeout_secs,
+                    config.model_task_request_timeout_secs,
+                    cleanup_overhead_secs,
+                    expected_outer_timeout_secs
+                ),
+                "shell-side timeout alone should not be treated as factory failure; inspect this receipt for final_outcome, method_space_exhausted, and internal_timeout_observed".into(),
+            ],
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let _receipt_path = persist_retry_search_proof_receipt(&self.runtime_root, &receipt)?;
+
+        'model_loop: for (model_index, model_path) in model_candidates.iter().enumerate() {
+            attempted_models.push(model_path.clone());
+            let mut model_config = config.clone();
+            model_config.default_model_path = Some(model_path.clone());
+
+            for (method_index, (method_id, method_instruction)) in methods.iter().enumerate() {
+                attempted_methods.push(format!("{method_id}@{model_path}"));
+                let system_prompt =
+                    "You are a local proof task. Return only valid minified JSON.";
+                let user_prompt = format!(
+                    "Generate one short dashboard-ready phrase for a retry-search proof. {method_instruction}"
+                );
+                let task_id = format!(
+                    "retry-search-proof-{}-{}",
+                    model_index + 1,
+                    sanitize_filename(method_id)
+                );
+                let (raw_generated, generation_receipt) = match run_local_text_generation(
+                    &model_config,
+                    "retry-search-proof",
+                    &task_id,
+                    system_prompt,
+                    &user_prompt,
+                    &raw_response_dir,
+                    Some(model_path),
+                ) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        if looks_like_internal_timeout(&error) {
+                            internal_timeout_observed = true;
+                        }
+                        notes.push(format!(
+                            "proof generation failed on model {} using method {}: {}",
+                            model_path, method_id, error
+                        ));
+                        continue;
+                    }
+                };
+                let receipt_path = persist_model_task_generation_receipt(
+                    &generation_receipt_root,
+                    &generation_receipt,
+                )?;
+                generation_receipt_paths.push(receipt_path.display().to_string());
+                let parsed_value = parse_retry_search_proof_value(&raw_generated);
+
+                if model_index == 0 {
+                    forced_initial_rejection = true;
+                    notes.push(format!(
+                        "forced proof rejection on initial model {} using method {} to verify ladder escalation",
+                        model_path, method_id
+                    ));
+                    continue;
+                }
+
+                if let Some(value) = parsed_value {
+                    method_space_exhausted = false;
+                    successful_model_path = Some(model_path.clone());
+                    successful_method = Some((*method_id).to_string());
+                    notes.push(format!(
+                        "proof accepted on model {} using method {} with value `{}`",
+                        model_path, method_id, value
+                    ));
+                    break 'model_loop;
+                }
+
+                notes.push(format!(
+                    "model {} using method {} did not return a usable `value` field",
+                    model_path, method_id
+                ));
+                if method_index + 1 == methods.len() {
+                    notes.push(format!(
+                        "method space exhausted for current model candidate {}",
+                        model_path
+                    ));
+                }
+            }
+        }
+
+        receipt.status = if successful_model_path.is_some() {
+            "completed".into()
+        } else if internal_timeout_observed {
+            "completed_with_internal_timeout".into()
+        } else {
+            "completed".into()
+        };
+        receipt.final_outcome = Some(if successful_model_path.is_some() {
+            "passed".into()
+        } else if internal_timeout_observed {
+            "internal_timeout_observed".into()
+        } else if method_space_exhausted {
+            "full_model_ladder_exhausted".into()
+        } else {
+            "ended_without_success".into()
+        });
+        receipt.attempted_models = attempted_models.clone();
+        receipt.attempted_methods = attempted_methods.clone();
+        receipt.generation_receipt_paths = generation_receipt_paths.clone();
+        receipt.successful_model_path = successful_model_path.clone();
+        receipt.successful_method = successful_method.clone();
+        receipt.forced_initial_rejection = forced_initial_rejection;
+        receipt.method_space_exhausted = method_space_exhausted;
+        receipt.internal_timeout_observed = internal_timeout_observed;
+        receipt.notes.extend(notes.clone());
+        let receipt_path = persist_retry_search_proof_receipt(&self.runtime_root, &receipt)?;
+
+        Ok(HostActionResult {
+            summary: if successful_model_path.is_some() {
+                "Retry-search model escalation proof passed".into()
+            } else if internal_timeout_observed {
+                "Retry-search model escalation proof ended with internal timeout evidence".into()
+            } else {
+                "Retry-search model escalation proof exhausted all candidates".into()
+            },
+            details: {
+                let mut details = vec![
+                    format!("proof_receipt={}", receipt_path.display()),
+                    format!("proof_status={}", receipt.status),
+                    format!(
+                        "proof_final_outcome={}",
+                        receipt.final_outcome.clone().unwrap_or_else(|| "unknown".into())
+                    ),
+                    format!("expected_outer_timeout_secs={expected_outer_timeout_secs}"),
+                    format!("attempted_models={}", attempted_models.join(" | ")),
+                    format!("attempted_methods={}", attempted_methods.join(" | ")),
+                ];
+                if let Some(model_path) = &successful_model_path {
+                    details.push(format!("successful_model={model_path}"));
+                }
+                if let Some(method) = &successful_method {
+                    details.push(format!("successful_method={method}"));
+                }
+                if internal_timeout_observed {
+                    details.push("internal_timeout_observed=true".into());
+                }
+                details.extend(
+                    generation_receipt_paths
+                        .iter()
+                        .map(|path| format!("generation_receipt={path}")),
+                );
+                details
+            },
+            browser_state: None,
+            runtime_refresh: Some(HostRuntimeRefreshResult {
+                config: Some(config),
+                catalog: Some(catalog),
+                smoke: None,
+            }),
+            execution_result: None,
+            fallback_result: None,
+            followup_route: None,
+            extension_registry: None,
+        })
+    }
+
     fn run_declarative_proof_template(
         &self,
         proof_template: chatty_factory_core::PrimitiveProofTemplate,
@@ -6564,12 +7903,18 @@ impl HostBridge {
         let family_usage_summary_path =
             refresh_family_usage_summary(&self.output_root, &self.runtime_root)?;
         let starter_usage_summary_path = refresh_starter_usage_summary(&self.runtime_root)?;
+        let triangulation_loop_summary_path =
+            refresh_triangulation_loop_summary(&self.runtime_root)?;
         Ok(HostActionResult {
             summary: "Project browser refreshed".into(),
             details: vec![
                 format!("projects={}", browser_state.projects.len()),
                 format!("family_usage_summary={}", family_usage_summary_path.display()),
                 format!("starter_usage_summary={}", starter_usage_summary_path.display()),
+                format!(
+                    "triangulation_loop_summary={}",
+                    triangulation_loop_summary_path.display()
+                ),
             ],
             browser_state: Some(browser_state),
             runtime_refresh: None,
@@ -6812,6 +8157,7 @@ impl HostBridge {
             resolve_proposed_constraint_path(&self.runtime_root, request_id_or_path)?;
         let mut proposal: ProposedConstraintReceipt =
             serde_json::from_str(&fs::read_to_string(&proposal_path)?)?;
+        let (proposal_origin, proposal_source_id) = proposal_origin_and_source_id(&proposal);
         proposal.status = "approved".into();
         proposal.proposed_constraint.active = true;
         persist_json_pretty(&proposal_path, &proposal)?;
@@ -6834,6 +8180,8 @@ impl HostBridge {
             approval_id: chatty_factory_core::timestamp_id("constraint-approval"),
             request_id: proposal.request_id.clone(),
             proposal_id: proposal.proposal_id.clone(),
+            proposal_origin: proposal_origin.clone(),
+            proposal_source_id: proposal_source_id.clone(),
             approved_constraint_id: proposal.proposed_constraint.constraint_id.clone(),
             status: "approved".into(),
             shelf_path: shelf_path.display().to_string(),
@@ -6847,13 +8195,35 @@ impl HostBridge {
             .join(format!("{}-constraint-approval.json", proposal.request_id));
         persist_json_pretty(&approval_path, &approval)?;
 
+        let mutation = ConstraintShelfMutationReceipt {
+            mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
+            constraint_id: proposal.proposed_constraint.constraint_id.clone(),
+            action: "approve".into(),
+            proposal_origin: Some(proposal_origin.clone()),
+            proposal_source_id: Some(proposal_source_id.clone()),
+            shelf_path: shelf_path.display().to_string(),
+            status: "approved_into_shelf".into(),
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let mutation_path = self
+            .runtime_root
+            .join("constraint_shelf_mutations")
+            .join(format!(
+                "approve-{}.json",
+                sanitize_filename_like(&proposal.proposed_constraint.constraint_id)
+            ));
+        persist_json_pretty(&mutation_path, &mutation)?;
+
         Ok(HostActionResult {
             summary: "Proposed constraint approved".into(),
             details: vec![
                 format!("proposal={}", proposal_path.display()),
+                format!("proposal_origin={proposal_origin}"),
+                format!("proposal_source_id={proposal_source_id}"),
                 format!("approved_constraint={}", proposal.proposed_constraint.constraint_id),
                 format!("shelf={}", shelf_path.display()),
                 format!("approval_receipt={}", approval_path.display()),
+                format!("mutation_receipt={}", mutation_path.display()),
                 format!("shelf_constraints={}", shelf.constraints.len()),
             ],
             browser_state: None,
@@ -6888,6 +8258,8 @@ impl HostBridge {
             mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
             constraint_id: constraint_id.to_string(),
             action: action.into(),
+            proposal_origin: None,
+            proposal_source_id: None,
             shelf_path: shelf_path.display().to_string(),
             status: "applied".into(),
             created_at: Some(chatty_factory_core::timestamp_id("created")),
@@ -6981,6 +8353,8 @@ impl HostBridge {
                 mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
                 constraint_id: constraint_id.clone(),
                 action: "archive".into(),
+                proposal_origin: None,
+                proposal_source_id: None,
                 shelf_path: shelf_path.display().to_string(),
                 status: "removed_from_shelf".into(),
                 created_at: Some(chatty_factory_core::timestamp_id("created")),
@@ -7059,6 +8433,8 @@ impl HostBridge {
                 mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
                 constraint_id: constraint_id.clone(),
                 action: "bulk_deactivate_low_value_active".into(),
+                proposal_origin: None,
+                proposal_source_id: None,
                 shelf_path: shelf_path.display().to_string(),
                 status: "deactivated".into(),
                 created_at: Some(chatty_factory_core::timestamp_id("created")),
@@ -7126,6 +8502,8 @@ impl HostBridge {
             mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
             constraint_id: constraint_id.to_string(),
             action: "restore".into(),
+            proposal_origin: None,
+            proposal_source_id: None,
             shelf_path: shelf_path.display().to_string(),
             status: "restored_from_history".into(),
             created_at: Some(chatty_factory_core::timestamp_id("created")),
@@ -8108,6 +9486,8 @@ impl HostBridge {
         let family_usage_summary_path =
             refresh_family_usage_summary(&self.output_root, &self.runtime_root)?;
         let starter_usage_summary_path = refresh_starter_usage_summary(&self.runtime_root)?;
+        let triangulation_loop_summary_path =
+            refresh_triangulation_loop_summary(&self.runtime_root)?;
         let blocker_project_counts =
             count_projects_with_risky_or_historical_blockers(&self.runtime_root);
         details.push(format!("refreshed_entries={refreshed}"));
@@ -8125,6 +9505,10 @@ impl HostBridge {
         details.push(format!(
             "starter_usage_summary={}",
             starter_usage_summary_path.display()
+        ));
+        details.push(format!(
+            "triangulation_loop_summary={}",
+            triangulation_loop_summary_path.display()
         ));
         Ok(HostActionResult {
             summary: "Project patch readiness refreshed".into(),
@@ -8303,6 +9687,8 @@ impl HostBridge {
         let usage_summary = derive_family_usage_summary(&self.output_root)?;
         let usage_summary_path = persist_family_usage_summary(&self.runtime_root, &usage_summary)?;
         let starter_usage_summary_path = refresh_starter_usage_summary(&self.runtime_root)?;
+        let triangulation_loop_summary_path =
+            refresh_triangulation_loop_summary(&self.runtime_root)?;
         details.push(format!("refreshed_entries={refreshed}"));
         details.push(format!("skipped_entries={skipped}"));
         details.push(format!("refresh_status={}", refresh_status_path.display()));
@@ -8310,6 +9696,10 @@ impl HostBridge {
         details.push(format!(
             "starter_usage_summary={}",
             starter_usage_summary_path.display()
+        ));
+        details.push(format!(
+            "triangulation_loop_summary={}",
+            triangulation_loop_summary_path.display()
         ));
         details.push(format!("family_usage_projects={}", usage_summary.total_projects));
         Ok(HostActionResult {
@@ -10619,6 +12009,8 @@ impl HostBridge {
         let family_usage_summary_path =
             refresh_family_usage_summary(&self.output_root, &self.runtime_root)?;
         let starter_usage_summary_path = refresh_starter_usage_summary(&self.runtime_root)?;
+        let triangulation_loop_summary_path =
+            refresh_triangulation_loop_summary(&self.runtime_root)?;
         let acceptance_status = load_acceptance_status(&self.runtime_root, &request.request_id);
         let family = receipt.family_id.as_ref().map(FamilyId::as_str).unwrap_or("unknown_family");
         Ok(HostActionResult {
@@ -10675,6 +12067,10 @@ impl HostBridge {
                     ),
                     format!("family_usage_summary={}", family_usage_summary_path.display()),
                     format!("starter_usage_summary={}", starter_usage_summary_path.display()),
+                    format!(
+                        "triangulation_loop_summary={}",
+                        triangulation_loop_summary_path.display()
+                    ),
                 ];
                 if let Some(summary) = &starter_override_summary {
                     details.push(format!("starter_override={summary}"));
@@ -17741,69 +19137,415 @@ fn build_starter_override_summary(starter_override: &BuildStarterOverride) -> St
     )
 }
 
-fn derive_proposed_constraint_receipt(
+fn proposal_origin_and_source_id(
+    proposal: &ProposedConstraintReceipt,
+) -> (String, String) {
+    if proposal
+        .proposed_constraint
+        .constraint_origin
+        == "triangulated_task_failure"
+    {
+        (
+            "triangulated_task_failure".into(),
+            proposal.source_verification_id.clone(),
+        )
+    } else {
+        (
+            "build_verification_failure".into(),
+            proposal.source_verification_id.clone(),
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+struct BuildVerificationXray {
+    task_shape: String,
+    task_subtype: String,
+    lineage_key: String,
+    failure_class: String,
+    trigger_class: Option<String>,
+    attempt_method: String,
+    narrow_usage_pattern: Vec<String>,
+    findings: Vec<String>,
+    recommended_constraint_summary: String,
+}
+
+fn extract_rust_error_codes(lines: &[String]) -> Vec<String> {
+    let mut codes = Vec::new();
+    for line in lines {
+        let mut remaining = line.as_str();
+        while let Some(index) = remaining.find("error[E") {
+            let suffix = &remaining[index + "error[".len()..];
+            if let Some(end) = suffix.find(']') {
+                let code = &suffix[..end];
+                if code.starts_with('E') && code.len() == 5 {
+                    codes.push(code.to_string());
+                }
+                remaining = &suffix[end + 1..];
+            } else {
+                break;
+            }
+        }
+    }
+    codes.sort();
+    codes.dedup();
+    codes
+}
+
+fn extract_first_build_source_anchor(lines: &[String]) -> Option<String> {
+    for line in lines {
+        let trimmed = line.trim();
+        if let Some(anchor) = trimmed.strip_prefix("--> ") {
+            return Some(anchor.to_string());
+        }
+    }
+    None
+}
+
+fn derive_build_verification_xray(
+    verification: &BuildVerificationReceipt,
+) -> BuildVerificationXray {
+    let family = verification
+        .suggested_family_id
+        .as_ref()
+        .map(FamilyId::as_str)
+        .unwrap_or("unknown_family");
+    let tool = verification
+        .suggested_tool_kind
+        .as_deref()
+        .unwrap_or("unknown_tool");
+    let review_subject = verification.review_subject.as_str();
+    let failure_mode = verification.failure_mode.as_str();
+    let rust_error_codes = extract_rust_error_codes(&verification.reasons);
+    let source_anchor = extract_first_build_source_anchor(&verification.reasons);
+    let reason_blob = verification.reasons.join("\n").to_ascii_lowercase();
+    let mut task_subtype = format!("{review_subject}:{failure_mode}");
+    let mut findings = Vec::new();
+
+    if !rust_error_codes.is_empty() {
+        findings.push(format!(
+            "rust error codes: {}",
+            rust_error_codes.join(", ")
+        ));
+    }
+    if let Some(anchor) = &source_anchor {
+        findings.push(format!("source anchor: {anchor}"));
+    }
+
+    if failure_mode == "cargo_check_failed_after_build"
+        && rust_error_codes.iter().any(|code| code == "E0500" || code == "E0501")
+        && reason_blob.contains("ui.columns")
+    {
+        task_subtype = "post_build_compile_contract:rust_borrow_conflict_in_columns_closure".into();
+        findings.push(
+            "xray narrowed the compile failure to a borrow conflict caused by using the outer egui ui handle inside a columns closure".into(),
+        );
+    } else if failure_mode == "cargo_check_failed_after_build"
+        && rust_error_codes.iter().any(|code| code == "E0500" || code == "E0501")
+    {
+        task_subtype = "post_build_compile_contract:rust_borrow_conflict".into();
+        findings.push(
+            "xray narrowed the compile failure to a Rust borrow conflict in emitted UI code".into(),
+        );
+    } else if failure_mode == "cargo_check_failed_after_build" && !rust_error_codes.is_empty() {
+        task_subtype = format!(
+            "post_build_compile_contract:rust_compile_error_codes:{}",
+            rust_error_codes.join("+").to_ascii_lowercase()
+        );
+        findings.push(
+            "xray narrowed the compile failure to a repeatable Rust compiler error-code pattern".into(),
+        );
+    }
+
+    let lineage_key = format!(
+        "build-verification:{}:{}:{}:{}",
+        family,
+        tool,
+        review_subject,
+        sanitize_filename_like(&task_subtype)
+    );
+    let mut narrow_usage_pattern = vec![
+        format!("family_id={family}"),
+        format!("tool_kind={tool}"),
+        format!("review_subject={review_subject}"),
+        format!("failure_mode={failure_mode}"),
+        format!("task_subtype={task_subtype}"),
+    ];
+    if !rust_error_codes.is_empty() {
+        narrow_usage_pattern.push(format!(
+            "rust_error_codes={}",
+            rust_error_codes.join(",")
+        ));
+    }
+    if let Some(anchor) = &source_anchor {
+        narrow_usage_pattern.push(format!("source_anchor={anchor}"));
+    }
+
+    let recommended_constraint_summary =
+        if task_subtype == "post_build_compile_contract:rust_borrow_conflict_in_columns_closure" {
+            "avoid emitting feature blocks against the outer egui `ui` handle from inside `ui.columns(...)` closures; repeated builds converge on a Rust borrow conflict in that exact posture".into()
+        } else if task_subtype == "post_build_compile_contract:rust_borrow_conflict" {
+            "avoid retrying the same emitted Rust UI ownership pattern without changing closure-local borrow posture; repeated builds converge on borrow-conflict compile failure".into()
+        } else {
+            format!(
+                "avoid retrying the same generated build posture for `{}` under `{}` without changing method; repeated verification converges on the same narrow blocker",
+                review_subject, failure_mode
+            )
+        };
+
+    BuildVerificationXray {
+        task_shape: "build_verification_failure".into(),
+        task_subtype,
+        lineage_key,
+        failure_class: failure_mode.to_string(),
+        trigger_class: Some(review_subject.to_string()),
+        attempt_method: format!("generated_build:{}:{}", family, tool),
+        narrow_usage_pattern,
+        findings,
+        recommended_constraint_summary,
+    }
+}
+
+fn derive_proposed_constraint_from_build_promotion_candidate(
+    candidate: &ConstraintPromotionCandidate,
     verification: &BuildVerificationReceipt,
 ) -> ProposedConstraintReceipt {
-    let replacement_guidance = verification
-        .findings
-        .iter()
-        .find_map(|finding| {
-            finding
-                .strip_prefix("replacement guidance: ")
-                .map(|value| value.to_string())
-        })
-        .or_else(|| {
-            verification
-                .blocked_methods
-                .first()
-                .map(|_| "implement the missing deterministic coverage before retrying".to_string())
-        });
+    let subtype = candidate
+        .task_subtype
+        .clone()
+        .unwrap_or_else(|| "unknown_build_failure_subtype".into());
+    let failure_class_slug = sanitize_filename_like(&candidate.failure_class);
     ProposedConstraintReceipt {
         proposal_id: chatty_factory_core::timestamp_id("constraint-proposal"),
-        request_id: verification.request_id.clone(),
-        source_verification_id: verification.verification_id.clone(),
+        request_id: candidate.request_id.clone(),
+        source_verification_id: candidate.triangulation_session_id.clone(),
         status: "proposed_unapproved".into(),
         rationale: {
-            let mut rationale = verification.reasons.clone();
-            rationale.extend(verification.findings.clone());
+            let mut rationale = candidate.findings.clone();
+            rationale.extend(candidate.narrow_usage_pattern.clone());
+            rationale.push(format!(
+                "confidence posture: {}",
+                candidate.confidence_posture
+            ));
             rationale
         },
         proposed_constraint: ImplementationConstraint {
             constraint_id: format!(
-                "proposed-build-constraint:{}:{}",
-                verification.review_subject, verification.failure_mode
+                "triangulated-build-constraint:{}:{}:{}",
+                sanitize_filename_like(&verification.review_subject),
+                sanitize_filename_like(&subtype),
+                failure_class_slug
             ),
-            constraint_scope: verification.review_subject.clone(),
-            constraint_origin: "build_verification_failure".into(),
+            constraint_scope: format!(
+                "triangulated_build_failure:{}",
+                verification.review_subject
+            ),
+            constraint_origin: "triangulated_task_failure".into(),
             family_id: verification.suggested_family_id.clone(),
             tool_kind: verification.suggested_tool_kind.clone(),
-            language_id: None,
-            constraint_kind: verification.failure_mode.clone(),
-            forbidden_method_summary: verification
-                .blocked_methods
-                .first()
-                .cloned()
-                .unwrap_or_else(|| {
-                    "do not proceed with the current deterministic build method".into()
-                }),
+            language_id: Some("rust".into()),
+            constraint_kind: candidate.failure_class.clone(),
+            forbidden_method_summary: candidate.recommended_constraint_summary.clone(),
             forbidden_markers: Vec::new(),
             required_markers: Vec::new(),
             forbidden_surface_groups: Vec::new(),
-            violation_reason_template: verification
-                .reasons
+            violation_reason_template: candidate
+                .findings
                 .first()
                 .cloned()
                 .unwrap_or_else(|| {
-                    "the current deterministic build route is known to fail for this shape"
+                    "repeated build-verification triangulation converged on the same narrow blocker"
                         .into()
                 }),
-            replacement_guidance,
+            replacement_guidance: Some(
+                "change emitted method or helper posture before retrying the exact same narrowed build pattern; the current usage pattern keeps failing verification".into(),
+            ),
             severity: "error".into(),
             active: false,
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         },
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     }
+}
+
+fn record_build_verification_triangulation(
+    runtime_root: &Path,
+    request: &RequestRecord,
+    verification: &BuildVerificationReceipt,
+    verification_path: &Path,
+) -> Result<(Vec<PathBuf>, Option<ProposedConstraintReceipt>, Option<PathBuf>)> {
+    let xray = derive_build_verification_xray(verification);
+    let vault_root = runtime_root.join("failure_vault");
+    let prior_entries = load_failure_vault_entries_for_lineage(&vault_root, &xray.lineage_key);
+    let session_id = format!(
+        "triangulation-{}",
+        sanitize_filename(&format!("{}-{}", request.request_id, xray.lineage_key))
+    );
+    let mut paths = Vec::new();
+    let floor_root = runtime_root.join("atomization_floor_decisions");
+    let floor_decision = AtomizationFloorDecision {
+        decision_id: chatty_factory_core::timestamp_id("atomization-floor"),
+        request_id: request.request_id.clone(),
+        task_id: format!("build-verification:{}", verification.verification_id),
+        project_name: request
+            .active_project
+            .clone()
+            .unwrap_or_else(|| "generated_build".into()),
+        task_shape: Some(xray.task_shape.clone()),
+        task_subtype: Some(xray.task_subtype.clone()),
+        current_granularity: "build_failure_signature".into(),
+        decision: "at_floor".into(),
+        alternate_methods: vec![
+            "retry_generation_with_changed_ui_ownership_posture".into(),
+            "retry_generation_with_anchor_locality_shift".into(),
+            "retry_generation_after_xray_signature_review".into(),
+        ],
+        findings: xray.findings.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let floor_path = persist_atomization_floor_decision(&floor_root, &floor_decision)?;
+    paths.push(floor_path.clone());
+
+    let prior_same_failure_count = prior_entries
+        .iter()
+        .filter(|entry| entry.failure_class == xray.failure_class && entry.status == "provisional_open")
+        .count();
+    let mut distinct_attempt_methods = prior_entries
+        .iter()
+        .filter(|entry| entry.failure_class == xray.failure_class && entry.status == "provisional_open")
+        .filter_map(|entry| entry.attempt_method.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    distinct_attempt_methods.insert(xray.attempt_method.clone());
+
+    let vault_entry = FailureVaultEntry {
+        vault_entry_id: chatty_factory_core::timestamp_id("failure-vault"),
+        request_id: request.request_id.clone(),
+        task_id: format!("build-verification:{}", verification.verification_id),
+        project_name: request
+            .active_project
+            .clone()
+            .unwrap_or_else(|| "generated_build".into()),
+        task_shape: Some(xray.task_shape.clone()),
+        task_subtype: Some(xray.task_subtype.clone()),
+        task_kind: "build_verification".into(),
+        failure_class: xray.failure_class.clone(),
+        trigger_class: xray.trigger_class.clone(),
+        triangulation_session_id: session_id.clone(),
+        atomization_floor_decision_path: Some(floor_path.display().to_string()),
+        attempt_method: Some(xray.attempt_method.clone()),
+        source_attempt_receipt_path: verification_path.display().to_string(),
+        source_decomposition_receipt_path: None,
+        status: "provisional_open".into(),
+        decomposition_depth: 0,
+        narrow_usage_pattern: xray.narrow_usage_pattern.clone(),
+        findings: xray.findings.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let vault_path = persist_failure_vault_entry(&vault_root, &vault_entry)?;
+    paths.push(vault_path.clone());
+
+    let triangulation_root = runtime_root.join("triangulation_sessions");
+    let alternate_method_evidence_present = distinct_attempt_methods.len() >= 2;
+    let session = TriangulationSession {
+        session_id: session_id.clone(),
+        request_id: request.request_id.clone(),
+        project_name: vault_entry.project_name.clone(),
+        task_shape: Some(xray.task_shape.clone()),
+        task_subtype: Some(xray.task_subtype.clone()),
+        task_lineage_key: xray.lineage_key.clone(),
+        status: "provisional_open".into(),
+        convergence_posture: if prior_same_failure_count >= 1 && alternate_method_evidence_present {
+            "repeated_convergent_failure".into()
+        } else if prior_same_failure_count >= 1 {
+            "repeated_same_method_needs_alternate_retry".into()
+        } else {
+            "single_observation".into()
+        },
+        atomization_floor_decision_path: Some(floor_path.display().to_string()),
+        successful_alternate_method: false,
+        attempts: vec![TriangulationAttempt {
+            attempt_id: verification.verification_id.clone(),
+            task_id: vault_entry.task_id.clone(),
+            task_subtype: Some(xray.task_subtype.clone()),
+            attempt_method: xray.attempt_method.clone(),
+            outcome: verification.failure_mode.clone(),
+            failure_class: Some(xray.failure_class.clone()),
+            source_attempt_receipt_path: Some(verification_path.display().to_string()),
+            source_decomposition_receipt_path: None,
+        }],
+        findings: {
+            let mut findings = xray.findings.clone();
+            findings.push(format!(
+                "same-failure observations for lineage so far: {}",
+                prior_same_failure_count
+            ));
+            findings.push(format!(
+                "distinct attempt methods observed so far: {}",
+                distinct_attempt_methods.len()
+            ));
+            if prior_same_failure_count >= 1 && !alternate_method_evidence_present {
+                findings.push(
+                    "promotion is intentionally blocked until the same narrow failure has been observed under a changed retry method or posture".into(),
+                );
+            }
+            findings
+        },
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let triangulation_path = persist_triangulation_session(&triangulation_root, &session)?;
+    paths.push(triangulation_path.clone());
+
+    let mut proposal = None;
+    let mut proposal_path = None;
+    if prior_same_failure_count >= 1 && alternate_method_evidence_present {
+        let promotion_root = runtime_root.join("constraint_promotion_candidates");
+        let candidate = ConstraintPromotionCandidate {
+            candidate_id: chatty_factory_core::timestamp_id("constraint-promotion"),
+            request_id: request.request_id.clone(),
+            triangulation_session_id: session_id,
+            project_name: vault_entry.project_name.clone(),
+            task_shape: Some(xray.task_shape.clone()),
+            task_subtype: Some(xray.task_subtype.clone()),
+            failure_class: xray.failure_class.clone(),
+            trigger_class: xray.trigger_class.clone(),
+            confidence_posture: "triangulated_build_verification_repeated_failure".into(),
+            status: "proposed_for_review".into(),
+            matched_constraint_principles: vec![
+                "do_not_promote_one_off_failures".into(),
+                "classify_failure_before_proceeding".into(),
+                "retry_with_alternate_method_before_promotion".into(),
+            ],
+            narrow_usage_pattern: xray.narrow_usage_pattern.clone(),
+            evidence_receipt_paths: vec![
+                verification_path.display().to_string(),
+                vault_path.display().to_string(),
+                triangulation_path.display().to_string(),
+            ],
+            findings: {
+                let mut findings = xray.findings.clone();
+                findings.push(
+                    "promotion candidate was created only after repeated convergent build-verification failures on the same narrow signature".into(),
+                );
+                findings
+            },
+            recommended_constraint_summary: xray.recommended_constraint_summary.clone(),
+            created_at: Some(chatty_factory_core::timestamp_id("created")),
+        };
+        let promotion_path =
+            persist_constraint_promotion_candidate(&promotion_root, &candidate)?;
+        paths.push(promotion_path);
+        let proposed_constraint =
+            derive_proposed_constraint_from_build_promotion_candidate(&candidate, verification);
+        let persisted_proposal_path =
+            persist_trianguated_proposed_constraint_receipt(runtime_root, &proposed_constraint)?;
+        paths.push(persisted_proposal_path.clone());
+        proposal = Some(proposed_constraint);
+        proposal_path = Some(persisted_proposal_path);
+    }
+
+    let summary_path = refresh_triangulation_loop_summary(runtime_root)?;
+    paths.push(summary_path);
+    Ok((paths, proposal, proposal_path))
 }
 
 fn persist_build_verification_receipt(
@@ -17813,17 +19555,6 @@ fn persist_build_verification_receipt(
     let path = runtime_root
         .join("build_verification_receipts")
         .join(format!("{}-build-verification.json", receipt.request_id));
-    persist_json_pretty(&path, receipt)?;
-    Ok(path)
-}
-
-fn persist_proposed_constraint_receipt(
-    runtime_root: &Path,
-    receipt: &ProposedConstraintReceipt,
-) -> Result<PathBuf> {
-    let path = runtime_root
-        .join("proposed_constraint_receipts")
-        .join(format!("{}-proposed-constraint.json", receipt.request_id));
     persist_json_pretty(&path, receipt)?;
     Ok(path)
 }
@@ -17971,6 +19702,26 @@ fn load_existing_proposed_constraint_receipt(
     Some((receipt, path))
 }
 
+fn load_proposed_constraint_receipt_for_source_verification(
+    runtime_root: &Path,
+    source_verification_id: &str,
+) -> Option<(ProposedConstraintReceipt, PathBuf)> {
+    let root = runtime_root.join("proposed_constraint_receipts");
+    let paths = fs::read_dir(root).ok()?;
+    for entry in paths.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let contents = fs::read_to_string(&path).ok()?;
+        let receipt = serde_json::from_str::<ProposedConstraintReceipt>(&contents).ok()?;
+        if receipt.source_verification_id == source_verification_id {
+            return Some((receipt, path));
+        }
+    }
+    None
+}
+
 fn persist_post_build_failure_learning(
     runtime_root: &Path,
     request: &RequestRecord,
@@ -17982,7 +19733,12 @@ fn persist_post_build_failure_learning(
     failure_mode: &str,
     blocked_method: &str,
     summary: &str,
-) -> Result<(BuildVerificationReceipt, PathBuf, ProposedConstraintReceipt, PathBuf)> {
+) -> Result<(
+    BuildVerificationReceipt,
+    PathBuf,
+    Option<ProposedConstraintReceipt>,
+    Option<PathBuf>,
+)> {
     let failure_class = classify_failure(summary);
     let (
         review_subject,
@@ -18051,41 +19807,13 @@ fn persist_post_build_failure_learning(
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
     let verification_path = persist_build_verification_receipt(runtime_root, &verification)?;
-    let proposed_constraint = ProposedConstraintReceipt {
-        proposal_id: chatty_factory_core::timestamp_id("constraint-proposal"),
-        request_id: request.request_id.clone(),
-        source_verification_id: verification.verification_id.clone(),
-        status: "proposed_unapproved".into(),
-        rationale: vec![
-            summary.to_string(),
-            "capture this post-build failure as a negative rule candidate before retrying the same generation method".into(),
-            format!("replacement guidance: {replacement_guidance}"),
-        ],
-        proposed_constraint: ImplementationConstraint {
-            constraint_id: format!(
-                "proposed-post-build-constraint:{}:{}",
-                project_name, specific_failure_mode
-            ),
-            constraint_scope: review_subject.into(),
-            constraint_origin: "build_verification_failure".into(),
-            family_id,
-            tool_kind: tool_kind.map(str::to_string),
-            language_id: None,
-            constraint_kind: specific_failure_mode.to_string(),
-            forbidden_method_summary: specific_blocked_method.to_string(),
-            forbidden_markers: Vec::new(),
-            required_markers: Vec::new(),
-            forbidden_surface_groups: Vec::new(),
-            violation_reason_template: summary.to_string(),
-            replacement_guidance: Some(replacement_guidance.into()),
-            severity: "error".into(),
-            active: false,
-            created_at: Some(chatty_factory_core::timestamp_id("created")),
-        },
-        created_at: Some(chatty_factory_core::timestamp_id("created")),
-    };
-    let proposed_constraint_path =
-        persist_proposed_constraint_receipt(runtime_root, &proposed_constraint)?;
+    let (_triangulation_paths, proposed_constraint, proposed_constraint_path) =
+        record_build_verification_triangulation(
+            runtime_root,
+            request,
+            &verification,
+            &verification_path,
+        )?;
     Ok((
         verification,
         verification_path,
@@ -18345,10 +20073,13 @@ fn emit_fallback_result(
             if let Some((verification, verification_path)) =
                 load_existing_build_verification_receipt(runtime_root, &request.request_id)
             {
-                let proposed = load_existing_proposed_constraint_receipt(
+                let proposed = load_proposed_constraint_receipt_for_source_verification(
                     runtime_root,
-                    &request.request_id,
-                );
+                    &verification.verification_id,
+                )
+                .or_else(|| {
+                    load_existing_proposed_constraint_receipt(runtime_root, &request.request_id)
+                });
                 (
                     Some(verification),
                     Some(verification_path),
@@ -18366,14 +20097,18 @@ fn emit_fallback_result(
                 );
                 let verification_path =
                     persist_build_verification_receipt(runtime_root, &verification)?;
-                let proposed_constraint = derive_proposed_constraint_receipt(&verification);
-                let proposed_constraint_path =
-                    persist_proposed_constraint_receipt(runtime_root, &proposed_constraint)?;
+                let (_triangulation_paths, proposed_constraint, proposed_constraint_path) =
+                    record_build_verification_triangulation(
+                        runtime_root,
+                        request,
+                        &verification,
+                        &verification_path,
+                    )?;
                 (
                     Some(verification),
                     Some(verification_path),
-                    Some(proposed_constraint),
-                    Some(proposed_constraint_path),
+                    proposed_constraint,
+                    proposed_constraint_path,
                 )
             }
         } else {
@@ -20248,6 +21983,15 @@ fn persist_starter_usage_summary(
     Ok(path)
 }
 
+fn persist_triangulation_loop_summary(
+    runtime_root: &Path,
+    summary: &TriangulationLoopSummaryReceipt,
+) -> Result<PathBuf> {
+    let path = runtime_root.join("triangulation_loop_summary.json");
+    persist_json_pretty(&path, summary)?;
+    Ok(path)
+}
+
 fn refresh_family_usage_summary(output_root: &Path, runtime_root: &Path) -> Result<PathBuf> {
     let summary = derive_family_usage_summary(output_root)?;
     persist_family_usage_summary(runtime_root, &summary)
@@ -20256,6 +22000,11 @@ fn refresh_family_usage_summary(output_root: &Path, runtime_root: &Path) -> Resu
 fn refresh_starter_usage_summary(runtime_root: &Path) -> Result<PathBuf> {
     let summary = derive_starter_usage_summary(runtime_root)?;
     persist_starter_usage_summary(runtime_root, &summary)
+}
+
+fn refresh_triangulation_loop_summary(runtime_root: &Path) -> Result<PathBuf> {
+    let summary = derive_triangulation_loop_summary(runtime_root)?;
+    persist_triangulation_loop_summary(runtime_root, &summary)
 }
 
 fn persist_template_governance_receipt(

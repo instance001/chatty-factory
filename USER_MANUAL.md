@@ -31,6 +31,9 @@ That now includes a newer execution idea:
 - and the long-term goal is for the factory to infer those splits from its own
   task receipts and failures instead of relying on us to hand-author every next
   decomposition path
+- but those failures should not immediately become durable negative constraints:
+  they should first live in a provisional vault, be retried differently, and
+  only promote into the real library when the evidence converges narrowly enough
 
 ## License
 
@@ -136,6 +139,7 @@ In the UI you can:
 - pin favorites and track recent lanes
 - keep notes on lanes
 - export lane summaries and diffs
+- launch the retry-search ladder proof directly from the proof controls
 
 The UI and CLI surfaces now also reflect build-task governance more clearly:
 
@@ -143,6 +147,14 @@ The UI and CLI surfaces now also reflect build-task governance more clearly:
 - plan and work-order artifacts
 - model-authored microtask attempts
 - decomposition recommendations when a task needs to be split further
+- model-ladder posture:
+  - whether a task only exhausted the current model and escalated upward
+  - or exhausted the full available candidate ladder and should remain provisional evidence
+- retry-search proof posture:
+  - latest ladder proof status and outcome
+  - factory-owned ladder ceiling
+  - configured shell timeout buffer
+  - recommended shell timeout for operators
 
 ## 4. What ChattyFactory Can Do Today
 
@@ -360,6 +372,64 @@ Run the full runtime smoke path:
 ```powershell
 cargo run -p chatty_factory_cli -- runtime-smoke
 ```
+
+The runtime layer now records enough metadata in its receipts to distinguish:
+
+- launch timeout before the local model server became responsive
+- planner request timeout after launch
+- model-task generation timeout after launch
+- normal completion followed by intentional host cleanup of the temporary server
+
+The default runtime budgets are currently:
+
+- launch wait: 90 seconds
+- planner request: 420 seconds
+- model-task generation request: 300 seconds
+- shell timeout buffer recommendation: 60 seconds
+
+When you want to inspect a slow or failed run, the most useful receipt folders are:
+
+- `runtime/runtime_checks/`
+- `runtime/planner_runs/`
+- `runtime/model_task_generation_receipts/`
+- `runtime/retry_search_proofs/`
+
+For the retry-search model escalation proof specifically, the proof receipt now
+records a worst-case outer timeout budget computed from:
+
+- retry posture count
+- model candidate count
+- launch timeout
+- request timeout
+- cleanup overhead
+
+The recommended operator shell timeout is:
+
+- `expected_outer_timeout_secs + shell_timeout_buffer_secs`
+
+The default shell timeout buffer recommendation is currently:
+
+- `60 seconds`
+
+Use that receipt as the source of truth.
+A shell timeout or terminal cutoff is not a factory failure by itself unless the
+receipt shows:
+
+- `final_outcome=full_model_ladder_exhausted`
+- `final_outcome=internal_timeout_observed`
+
+The desktop UI now surfaces this in two places:
+
+- `Runtime Status`
+  - current runtime config
+  - shell timeout buffer
+  - latest ladder proof posture
+- `Cross-Family Paired Proof -> Proof Runtime Posture`
+  - current runtime request budgets
+  - latest ladder proof outcome
+  - factory-owned ladder ceiling
+  - recommended shell timeout
+  - `Run Retry-Search Ladder Proof`
 
 Run a planner handoff manually:
 

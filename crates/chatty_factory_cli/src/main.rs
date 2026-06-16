@@ -45,6 +45,12 @@ fn main() -> Result<()> {
     }
     if matches!(
         args.first().map(String::as_str),
+        Some("run-retry-search-model-proof")
+    ) {
+        return run_retry_search_model_proof_mode(&host_bridge, &args);
+    }
+    if matches!(
+        args.first().map(String::as_str),
         Some("run-cross-family-helper-monitoring-proof")
     ) {
         return run_cross_family_helper_monitoring_proof_mode(&host_bridge, &args);
@@ -497,6 +503,16 @@ fn run_cross_family_helper_monitoring_proof_mode(
         &planner_options_from_args(args),
     )?;
     println!("ChattyFactory cross-family paired proof");
+    print_host_action_result(&result, has_json_flag(args))
+}
+
+fn run_retry_search_model_proof_mode(
+    host_bridge: &HostBridge,
+    args: &[String],
+) -> Result<()> {
+    let result =
+        host_bridge.run_retry_search_model_escalation_proof(&planner_options_from_args(args))?;
+    println!("ChattyFactory retry-search model proof");
     print_host_action_result(&result, has_json_flag(args))
 }
 

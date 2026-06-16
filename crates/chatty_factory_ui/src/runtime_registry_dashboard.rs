@@ -8,6 +8,10 @@ impl ChattyFactoryUiApp {
             ui.label(format!("Context: {}", config.context_size));
             ui.label(format!("GPU layers: {}", config.gpu_layers));
             ui.label(format!(
+                "Shell timeout buffer: {}s",
+                config.shell_timeout_buffer_secs
+            ));
+            ui.label(format!(
                 "Default model: {}",
                 short_path(config.default_model_path.as_deref().unwrap_or("none"))
             ));
@@ -36,6 +40,91 @@ impl ChattyFactoryUiApp {
             ));
         } else {
             ui.label("No runtime model catalog found yet.");
+        }
+        ui.separator();
+        ui.heading("Retry-Search Proof");
+        if let Some((receipt, receipt_path)) =
+            load_latest_retry_search_proof_receipt(&self.workspace_root)
+        {
+            ui.label(format!("Latest proof kind: {}", receipt.proof_kind));
+            ui.label(format!("Status: {}", receipt.status));
+            ui.label(format!(
+                "Final outcome: {}",
+                receipt
+                    .final_outcome
+                    .as_deref()
+                    .unwrap_or("still_running_or_not_recorded")
+            ));
+            ui.label(format!(
+                "Outer timeout ceiling: {}s",
+                receipt.expected_outer_timeout_secs
+            ));
+            ui.label(format!(
+                "Candidate ladder: {} model(s) x {} retry posture(s)",
+                receipt.model_candidate_count, receipt.retry_posture_count
+            ));
+            ui.label(format!(
+                "Per-attempt budget: launch {}s + request {}s + cleanup {}s",
+                receipt.launch_timeout_secs,
+                receipt.request_timeout_secs,
+                receipt.cleanup_overhead_secs
+            ));
+            if let Some(selector) = receipt.requested_model_selector.as_deref() {
+                ui.label(format!("Requested selector: {}", short_path(selector)));
+            }
+            if !receipt.attempted_models.is_empty() {
+                ui.label(format!(
+                    "Attempted models: {}",
+                    receipt
+                        .attempted_models
+                        .iter()
+                        .map(|path| short_path(path))
+                        .collect::<Vec<_>>()
+                        .join(" -> ")
+                ));
+            }
+            if let Some(model) = receipt.successful_model_path.as_deref() {
+                ui.label(format!("Successful model: {}", short_path(model)));
+            }
+            if let Some(method) = receipt.successful_method.as_deref() {
+                ui.label(format!("Successful method: {method}"));
+            }
+            if receipt.internal_timeout_observed {
+                ui.label("Internal timeout observed: true");
+            } else if receipt.method_space_exhausted {
+                ui.label("Full ladder exhausted: true");
+            } else if receipt.status == "running" {
+                ui.label("Factory-side interpretation: still running");
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!("Receipt: {}", short_path(receipt_path.to_string_lossy().as_ref())));
+                if let Some(created_at) = receipt.created_at.as_deref() {
+                    ui.separator();
+                    ui.label(format!("Created: {}", created_at));
+                }
+                ui.separator();
+                ui.label(format!("Receipt id: {}", receipt.receipt_id));
+            });
+            egui::CollapsingHeader::new("Retry-Search Proof Notes")
+                .default_open(false)
+                .show(ui, |ui| {
+                    if receipt.notes.is_empty() {
+                        ui.label("No proof notes recorded.");
+                    } else {
+                        for note in &receipt.notes {
+                            ui.label(format!("- {}", note));
+                        }
+                    }
+                    if !receipt.attempted_methods.is_empty() {
+                        ui.separator();
+                        ui.label("Attempted methods");
+                        for method in &receipt.attempted_methods {
+                            ui.label(format!("- {}", method));
+                        }
+                    }
+                });
+        } else {
+            ui.label("No retry-search proof receipt found yet.");
         }
         ui.separator();
         ui.heading("Family Usage");
@@ -221,6 +310,123 @@ impl ChattyFactoryUiApp {
             if ui.small_button("Refresh family governance now").clicked() {
                 self.spawn_task(UiTask::RefreshFamilyGovernance);
             }
+        }
+        ui.separator();
+        ui.heading("Triangulation Loop");
+        if let Some(summary) = load_triangulation_loop_summary(&self.workspace_root) {
+            ui.label(format!(
+                "Open provisional vault entries: {}",
+                summary.open_provisional_vault_entries
+            ));
+            ui.label(format!(
+                "Recent triangulation sessions: {}",
+                summary.triangulation_session_count
+            ));
+            ui.label(format!(
+                "Floor-level convergent failures: {}",
+                summary.floor_level_convergent_failures
+            ));
+            ui.label(format!(
+                "Pending promotion candidates: {}",
+                summary.pending_promotion_candidates
+            ));
+            ui.label(format!(
+                "Current-model-only exhaustions: {}",
+                summary.current_model_only_exhaustion_count
+            ));
+            ui.label(format!(
+                "Full model-ladder exhaustions: {}",
+                summary.full_model_ladder_exhaustion_count
+            ));
+            if let (Some(label), Some(granularity), Some(decision)) = (
+                summary.latest_floor_task_label.as_deref(),
+                summary.latest_floor_granularity.as_deref(),
+                summary.latest_floor_decision.as_deref(),
+            ) {
+                ui.label(format!(
+                    "Latest floor decision: {} [{} | {}]",
+                    label, granularity, decision
+                ));
+            }
+            if let (Some(label), Some(posture)) = (
+                summary.latest_session_label.as_deref(),
+                summary.latest_session_convergence_posture.as_deref(),
+            ) {
+                ui.label(format!("Latest triangulation: {} [{}]", label, posture));
+            }
+            if let (Some(label), Some(posture)) = (
+                summary.latest_model_ladder_task_label.as_deref(),
+                summary.latest_model_ladder_posture.as_deref(),
+            ) {
+                let attempted_models = if summary.latest_model_ladder_attempted_models.is_empty() {
+                    "no model inventory recorded".to_string()
+                } else {
+                    summary.latest_model_ladder_attempted_models.join(" -> ")
+                };
+                ui.label(format!(
+                    "Latest model ladder: {} [{} | {}]",
+                    label, posture, attempted_models
+                ));
+            }
+            if let (Some(label), Some(posture)) = (
+                summary.latest_candidate_label.as_deref(),
+                summary.latest_candidate_confidence_posture.as_deref(),
+            ) {
+                ui.label(format!("Top candidate: {} [{}]", label, posture));
+            }
+            if let Some(proposal_path) = summary.latest_candidate_proposal_path.as_deref() {
+                if let Some(proposal) = load_proposed_constraint_receipt(proposal_path) {
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.small_button("Reveal derived proposal").clicked() {
+                            self.reveal_governed_artifact(
+                                proposal_path,
+                                "Revealed proposed constraint receipt",
+                                "Open failed",
+                                "Revealed proposed constraint receipt",
+                                "Open failed",
+                                None,
+                            );
+                        }
+                        if proposal.status != "approved"
+                            && ui.small_button("Approve top candidate").clicked()
+                        {
+                            self.spawn_task(UiTask::ApproveProposedConstraint {
+                                request_id_or_path: proposal_path.to_string(),
+                            });
+                        }
+                    });
+                }
+            }
+            ui.horizontal_wrapped(|ui| {
+                if ui.small_button("Refresh family governance now").clicked() {
+                    self.spawn_task(UiTask::RefreshFamilyGovernance);
+                }
+                ui.separator();
+                ui.label(format!("Triangulation summary id: {}", summary.summary_id));
+                ui.separator();
+                ui.label(format!("Triangulation updated: {}", summary.updated_at));
+                ui.separator();
+                if ui.small_button("Jump to negative shelf panel").clicked() {
+                    self.push_toast(
+                        "Negative shelf details are in the main workspace panel.",
+                        ToastKind::Success,
+                    );
+                }
+            });
+        } else {
+            ui.label("No triangulation summary found yet.");
+            ui.horizontal_wrapped(|ui| {
+                if ui.small_button("Refresh family governance now").clicked() {
+                    self.spawn_task(UiTask::RefreshFamilyGovernance);
+                }
+                ui.separator();
+                if ui.small_button("Jump to negative shelf panel").clicked() {
+                    self.push_toast(
+                        "Negative shelf details are in the main workspace panel.",
+                        ToastKind::Success,
+                    );
+                }
+            });
         }
         ui.separator();
         ui.heading("Extension Registry");
