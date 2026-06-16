@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Result};
 
 use crate::{
-    DiscoveredModel, ModelTaskGenerationReceipt, PlannerExecutionReceipt, PlannerHandoff, PlannerResponse,
-    RuntimeCapabilityRecord, RuntimeConfig, RuntimeDiscoveryReceipt, RuntimeModelAssessment,
-    RuntimeModelCatalogReceipt, RuntimeSmokeReceipt,
+    DiscoveredModel, ModelTaskGenerationReceipt, PlannerExecutionReceipt, PlannerHandoff,
+    PlannerResponse, RuntimeCapabilityRecord, RuntimeConfig, RuntimeDiscoveryReceipt,
+    RuntimeModelAssessment, RuntimeModelCatalogReceipt, RuntimeSmokeReceipt,
 };
 
 struct PlannerParseOutcome {
@@ -509,9 +509,9 @@ pub fn run_local_text_generation(
         while Instant::now() < deadline {
             if let Some(status) = child.try_wait()? {
                 receipt.final_outcome = Some("server_exited_early".into());
-                receipt
-                    .notes
-                    .push(format!("model task server exited early with status {status}"));
+                receipt.notes.push(format!(
+                    "model task server exited early with status {status}"
+                ));
                 break;
             }
             if http_probe(config.host.as_str(), config.port)? {
@@ -572,7 +572,9 @@ pub fn run_local_text_generation(
             .get("choices")
             .and_then(|choices| choices.get(0))
             .and_then(|choice| choice.get("message"))
-            .ok_or_else(|| anyhow!("model task response did not contain chat completion message"))?;
+            .ok_or_else(|| {
+                anyhow!("model task response did not contain chat completion message")
+            })?;
         let content = message
             .get("content")
             .and_then(|content| content.as_str())
@@ -868,8 +870,9 @@ fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
     let has_request_mode_candidates = !handoff.candidate_request_modes.is_empty();
     let has_patch_recipe_candidates = !handoff.candidate_patch_recipe_ids.is_empty();
     let has_composition_patch_candidates = !handoff.candidate_composition_patch_kinds.is_empty();
-    let has_composition_helper_candidates =
-        !handoff.candidate_composition_helper_primitive_ids.is_empty();
+    let has_composition_helper_candidates = !handoff
+        .candidate_composition_helper_primitive_ids
+        .is_empty();
     let has_operator_bundle_candidates = !handoff.candidate_operator_bundle_ids.is_empty();
     let has_acceptance_recipe_candidates = !handoff.candidate_acceptance_recipe_ids.is_empty();
     let is_patch = matches!(handoff.mode, Some(crate::RequestMode::Patch));
@@ -1219,22 +1222,19 @@ fn normalize_choice_response_value(
         string_array(inner.get("recommended_patch_recipe_ids")).unwrap_or_default();
     let recommended_composition_patch_kinds =
         string_array(inner.get("recommended_composition_patch_kinds")).unwrap_or_default();
-    let recommended_composition_patch_primitive_classes = string_array(
-        inner.get("recommended_composition_patch_primitive_classes"),
-    )
-    .unwrap_or_default();
-    let recommended_composition_family_build_primitive_classes = string_array(
-        inner.get("recommended_composition_family_build_primitive_classes"),
-    )
-    .unwrap_or_default();
+    let recommended_composition_patch_primitive_classes =
+        string_array(inner.get("recommended_composition_patch_primitive_classes"))
+            .unwrap_or_default();
+    let recommended_composition_family_build_primitive_classes =
+        string_array(inner.get("recommended_composition_family_build_primitive_classes"))
+            .unwrap_or_default();
     let recommended_composition_layers =
         string_array(inner.get("recommended_composition_layers")).unwrap_or_default();
     let recommended_composition_helper_primitive_ids =
         string_array(inner.get("recommended_composition_helper_primitive_ids")).unwrap_or_default();
-    let recommended_composition_helper_primitive_kinds = string_array(
-        inner.get("recommended_composition_helper_primitive_kinds"),
-    )
-    .unwrap_or_default();
+    let recommended_composition_helper_primitive_kinds =
+        string_array(inner.get("recommended_composition_helper_primitive_kinds"))
+            .unwrap_or_default();
     let recommended_operator_bundle_ids =
         string_array(inner.get("recommended_operator_bundle_ids")).unwrap_or_default();
     let recommended_acceptance_recipe_ids =
@@ -1373,11 +1373,9 @@ fn normalize_planner_response_value(
         )
         .or_else(|| string_array(inner.get("composition_family_build_primitive_classes")))
         .unwrap_or_default(),
-        recommended_composition_layers: string_array(
-            inner.get("recommended_composition_layers"),
-        )
-        .or_else(|| string_array(inner.get("composition_layers")))
-        .unwrap_or_default(),
+        recommended_composition_layers: string_array(inner.get("recommended_composition_layers"))
+            .or_else(|| string_array(inner.get("composition_layers")))
+            .unwrap_or_default(),
         recommended_composition_helper_primitive_ids: string_array(
             inner.get("recommended_composition_helper_primitive_ids"),
         )

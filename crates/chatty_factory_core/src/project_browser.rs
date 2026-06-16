@@ -79,7 +79,10 @@ pub fn active_project_summary_line(project: &ProjectCatalogEntry) -> String {
     )
 }
 
-pub fn load_project_session(runtime_root: &Path, file_name: &str) -> Result<Option<ProjectSession>> {
+pub fn load_project_session(
+    runtime_root: &Path,
+    file_name: &str,
+) -> Result<Option<ProjectSession>> {
     let session_path = runtime_root.join(file_name);
     if !session_path.exists() {
         return Ok(None);
@@ -109,7 +112,8 @@ pub fn build_project_browser_state(
     output_root: &Path,
     runtime_root: &Path,
 ) -> Result<ProjectBrowserState> {
-    let selected_project_session = load_project_session(runtime_root, "selected_project_session.json")?;
+    let selected_project_session =
+        load_project_session(runtime_root, "selected_project_session.json")?;
     let active_project_session = load_project_session(runtime_root, "active_project_session.json")?;
     let preferred_session = selected_project_session
         .as_ref()
@@ -124,7 +128,10 @@ pub fn build_project_browser_state(
     })
 }
 
-pub fn persist_project_browser_state(output_root: &Path, runtime_root: &Path) -> Result<ProjectBrowserState> {
+pub fn persist_project_browser_state(
+    output_root: &Path,
+    runtime_root: &Path,
+) -> Result<ProjectBrowserState> {
     let state = build_project_browser_state(output_root, runtime_root)?;
     persist_json_pretty(&runtime_root.join("project_browser_state.json"), &state)?;
     Ok(state)

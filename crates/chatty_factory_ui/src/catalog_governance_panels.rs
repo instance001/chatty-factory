@@ -89,7 +89,8 @@ impl ChattyFactoryUiApp {
         if !family_governance_receipts.is_empty() {
             if self.selected_family_governance_id.is_none()
                 || !family_governance_receipts.iter().any(|receipt| {
-                    Some(receipt.family_id.as_str()) == self.selected_family_governance_id.as_deref()
+                    Some(receipt.family_id.as_str())
+                        == self.selected_family_governance_id.as_deref()
                 })
             {
                 self.selected_family_governance_id = family_governance_receipts
@@ -130,7 +131,10 @@ impl ChattyFactoryUiApp {
                         .iter()
                         .find(|entry| entry.family_id == receipt.family_id)
                     {
-                        ui.label(format!("Built projects using this family: {}", entry.project_count));
+                        ui.label(format!(
+                            "Built projects using this family: {}",
+                            entry.project_count
+                        ));
                     } else {
                         ui.label("Built projects using this family: 0");
                     }
@@ -348,7 +352,10 @@ impl ChattyFactoryUiApp {
                     == self.selected_template_governance_id.as_deref()
             }) {
                 ui.label(format!("Template category: {}", receipt.template_category));
-                ui.label(format!("Template root: {}", short_path(&receipt.template_root)));
+                ui.label(format!(
+                    "Template root: {}",
+                    short_path(&receipt.template_root)
+                ));
                 ui.label(format!("Artifact count: {}", receipt.artifact_paths.len()));
                 render_governance_detail_block(
                     ui,

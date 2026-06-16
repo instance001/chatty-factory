@@ -23,7 +23,12 @@ impl ChattyFactoryUiApp {
             ui.label(format!("Discovered models: {}", catalog.models.len()));
             ui.label(format!(
                 "Fast: {}",
-                short_path(catalog.preferred_fast_model_path.as_deref().unwrap_or("none"))
+                short_path(
+                    catalog
+                        .preferred_fast_model_path
+                        .as_deref()
+                        .unwrap_or("none")
+                )
             ));
             ui.label(format!(
                 "Balanced: {}",
@@ -36,7 +41,12 @@ impl ChattyFactoryUiApp {
             ));
             ui.label(format!(
                 "Heavy: {}",
-                short_path(catalog.preferred_heavy_model_path.as_deref().unwrap_or("none"))
+                short_path(
+                    catalog
+                        .preferred_heavy_model_path
+                        .as_deref()
+                        .unwrap_or("none")
+                )
             ));
         } else {
             ui.label("No runtime model catalog found yet.");
@@ -97,7 +107,10 @@ impl ChattyFactoryUiApp {
                 ui.label("Factory-side interpretation: still running");
             }
             ui.horizontal_wrapped(|ui| {
-                ui.label(format!("Receipt: {}", short_path(receipt_path.to_string_lossy().as_ref())));
+                ui.label(format!(
+                    "Receipt: {}",
+                    short_path(receipt_path.to_string_lossy().as_ref())
+                ));
                 if let Some(created_at) = receipt.created_at.as_deref() {
                     ui.separator();
                     ui.label(format!("Created: {}", created_at));
@@ -138,7 +151,10 @@ impl ChattyFactoryUiApp {
                 .iter()
                 .map(|entry| entry.project_count)
                 .sum::<usize>();
-            ui.label(format!("Built projects tracked: {}", summary.total_projects));
+            ui.label(format!(
+                "Built projects tracked: {}",
+                summary.total_projects
+            ));
             ui.label(format!(
                 "Canonical ecosystem shell projects: {} across {} family surface(s)",
                 canonical_shell_project_count,
@@ -207,12 +223,18 @@ impl ChattyFactoryUiApp {
                         == Some("overrode_normal_routing")
                 })
                 .collect::<Vec<_>>();
-            ui.label(format!("Build receipts tracked: {}", summary.total_build_receipts));
+            ui.label(format!(
+                "Build receipts tracked: {}",
+                summary.total_build_receipts
+            ));
             ui.label(format!(
                 "Explicit mechanical starter builds: {}",
                 summary.explicit_override_builds
             ));
-            ui.label(format!("Auto-routed builds: {}", summary.auto_routed_builds));
+            ui.label(format!(
+                "Auto-routed builds: {}",
+                summary.auto_routed_builds
+            ));
             ui.label(format!(
                 "Matched normal recommendation: {}",
                 summary.matched_recommendation_builds
@@ -439,10 +461,8 @@ impl ChattyFactoryUiApp {
             ));
             let regressed_proofs =
                 count_proof_baseline_status(&registry, "regressed_since_last_pass");
-            let changed_proofs =
-                count_proof_baseline_status(&registry, "changed_since_last_pass");
-            let no_baseline_proofs =
-                count_proof_baseline_status(&registry, "no_passing_baseline");
+            let changed_proofs = count_proof_baseline_status(&registry, "changed_since_last_pass");
+            let no_baseline_proofs = count_proof_baseline_status(&registry, "no_passing_baseline");
             let regressed_compositions =
                 count_composition_baseline_status(&registry, "regressed_since_last_live");
             let changed_compositions =
@@ -451,22 +471,18 @@ impl ChattyFactoryUiApp {
                 count_composition_baseline_status(&registry, "no_live_baseline");
             let regressed_patches =
                 count_patch_baseline_status(&registry, "regressed_since_last_live");
-            let changed_patches =
-                count_patch_baseline_status(&registry, "changed_since_last_live");
-            let no_baseline_patches =
-                count_patch_baseline_status(&registry, "no_live_baseline");
+            let changed_patches = count_patch_baseline_status(&registry, "changed_since_last_live");
+            let no_baseline_patches = count_patch_baseline_status(&registry, "no_live_baseline");
             let regressed_helpers =
                 count_helper_baseline_status(&registry, "regressed_since_last_live");
             let changed_helpers =
                 count_helper_baseline_status(&registry, "changed_since_last_live");
-            let no_baseline_helpers =
-                count_helper_baseline_status(&registry, "no_live_baseline");
+            let no_baseline_helpers = count_helper_baseline_status(&registry, "no_live_baseline");
             let regressed_bridges =
                 count_bridge_baseline_status(&registry, "regressed_since_last_live");
             let changed_bridges =
                 count_bridge_baseline_status(&registry, "changed_since_last_live");
-            let no_baseline_bridges =
-                count_bridge_baseline_status(&registry, "no_live_baseline");
+            let no_baseline_bridges = count_bridge_baseline_status(&registry, "no_live_baseline");
             ui.horizontal_wrapped(|ui| {
                 ui.label(format!("Regressed proofs: {regressed_proofs}"));
                 ui.separator();
@@ -514,7 +530,10 @@ impl ChattyFactoryUiApp {
                     self.spawn_task(UiTask::RefreshProofHarnessRegistry);
                 }
                 ui.separator();
-                if ui.small_button("Refresh composition governance now").clicked() {
+                if ui
+                    .small_button("Refresh composition governance now")
+                    .clicked()
+                {
                     self.spawn_task(UiTask::RefreshCompositionGovernance);
                 }
                 ui.separator();
@@ -1293,12 +1312,12 @@ impl ChattyFactoryUiApp {
                             self.selected_extension_entry_id = Some(entry.entry_id.clone());
                             self.mark_extension_recent(&entry.entry_id);
                         }
-                        let pin_label = if self.favorite_extension_entry_ids.contains(&entry.entry_id)
-                        {
-                            "Unpin"
-                        } else {
-                            "Pin"
-                        };
+                        let pin_label =
+                            if self.favorite_extension_entry_ids.contains(&entry.entry_id) {
+                                "Unpin"
+                            } else {
+                                "Pin"
+                            };
                         if ui.small_button(pin_label).clicked() {
                             self.toggle_extension_favorite(&entry.entry_id);
                         }
@@ -1489,30 +1508,34 @@ impl ChattyFactoryUiApp {
                     latest_proof_receipt_for_template(&self.workspace_root, template_id)
                 });
                 let blockers = extension_status_blockers(&entry);
-                let promotion_hint_count = if let (Some(promotion_path), Some(first_integrated_path)) =
-                    (entry.promotion_artifacts.first(), entry.integrated_paths.first())
-                {
-                    let left = load_text_preview(Path::new(promotion_path), 1400);
-                    let right = load_text_preview(Path::new(first_integrated_path), 1400);
-                    match (left.as_deref(), right.as_deref()) {
-                        (Some(left), Some(right)) => compare_mismatch_hints(left, right).len(),
-                        _ => 0,
-                    }
-                } else {
-                    0
-                };
-                let apply_patch_hint_count = if let (Some(apply_patch_path), Some(first_integrated_path)) =
-                    (entry.apply_patch_artifacts.first(), entry.integrated_paths.first())
-                {
-                    let left = load_text_preview(Path::new(apply_patch_path), 1400);
-                    let right = load_text_preview(Path::new(first_integrated_path), 1400);
-                    match (left.as_deref(), right.as_deref()) {
-                        (Some(left), Some(right)) => compare_mismatch_hints(left, right).len(),
-                        _ => 0,
-                    }
-                } else {
-                    0
-                };
+                let promotion_hint_count =
+                    if let (Some(promotion_path), Some(first_integrated_path)) = (
+                        entry.promotion_artifacts.first(),
+                        entry.integrated_paths.first(),
+                    ) {
+                        let left = load_text_preview(Path::new(promotion_path), 1400);
+                        let right = load_text_preview(Path::new(first_integrated_path), 1400);
+                        match (left.as_deref(), right.as_deref()) {
+                            (Some(left), Some(right)) => compare_mismatch_hints(left, right).len(),
+                            _ => 0,
+                        }
+                    } else {
+                        0
+                    };
+                let apply_patch_hint_count =
+                    if let (Some(apply_patch_path), Some(first_integrated_path)) = (
+                        entry.apply_patch_artifacts.first(),
+                        entry.integrated_paths.first(),
+                    ) {
+                        let left = load_text_preview(Path::new(apply_patch_path), 1400);
+                        let right = load_text_preview(Path::new(first_integrated_path), 1400);
+                        match (left.as_deref(), right.as_deref()) {
+                            (Some(left), Some(right)) => compare_mismatch_hints(left, right).len(),
+                            _ => 0,
+                        }
+                    } else {
+                        0
+                    };
                 let mismatch_hint_count = promotion_hint_count + apply_patch_hint_count;
                 let (readiness_label, readiness_color) =
                     lane_readiness_tone(&entry.status, blockers.len(), mismatch_hint_count);
@@ -1533,11 +1556,7 @@ impl ChattyFactoryUiApp {
                     entry.patch_kind.as_deref().unwrap_or("none")
                 ));
                 ui.label(format!("Kind: {}", entry.extension_kind));
-                self.render_extension_governance_section(
-                    ui,
-                    &entry,
-                    latest_proof_receipt.as_ref(),
-                );
+                self.render_extension_governance_section(ui, &entry, latest_proof_receipt.as_ref());
                 let is_favorite = self.favorite_extension_entry_ids.contains(&entry.entry_id);
                 ui.horizontal_wrapped(|ui| {
                     ui.label(
@@ -1598,10 +1617,7 @@ impl ChattyFactoryUiApp {
                                     short_path(export_path.to_string_lossy().as_ref()),
                                     true,
                                 );
-                                self.push_toast(
-                                    "Revealed latest lane export",
-                                    ToastKind::Success,
-                                );
+                                self.push_toast("Revealed latest lane export", ToastKind::Success);
                             }
                             Err(error) => {
                                 self.status_line = format!("Open failed: {error}");
@@ -1611,10 +1627,7 @@ impl ChattyFactoryUiApp {
                                     error.to_string(),
                                     false,
                                 );
-                                self.push_toast(
-                                    format!("Open failed: {error}"),
-                                    ToastKind::Error,
-                                );
+                                self.push_toast(format!("Open failed: {error}"), ToastKind::Error);
                             }
                         }
                     }
@@ -1637,10 +1650,7 @@ impl ChattyFactoryUiApp {
                                             short_path(export_path.to_string_lossy().as_ref()),
                                             true,
                                         );
-                                        self.push_toast(
-                                            "Revealed lane export",
-                                            ToastKind::Success,
-                                        );
+                                        self.push_toast("Revealed lane export", ToastKind::Success);
                                     }
                                     Err(error) => {
                                         self.status_line = format!("Open failed: {error}");

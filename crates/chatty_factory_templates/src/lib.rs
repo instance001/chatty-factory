@@ -17,6 +17,10 @@ pub fn base_environment() -> Result<Environment<'static>> {
         include_str!("../../../templates/families/static_web_dashboard/styles.css.j2"),
     )?;
     env.add_template(
+        "families/static_web_dashboard/README.md",
+        include_str!("../../../templates/families/static_web_dashboard/README.md.j2"),
+    )?;
+    env.add_template(
         "families/chattycog_basic_dashboard/index.html",
         include_str!("../../../templates/families/chattycog_basic_dashboard/index.html.j2"),
     )?;
@@ -62,7 +66,9 @@ pub fn base_environment() -> Result<Environment<'static>> {
     )?;
     env.add_template(
         "families/chattycog_native_window_module/STATE_TEMPLATE.md",
-        include_str!("../../../templates/families/chattycog_native_window_module/STATE_TEMPLATE.md.j2"),
+        include_str!(
+            "../../../templates/families/chattycog_native_window_module/STATE_TEMPLATE.md.j2"
+        ),
     )?;
     env.add_template(
         "families/chattycog_native_window_module/network_capabilities.json",
@@ -82,7 +88,9 @@ pub fn base_environment() -> Result<Environment<'static>> {
     )?;
     env.add_template(
         "families/chattyedu_native_window_module/STATE_TEMPLATE.md",
-        include_str!("../../../templates/families/chattyedu_native_window_module/STATE_TEMPLATE.md.j2"),
+        include_str!(
+            "../../../templates/families/chattyedu_native_window_module/STATE_TEMPLATE.md.j2"
+        ),
     )?;
     env.add_template(
         "families/chattyedu_native_window_module/network_capabilities.json",
@@ -90,15 +98,21 @@ pub fn base_environment() -> Result<Environment<'static>> {
     )?;
     env.add_template(
         "families/chattycog_chattyedu_native_window_module/Cargo.toml",
-        include_str!("../../../templates/families/chattycog_chattyedu_native_window_module/Cargo.toml.j2"),
+        include_str!(
+            "../../../templates/families/chattycog_chattyedu_native_window_module/Cargo.toml.j2"
+        ),
     )?;
     env.add_template(
         "families/chattycog_chattyedu_native_window_module/main.rs",
-        include_str!("../../../templates/families/chattycog_chattyedu_native_window_module/main.rs.j2"),
+        include_str!(
+            "../../../templates/families/chattycog_chattyedu_native_window_module/main.rs.j2"
+        ),
     )?;
     env.add_template(
         "families/chattycog_chattyedu_native_window_module/README.md",
-        include_str!("../../../templates/families/chattycog_chattyedu_native_window_module/README.md.j2"),
+        include_str!(
+            "../../../templates/families/chattycog_chattyedu_native_window_module/README.md.j2"
+        ),
     )?;
     env.add_template(
         "families/chattycog_chattyedu_native_window_module/STATE_TEMPLATE.md",

@@ -2,8 +2,8 @@ use std::path::Path;
 
 use anyhow::Result;
 use chatty_factory_core::{
-    expand_operator_bundle_ids, operator_bundle_registry, AcceptanceRecipeStatus,
-    patch_primitive_class, OperatorBundleStatus, PatchLaneStatus, PatchReceipt,
+    expand_operator_bundle_ids, operator_bundle_registry, patch_primitive_class,
+    AcceptanceRecipeStatus, OperatorBundleStatus, PatchLaneStatus, PatchReceipt,
 };
 
 use crate::PatchArtifacts;
@@ -831,10 +831,7 @@ pub(crate) fn patch_recipe_registry() -> Vec<PatchRecipeSpec> {
             dependency_mode: "requires_features",
             requires_features: &["helper_summary_panel"],
             provides_features: &["helper_status_chip"],
-            request_match_any: &[
-                "helper status chip",
-                "helper status badge",
-            ],
+            request_match_any: &["helper status chip", "helper status badge"],
             request_match_all: &["helper", "status"],
             handler: crate::patch_chattycog_webview_helper_status_chip,
         },
@@ -1116,7 +1113,11 @@ pub(crate) fn patch_recipe_registry() -> Vec<PatchRecipeSpec> {
             dependency_mode: "standalone",
             requires_features: &[],
             provides_features: &["json_output"],
-            request_match_any: &["json summary", "log json output", "json output for the summary"],
+            request_match_any: &[
+                "json summary",
+                "log json output",
+                "json output for the summary",
+            ],
             request_match_all: &["json", "summary"],
             handler: crate::patch_rust_log_summary_json_output,
         },
@@ -1129,7 +1130,12 @@ pub(crate) fn patch_recipe_registry() -> Vec<PatchRecipeSpec> {
             dependency_mode: "standalone",
             requires_features: &[],
             provides_features: &["email_sender"],
-            request_match_any: &["email delivery", "email draft", "delivery email", "mail draft"],
+            request_match_any: &[
+                "email delivery",
+                "email draft",
+                "delivery email",
+                "mail draft",
+            ],
             request_match_all: &["email"],
             handler: crate::patch_python_cli_tool_csv_report_new_patch_lane,
         },
@@ -1142,11 +1148,16 @@ pub(crate) fn patch_recipe_registry() -> Vec<PatchRecipeSpec> {
             dependency_mode: "standalone",
             requires_features: &[],
             provides_features: &["markdown_export"],
-            request_match_any: &["markdown export", "markdown summary", "markdown report", "summary markdown"],
+            request_match_any: &[
+                "markdown export",
+                "markdown summary",
+                "markdown report",
+                "summary markdown",
+            ],
             request_match_all: &["markdown"],
             handler: crate::patch_rust_cli_tool_log_summary_new_patch_lane,
         },
-// Add generated registry entry for `static_web_dashboard_helper_lane` here.
+        // Add generated registry entry for `static_web_dashboard_helper_lane` here.
     ]
 }
 
@@ -1207,7 +1218,12 @@ pub(crate) fn operator_bundle_statuses_for(
 ) -> Vec<OperatorBundleStatus> {
     operator_bundle_registry()
         .iter()
-        .filter(|bundle| bundle.family_ids.iter().any(|candidate| candidate == &family_id))
+        .filter(|bundle| {
+            bundle
+                .family_ids
+                .iter()
+                .any(|candidate| candidate == &family_id)
+        })
         .map(|bundle| {
             let operator_ids = expand_operator_bundle_ids(&[bundle.bundle_id.to_string()]);
             let provides_features: Vec<String> = operator_ids
@@ -1251,14 +1267,12 @@ pub(crate) fn patch_recipe_by_kind(
     project_features: &[String],
     patch_kind: &str,
 ) -> Option<PatchRecipeSpec> {
-    patch_recipe_registry()
-        .into_iter()
-        .find(|spec| {
-            spec.family_id == family_id
-                && (spec.tool_kind.is_none() || spec.tool_kind == tool_kind)
-                && patch_recipe_is_dispatchable(spec, project_features)
-                && spec.patch_kind == patch_kind
-        })
+    patch_recipe_registry().into_iter().find(|spec| {
+        spec.family_id == family_id
+            && (spec.tool_kind.is_none() || spec.tool_kind == tool_kind)
+            && patch_recipe_is_dispatchable(spec, project_features)
+            && spec.patch_kind == patch_kind
+    })
 }
 
 pub(crate) fn patch_recipe_from_request_text(
@@ -1267,22 +1281,20 @@ pub(crate) fn patch_recipe_from_request_text(
     project_features: &[String],
     lower_request: &str,
 ) -> Option<PatchRecipeSpec> {
-    patch_recipe_registry()
-        .into_iter()
-        .find(|spec| {
-            spec.family_id == family_id
-                && (spec.tool_kind.is_none() || spec.tool_kind == tool_kind)
-                && patch_recipe_is_dispatchable(spec, project_features)
-                && (spec
-                    .request_match_any
-                    .iter()
-                    .any(|needle| lower_request.contains(needle))
-                    || (!spec.request_match_all.is_empty()
-                        && spec
-                            .request_match_all
-                            .iter()
-                            .all(|needle| lower_request.contains(needle))))
-        })
+    patch_recipe_registry().into_iter().find(|spec| {
+        spec.family_id == family_id
+            && (spec.tool_kind.is_none() || spec.tool_kind == tool_kind)
+            && patch_recipe_is_dispatchable(spec, project_features)
+            && (spec
+                .request_match_any
+                .iter()
+                .any(|needle| lower_request.contains(needle))
+                || (!spec.request_match_all.is_empty()
+                    && spec
+                        .request_match_all
+                        .iter()
+                        .all(|needle| lower_request.contains(needle))))
+    })
 }
 
 pub(crate) fn patch_lane_statuses_for(

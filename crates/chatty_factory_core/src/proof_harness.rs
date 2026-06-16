@@ -505,9 +505,7 @@ pub fn built_in_capability_comparison_bundles() -> Vec<CapabilityComparisonBundl
     ]
 }
 
-pub fn capability_comparison_bundle_by_id(
-    bundle_id: &str,
-) -> Option<CapabilityComparisonBundle> {
+pub fn capability_comparison_bundle_by_id(bundle_id: &str) -> Option<CapabilityComparisonBundle> {
     built_in_capability_comparison_bundles()
         .into_iter()
         .find(|bundle| bundle.bundle_id == bundle_id)
@@ -527,7 +525,8 @@ fn load_json_manifests<T: DeserializeOwned>(root: &Path) -> Vec<(PathBuf, T)> {
         })
         .collect::<Vec<_>>();
     files.sort();
-    files.into_iter()
+    files
+        .into_iter()
         .filter_map(|path| {
             let contents = fs::read_to_string(&path).ok()?;
             let manifest = serde_json::from_str::<T>(&contents).ok()?;
@@ -545,10 +544,12 @@ pub fn repo_capability_comparison_bundle_manifest_root(workspace_root: &Path) ->
 }
 
 pub fn repo_proof_templates(workspace_root: &Path) -> Vec<PrimitiveProofTemplate> {
-    load_json_manifests::<PrimitiveProofTemplate>(&repo_proof_template_manifest_root(workspace_root))
-        .into_iter()
-        .map(|(_, template)| template)
-        .collect()
+    load_json_manifests::<PrimitiveProofTemplate>(&repo_proof_template_manifest_root(
+        workspace_root,
+    ))
+    .into_iter()
+    .map(|(_, template)| template)
+    .collect()
 }
 
 pub fn repo_capability_comparison_bundles(
@@ -612,10 +613,12 @@ pub fn capability_comparison_bundle_by_id_from_root(
 }
 
 pub fn proof_template_manifest_path(workspace_root: &Path, template_id: &str) -> Option<PathBuf> {
-    load_json_manifests::<PrimitiveProofTemplate>(&repo_proof_template_manifest_root(workspace_root))
-        .into_iter()
-        .find(|(_, template)| template.template_id == template_id)
-        .map(|(path, _)| path)
+    load_json_manifests::<PrimitiveProofTemplate>(&repo_proof_template_manifest_root(
+        workspace_root,
+    ))
+    .into_iter()
+    .find(|(_, template)| template.template_id == template_id)
+    .map(|(path, _)| path)
 }
 
 pub fn capability_comparison_bundle_manifest_path(

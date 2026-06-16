@@ -1,5 +1,9 @@
 # Milestone Checkpoint
 
+Historical note:
+- this is a checkpoint-era progress document
+- use [../../docs/CURRENT_ARCHITECTURE.md](../../docs/CURRENT_ARCHITECTURE.md) for the current implementation shape
+
 This document is the rebuild checkpoint after proving deterministic lane growth across multiple substrate shapes.
 
 It exists to answer:

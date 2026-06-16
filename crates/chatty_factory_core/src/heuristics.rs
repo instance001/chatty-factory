@@ -69,12 +69,21 @@ const PATCH_KIND_RULES: &[(&str, &[&str], &[&str])] = &[
     ),
     (
         "helper_summary_panel",
-        &["helper summary panel", "inbox summary panel", "helper status panel"],
+        &[
+            "helper summary panel",
+            "inbox summary panel",
+            "helper status panel",
+        ],
         &["helper", "summary", "panel"],
     ),
     (
         "helper_summary_badges",
-        &["helper summary badges", "summary badges", "helper badges", "filter badges"],
+        &[
+            "helper summary badges",
+            "summary badges",
+            "helper badges",
+            "filter badges",
+        ],
         &["summary", "badges"],
     ),
     (
@@ -213,17 +222,29 @@ const PATCH_KIND_RULES: &[(&str, &[&str], &[&str])] = &[
     ),
     (
         "processed_files_panel",
-        &["processed files panel", "processed inbox panel", "helper files panel"],
+        &[
+            "processed files panel",
+            "processed inbox panel",
+            "helper files panel",
+        ],
         &["processed", "files"],
     ),
     (
         "auto_refresh_helper_panels",
-        &["auto refresh helper panels", "auto refresh helper panel", "refresh helper panels"],
+        &[
+            "auto refresh helper panels",
+            "auto refresh helper panel",
+            "refresh helper panels",
+        ],
         &["refresh", "helper"],
     ),
     (
         "processed_file_preview_panel",
-        &["processed file preview panel", "file preview panel", "helper preview panel"],
+        &[
+            "processed file preview panel",
+            "file preview panel",
+            "helper preview panel",
+        ],
         &["preview", "file"],
     ),
     (
@@ -238,17 +259,34 @@ const PATCH_KIND_RULES: &[(&str, &[&str], &[&str])] = &[
     ),
     (
         "file_type_filter",
-        &["file type filter", "helper file filter", "txt only filter", "text file filter"],
+        &[
+            "file type filter",
+            "helper file filter",
+            "txt only filter",
+            "text file filter",
+        ],
         &["file", "type", "filter"],
     ),
-    ("metric_strip", &["metric strip", "metric cards", "status cards"], &["metric"]),
+    (
+        "metric_strip",
+        &["metric strip", "metric cards", "status cards"],
+        &["metric"],
+    ),
     (
         "json_output",
-        &["json summary", "log json output", "json output for the summary"],
+        &[
+            "json summary",
+            "log json output",
+            "json output for the summary",
+        ],
         &["json", "summary"],
     ),
     ("json_export", &["json export", "json output"], &["json"]),
-    ("column_filter", &["column filter", "select column", "only column"], &["column"]),
+    (
+        "column_filter",
+        &["column filter", "select column", "only column"],
+        &["column"],
+    ),
     (
         "email_sender",
         &["email sender", "email report", "email export", "send email"],
@@ -256,7 +294,12 @@ const PATCH_KIND_RULES: &[(&str, &[&str], &[&str])] = &[
     ),
     (
         "new_patch_lane",
-        &["markdown export", "markdown summary", "markdown report", "summary markdown"],
+        &[
+            "markdown export",
+            "markdown summary",
+            "markdown report",
+            "summary markdown",
+        ],
         &["markdown"],
     ),
     (
@@ -264,8 +307,16 @@ const PATCH_KIND_RULES: &[(&str, &[&str], &[&str])] = &[
         &["severity filter", "severity only", "select severity"],
         &["severity"],
     ),
-    ("file_output", &["file output", "write file", "save summary"], &["output"]),
-    ("ready_toggle", &["ready toggle", "ready button", "ready state toggle"], &["ready"]),
+    (
+        "file_output",
+        &["file output", "write file", "save summary"],
+        &["output"],
+    ),
+    (
+        "ready_toggle",
+        &["ready toggle", "ready button", "ready state toggle"],
+        &["ready"],
+    ),
     (
         "room_state_fields",
         &["room state fields", "room state", "session fields"],
@@ -333,6 +384,16 @@ pub fn request_has_web_shape(lower: &str) -> bool {
 
 pub fn request_has_dashboard_shape(lower: &str) -> bool {
     contains_any(lower, DASHBOARD_TERMS)
+        || contains_any(
+            lower,
+            &[
+                "kanban",
+                "task tracker",
+                "project tracker",
+                "tracking board",
+                "drag and drop cards",
+            ],
+        )
 }
 
 pub fn request_has_cli_shape(lower: &str) -> bool {
@@ -379,7 +440,17 @@ pub fn infer_cli_tool_kind_from_text(lower: &str) -> Option<&'static str> {
         Some("log_summary")
     } else if contains_any(lower, &["stats", "word count", "line count", "count text"]) {
         Some("text_stats")
-    } else if contains_any(lower, &["audit", "inventory", "report", "inspect", "directory", "folder"]) {
+    } else if contains_any(
+        lower,
+        &[
+            "audit",
+            "inventory",
+            "report",
+            "inspect",
+            "directory",
+            "folder",
+        ],
+    ) {
         Some("directory_audit")
     } else {
         None
@@ -392,14 +463,23 @@ pub fn infer_request_tool_kind_from_text(
     wants_chattyedu: bool,
     desired_surface_cli: bool,
 ) -> Option<&'static str> {
-    if (wants_chattycog || wants_chattyedu) && contains_any(lower, &["native window", "desktop", "tkinter"]) {
+    if (wants_chattycog || wants_chattyedu)
+        && contains_any(lower, &["native window", "desktop", "tkinter"])
+    {
         Some("native_window_starter")
-    } else if wants_chattycog && contains_any(lower, &["workspace", "ui.json", "headless", "notes module"]) {
+    } else if wants_chattycog
+        && contains_any(lower, &["workspace", "ui.json", "headless", "notes module"])
+    {
         Some("workspace_module")
     } else if wants_chattycog
         && contains_any(
             lower,
-            &["webview", "embedded webview", "hosted webview", "browser tab"],
+            &[
+                "webview",
+                "embedded webview",
+                "hosted webview",
+                "browser tab",
+            ],
         )
     {
         Some("module_starter")
@@ -422,7 +502,10 @@ pub fn infer_chattycog_hosting_modes_from_text(lower: &str) -> Vec<&'static str>
     if contains_any(lower, &["webview", "embedded webview", "hosted webview"]) {
         modes.push("hosted_webview");
     }
-    if contains_any(lower, &["native window", "desktop", "tkinter", "separate window"]) {
+    if contains_any(
+        lower,
+        &["native window", "desktop", "tkinter", "separate window"],
+    ) {
         modes.push("hosted_native_window");
     }
     if contains_any(
@@ -467,16 +550,25 @@ pub fn infer_chattycog_bridge_capabilities_from_text(lower: &str) -> Vec<String>
     if contains_any(lower, &["status", "status.json", "handoff status"]) {
         capabilities.push("status".into());
     }
-    if contains_any(lower, &["log source", "log sources", "module logs", "tail logs"]) {
+    if contains_any(
+        lower,
+        &["log source", "log sources", "module logs", "tail logs"],
+    ) {
         capabilities.push("log_sources".into());
     }
     if contains_any(lower, &["shared room state", "room state", "room policy"]) {
         capabilities.push("shared_room_state".into());
     }
-    if contains_any(lower, &["shared room events", "room events", "incoming room events"]) {
+    if contains_any(
+        lower,
+        &["shared room events", "room events", "incoming room events"],
+    ) {
         capabilities.push("shared_room_events".into());
     }
-    if contains_any(lower, &["outgoing room events", "emit room event", "send room event"]) {
+    if contains_any(
+        lower,
+        &["outgoing room events", "emit room event", "send room event"],
+    ) {
         capabilities.push("outgoing_room_events".into());
     }
     if contains_any(
@@ -508,10 +600,7 @@ pub fn supported_chattycog_bridge_capabilities() -> Vec<String> {
     ]
 }
 
-pub fn infer_patch_kind_from_text(
-    lower: &str,
-    supported_patch_kinds: &[String],
-) -> Option<String> {
+pub fn infer_patch_kind_from_text(lower: &str, supported_patch_kinds: &[String]) -> Option<String> {
     for patch_kind in supported_patch_kinds {
         if lower.contains(&patch_kind.replace('_', " ")) || lower.contains(patch_kind) {
             return Some(patch_kind.clone());
@@ -541,15 +630,23 @@ mod tests {
 
     #[test]
     fn generic_chattycog_requests_prefer_native_window_starter() {
-        let tool_kind =
-            infer_request_tool_kind_from_text("build me a chattycog dashboard module", true, false, false);
+        let tool_kind = infer_request_tool_kind_from_text(
+            "build me a chattycog dashboard module",
+            true,
+            false,
+            false,
+        );
         assert_eq!(tool_kind, Some("native_window_starter"));
     }
 
     #[test]
     fn explicit_chattycog_webview_requests_keep_webview_starter() {
-        let tool_kind =
-            infer_request_tool_kind_from_text("build me a chattycog webview module", true, false, false);
+        let tool_kind = infer_request_tool_kind_from_text(
+            "build me a chattycog webview module",
+            true,
+            false,
+            false,
+        );
         assert_eq!(tool_kind, Some("module_starter"));
     }
 
@@ -568,5 +665,21 @@ mod tests {
     fn dashboard_word_alone_is_not_treated_as_web_shape() {
         assert!(!request_has_web_shape("build me a dashboard"));
         assert!(request_has_web_shape("build me a browser dashboard"));
+    }
+
+    #[test]
+    fn kanban_requests_are_treated_as_dashboard_shape() {
+        assert!(request_has_dashboard_shape(
+            "build me a desktop kanban app with drag and drop cards"
+        ));
+        assert_eq!(
+            infer_request_tool_kind_from_text(
+                "build me a desktop kanban app with drag and drop cards",
+                false,
+                false,
+                false,
+            ),
+            Some("dashboard")
+        );
     }
 }

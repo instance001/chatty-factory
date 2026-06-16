@@ -5,8 +5,7 @@ use std::process::Command;
 use anyhow::{bail, Result};
 use chatty_factory_core::{
     AcceptancePlan, ChattyCogModuleSpec, ChattyCogVisualLoadSpec, ChattyEduModuleSpec,
-    FailureClass,
-    HelperServiceSpec, HelperStatusSnapshot,
+    FailureClass, HelperServiceSpec, HelperStatusSnapshot,
 };
 
 pub fn classify_failure(summary: &str) -> FailureClass {
@@ -55,10 +54,7 @@ mod tests {
     fn helper_contract_failures_classify_as_helper_wiring_failure() {
         let summary =
             "helper summary surface contract failed: 'helperSummaryStatusChip' missing from app.js";
-        assert_eq!(
-            classify_failure(summary),
-            FailureClass::HelperWiringFailure
-        );
+        assert_eq!(classify_failure(summary), FailureClass::HelperWiringFailure);
     }
 
     #[test]
@@ -270,19 +266,28 @@ fn verify_chattycog_module_contract(project_dir: &Path, target: &str) -> Result<
 
     for path in [&manifest_path, &handshake_path, &bridge_status_path] {
         if !path.exists() {
-            bail!("chattycog module contract failed: missing {}", path.display());
+            bail!(
+                "chattycog module contract failed: missing {}",
+                path.display()
+            );
         }
     }
     if let Some(visual_load_path) = &spec.visual_load_path {
         let path = project_dir.join(visual_load_path);
         if !path.exists() {
-            bail!("chattycog module contract failed: missing {}", path.display());
+            bail!(
+                "chattycog module contract failed: missing {}",
+                path.display()
+            );
         }
     }
     if let Some(script_path) = &spec.bridge.script_path {
         let path = project_dir.join(script_path);
         if !path.exists() {
-            bail!("chattycog module contract failed: missing {}", path.display());
+            bail!(
+                "chattycog module contract failed: missing {}",
+                path.display()
+            );
         }
     }
 
@@ -291,11 +296,7 @@ fn verify_chattycog_module_contract(project_dir: &Path, target: &str) -> Result<
     let bridge_status: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&bridge_status_path)?)?;
 
-    if manifest
-        .get("module_id")
-        .and_then(|value| value.as_str())
-        != Some(spec.module_id.as_str())
-    {
+    if manifest.get("module_id").and_then(|value| value.as_str()) != Some(spec.module_id.as_str()) {
         bail!("chattycog module contract failed: manifest module_id did not match module spec");
     }
     if manifest
@@ -310,12 +311,12 @@ fn verify_chattycog_module_contract(project_dir: &Path, target: &str) -> Result<
             let visual_load_path = project_dir.join(visual_load_path);
             let visual_load: serde_json::Value =
                 serde_json::from_str(&fs::read_to_string(&visual_load_path)?)?;
-            if visual_load
-                .get("kind")
-                .and_then(|value| value.as_str())
+            if visual_load.get("kind").and_then(|value| value.as_str())
                 != Some(spec.visual_kind.as_str())
             {
-                bail!("chattycog module contract failed: visual_load kind did not match module spec");
+                bail!(
+                    "chattycog module contract failed: visual_load kind did not match module spec"
+                );
             }
             verify_visual_load_value(&visual_load, visual_load_spec)?;
         }
@@ -331,15 +332,21 @@ fn verify_chattycog_module_contract(project_dir: &Path, target: &str) -> Result<
     if !handshake.contains(&spec.module_id) || !handshake.contains(&spec.display_name) {
         bail!("chattycog module contract failed: HANDSHAKE.md is missing module identity fields");
     }
-    if bridge_status.get("event_type").and_then(|value| value.as_str())
+    if bridge_status
+        .get("event_type")
+        .and_then(|value| value.as_str())
         != Some("suspend_rundown")
     {
         bail!("chattycog module contract failed: bridge status stub must use suspend_rundown");
     }
-    if bridge_status.get("module_id").and_then(|value| value.as_str())
+    if bridge_status
+        .get("module_id")
+        .and_then(|value| value.as_str())
         != Some(spec.module_id.as_str())
     {
-        bail!("chattycog module contract failed: bridge status module_id did not match module spec");
+        bail!(
+            "chattycog module contract failed: bridge status module_id did not match module spec"
+        );
     }
     Ok(())
 }
@@ -363,7 +370,10 @@ fn verify_chattycog_visual_load_contract(project_dir: &Path, target: &str) -> Re
                 );
             }
         }
-        other => bail!("chattycog visual load contract failed: unsupported kind '{}'", other),
+        other => bail!(
+            "chattycog visual load contract failed: unsupported kind '{}'",
+            other
+        ),
     }
     Ok(())
 }
@@ -374,7 +384,10 @@ fn verify_chattycog_bridge_contract(project_dir: &Path, target: &str) -> Result<
 
     let bridge_status_path = project_dir.join(&spec.bridge.status_path);
     if !bridge_status_path.exists() {
-        bail!("chattycog bridge contract failed: missing {}", bridge_status_path.display());
+        bail!(
+            "chattycog bridge contract failed: missing {}",
+            bridge_status_path.display()
+        );
     }
     if spec.bridge.capabilities.log_sources_enabled {
         let Some(log_sources_path) = spec.bridge.log_sources_path.as_ref() else {
@@ -382,11 +395,18 @@ fn verify_chattycog_bridge_contract(project_dir: &Path, target: &str) -> Result<
         };
         let full_path = project_dir.join(log_sources_path);
         if !full_path.exists() {
-            bail!("chattycog bridge contract failed: missing {}", full_path.display());
+            bail!(
+                "chattycog bridge contract failed: missing {}",
+                full_path.display()
+            );
         }
         let log_sources: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&full_path)?)?;
-        if log_sources.get("sources").and_then(|value| value.as_array()).is_none() {
+        if log_sources
+            .get("sources")
+            .and_then(|value| value.as_array())
+            .is_none()
+        {
             bail!("chattycog bridge contract failed: log_sources.json missing sources array");
         }
     }
@@ -401,9 +421,7 @@ fn verify_chattycog_bridge_contract(project_dir: &Path, target: &str) -> Result<
         let shared_room_state: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&shared_room_state_path)?)?;
         if !shared_room_state.is_object() {
-            bail!(
-                "chattycog bridge contract failed: shared_room_state.json must be a json object"
-            );
+            bail!("chattycog bridge contract failed: shared_room_state.json must be a json object");
         }
     }
     if spec.bridge.capabilities.shared_room_events_enabled {
@@ -421,9 +439,7 @@ fn verify_chattycog_bridge_contract(project_dir: &Path, target: &str) -> Result<
             .and_then(|value| value.as_array())
             .is_none()
         {
-            bail!(
-                "chattycog bridge contract failed: shared_room_events.json missing events array"
-            );
+            bail!("chattycog bridge contract failed: shared_room_events.json missing events array");
         }
     }
     if spec.bridge.capabilities.outgoing_room_events_enabled {
@@ -447,7 +463,10 @@ fn verify_chattycog_bridge_contract(project_dir: &Path, target: &str) -> Result<
         }
     }
     for lane_id in &spec.bridge.capabilities.incoming_asset_lanes {
-        let lane_path = project_dir.join("bridge").join("incoming_assets").join(lane_id);
+        let lane_path = project_dir
+            .join("bridge")
+            .join("incoming_assets")
+            .join(lane_id);
         if !lane_path.exists() || !lane_path.is_dir() {
             bail!(
                 "chattycog bridge contract failed: missing incoming asset lane directory {}",
@@ -476,7 +495,10 @@ fn verify_chattyedu_module_contract(project_dir: &Path, target: &str) -> Result<
         &main_rs_path,
     ] {
         if !path.exists() {
-            bail!("chattyedu module contract failed: missing {}", path.display());
+            bail!(
+                "chattyedu module contract failed: missing {}",
+                path.display()
+            );
         }
     }
 
@@ -488,11 +510,7 @@ fn verify_chattyedu_module_contract(project_dir: &Path, target: &str) -> Result<
     let handshake = fs::read_to_string(&handshake_path)?;
     let main_rs = fs::read_to_string(&main_rs_path)?;
 
-    if manifest
-        .get("module_id")
-        .and_then(|value| value.as_str())
-        != Some(spec.module_id.as_str())
-    {
+    if manifest.get("module_id").and_then(|value| value.as_str()) != Some(spec.module_id.as_str()) {
         bail!("chattyedu module contract failed: manifest module_id did not match module spec");
     }
     if manifest
@@ -502,11 +520,7 @@ fn verify_chattyedu_module_contract(project_dir: &Path, target: &str) -> Result<
     {
         bail!("chattyedu module contract failed: manifest display_name did not match module spec");
     }
-    if visual_load
-        .get("kind")
-        .and_then(|value| value.as_str())
-        != Some(spec.visual_kind.as_str())
-    {
+    if visual_load.get("kind").and_then(|value| value.as_str()) != Some(spec.visual_kind.as_str()) {
         bail!("chattyedu module contract failed: visual_load kind did not match module spec");
     }
     if !handshake.contains(&spec.module_id) || !handshake.contains(&spec.display_name) {
@@ -553,8 +567,7 @@ fn verify_helper_service_spec(
     expected_helper_id: Option<&str>,
 ) -> Result<()> {
     let helper_path = project_dir.join(target);
-    let helper_spec: HelperServiceSpec =
-        serde_json::from_str(&fs::read_to_string(&helper_path)?)?;
+    let helper_spec: HelperServiceSpec = serde_json::from_str(&fs::read_to_string(&helper_path)?)?;
     if let Some(expected) = expected_helper_id {
         if helper_spec.helper_id != expected {
             bail!(
@@ -579,8 +592,7 @@ fn verify_helper_status_snapshot(
     expected_status: Option<&str>,
 ) -> Result<()> {
     let status_path = project_dir.join(target);
-    let snapshot: HelperStatusSnapshot =
-        serde_json::from_str(&fs::read_to_string(&status_path)?)?;
+    let snapshot: HelperStatusSnapshot = serde_json::from_str(&fs::read_to_string(&status_path)?)?;
     if let Some(expected) = expected_status {
         if snapshot.status != expected {
             bail!(
@@ -789,14 +801,26 @@ fn verify_helper_summary_surface_contract(
     }
 
     let optional_checks = [
-        ("status_chip", "helper-summary-status-chip", "helperSummaryStatusChip"),
+        (
+            "status_chip",
+            "helper-summary-status-chip",
+            "helperSummaryStatusChip",
+        ),
         (
             "lane_count_chip",
             "helper-summary-lane-count-chip",
             "helperSummaryLaneCountChip",
         ),
-        ("types_chip", "helper-summary-types-chip", "helperSummaryTypesChip"),
-        ("count_delta", "helper-summary-count-delta", "helperSummaryCountDelta"),
+        (
+            "types_chip",
+            "helper-summary-types-chip",
+            "helperSummaryTypesChip",
+        ),
+        (
+            "count_delta",
+            "helper-summary-count-delta",
+            "helperSummaryCountDelta",
+        ),
     ];
     for (component, index_needle, script_needle) in optional_checks {
         if components.iter().any(|item| *item == component) {
@@ -1079,7 +1103,11 @@ fn verify_static_dashboard_helper_monitoring_surface_contract(
                 );
             }
         }
-        for needle in ["helperPreviewStatus", "helperPreviewBody", "processed/${previewFile}"] {
+        for needle in [
+            "helperPreviewStatus",
+            "helperPreviewBody",
+            "processed/${previewFile}",
+        ] {
             if !app_js.contains(needle) {
                 bail!(
                     "static dashboard helper monitoring surface contract failed: '{}' missing from app.js",
@@ -1103,11 +1131,7 @@ fn verify_visual_load_value(
     if value.get("kind").and_then(|item| item.as_str()) != Some(spec.kind.as_str()) {
         bail!("chattycog visual load contract failed: kind mismatch");
     }
-    if value
-        .get("auto_launch")
-        .and_then(|item| item.as_bool())
-        != Some(spec.auto_launch)
-    {
+    if value.get("auto_launch").and_then(|item| item.as_bool()) != Some(spec.auto_launch) {
         bail!("chattycog visual load contract failed: auto_launch mismatch");
     }
     if let Some(title) = &spec.title {

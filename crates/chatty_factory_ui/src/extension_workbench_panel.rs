@@ -11,7 +11,10 @@ impl ChattyFactoryUiApp {
         acceptance_targets_path: &Path,
     ) {
         ui.label(format!("Scaffold: {}", short_path(&entry.scaffold_root)));
-        ui.label(format!("Source spec: {}", short_path(&entry.source_stub_path)));
+        ui.label(format!(
+            "Source spec: {}",
+            short_path(&entry.source_stub_path)
+        ));
         ui.horizontal(|ui| {
             if ui.small_button("Open Scaffold").clicked() {
                 self.reveal_governed_artifact(
@@ -248,8 +251,7 @@ impl ChattyFactoryUiApp {
                                     .interactive(false),
                             );
                         } else {
-                            columns[0]
-                                .label("No preview available for the apply-patch artifact.");
+                            columns[0].label("No preview available for the apply-patch artifact.");
                         }
 
                         columns[1].label(format!(

@@ -3,33 +3,34 @@ use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
-use std::{collections::{BTreeMap, BTreeSet}, fs};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+};
 
-mod governance_ui;
 mod catalog_governance_panels;
 mod extension_governance_panel;
 mod extension_workbench_panel;
+mod governance_ui;
 mod patch_xray_panel;
 mod proof_history_panel;
 mod proof_run_panel;
 mod request_action_panel;
 mod runtime_registry_dashboard;
 
-use chrono::{Local, Utc};
 use chatty_factory_core::{
-    built_in_proof_templates,
-    build_starter_label,
-    capability_comparison_bundle_manifest_path, capability_comparison_bundles_from_root,
-    proof_template_manifest_path, proof_templates_from_root,
-    AcceptanceRecipeStatus, CapabilityComparisonBundle, ChattyCogBridgeCapabilities,
-    OperatorBundleStatus, PatchLaneStatus, PrimitiveProofTemplate, ProjectBrowserState,
-    ProjectSpec, RuntimeConfig, RuntimeModelCatalogReceipt,
+    build_starter_label, built_in_proof_templates, capability_comparison_bundle_manifest_path,
+    capability_comparison_bundles_from_root, proof_template_manifest_path,
+    proof_templates_from_root, AcceptanceRecipeStatus, CapabilityComparisonBundle,
+    ChattyCogBridgeCapabilities, OperatorBundleStatus, PatchLaneStatus, PrimitiveProofTemplate,
+    ProjectBrowserState, ProjectSpec, RuntimeConfig, RuntimeModelCatalogReceipt,
 };
 use chatty_factory_families::refresh_project_contract_views_for_project;
 use chatty_factory_host::{
     HostActionResult, HostBridge, HostExtensionRegistryView, HostPlannerOptions,
     PendingExtensionEntry,
 };
+use chrono::{Local, Utc};
 use eframe::{egui, App, Frame, NativeOptions};
 use governance_ui::{
     governance_cooldown_warning, governance_never_refreshed_summary,
@@ -59,20 +60,44 @@ enum UiTask {
     RefreshBridgeGovernance,
     RefreshFamilyGovernance,
     RefreshTemplateGovernance,
-    ApproveProposedConstraint { request_id_or_path: String },
-    SetApprovedConstraintActive { constraint_id: String, active: bool },
+    ApproveProposedConstraint {
+        request_id_or_path: String,
+    },
+    SetApprovedConstraintActive {
+        constraint_id: String,
+        active: bool,
+    },
     ArchiveUnmatchedInactiveConstraints,
     DeactivateLowValueActiveConstraints,
-    RestoreApprovedConstraint { constraint_id: String },
-    SelectProject { project_name: String },
+    RestoreApprovedConstraint {
+        constraint_id: String,
+    },
+    SelectProject {
+        project_name: String,
+    },
     ClearSelectedProject,
-    ImplementExtension { entry_id: String },
-    ValidateExtension { entry_id: String },
-    PrepareExtensionPromotion { entry_id: String },
-    PrepareExtensionApplyPatch { entry_id: String },
-    ConsumeExtensionApplyPatch { entry_id: String },
-    ValidateLiveExtension { entry_id: String },
-    ArchiveExtension { entry_id: String, reason: String },
+    ImplementExtension {
+        entry_id: String,
+    },
+    ValidateExtension {
+        entry_id: String,
+    },
+    PrepareExtensionPromotion {
+        entry_id: String,
+    },
+    PrepareExtensionApplyPatch {
+        entry_id: String,
+    },
+    ConsumeExtensionApplyPatch {
+        entry_id: String,
+    },
+    ValidateLiveExtension {
+        entry_id: String,
+    },
+    ArchiveExtension {
+        entry_id: String,
+        reason: String,
+    },
     RunProofTemplate {
         template_id: String,
         request: String,
@@ -1163,16 +1188,28 @@ impl ChattyFactoryUiApp {
             selected_project_spec: None,
             runtime_status: RuntimeStatusView::default(),
             proof_governance_refresh_status: load_proof_governance_refresh_status(&workspace_root),
-            composition_governance_refresh_status: load_composition_governance_refresh_status(&workspace_root),
+            composition_governance_refresh_status: load_composition_governance_refresh_status(
+                &workspace_root,
+            ),
             patch_governance_refresh_status: load_patch_governance_refresh_status(&workspace_root),
-            project_patch_readiness_refresh_status: load_project_patch_readiness_refresh_status(&workspace_root),
-            helper_governance_refresh_status: load_helper_governance_refresh_status(&workspace_root),
-            bridge_governance_refresh_status: load_bridge_governance_refresh_status(&workspace_root),
-            family_governance_refresh_status: load_family_governance_refresh_status(&workspace_root),
+            project_patch_readiness_refresh_status: load_project_patch_readiness_refresh_status(
+                &workspace_root,
+            ),
+            helper_governance_refresh_status: load_helper_governance_refresh_status(
+                &workspace_root,
+            ),
+            bridge_governance_refresh_status: load_bridge_governance_refresh_status(
+                &workspace_root,
+            ),
+            family_governance_refresh_status: load_family_governance_refresh_status(
+                &workspace_root,
+            ),
             selected_family_governance_id: load_family_governance_receipts(&workspace_root)
                 .first()
                 .map(|receipt| receipt.family_id.clone()),
-            template_governance_refresh_status: load_template_governance_refresh_status(&workspace_root),
+            template_governance_refresh_status: load_template_governance_refresh_status(
+                &workspace_root,
+            ),
             selected_template_governance_id: load_template_governance_receipts(&workspace_root)
                 .first()
                 .map(|receipt| receipt.template_bundle_id.clone()),
@@ -1359,10 +1396,8 @@ impl ChattyFactoryUiApp {
             app.auto_refresh_stale_composition_governance,
             app.last_auto_composition_governance_refresh_unix_secs,
         ) {
-            app.status_line =
-                "Composition governance is stale. Auto-refreshing.".to_string();
-            app.last_auto_composition_governance_refresh_unix_secs =
-                Some(Utc::now().timestamp());
+            app.status_line = "Composition governance is stale. Auto-refreshing.".to_string();
+            app.last_auto_composition_governance_refresh_unix_secs = Some(Utc::now().timestamp());
             app.save_paired_proof_ui_preferences();
             app.spawn_task(UiTask::RefreshCompositionGovernance);
         }
@@ -1470,11 +1505,15 @@ impl ChattyFactoryUiApp {
     }
 
     fn extension_exports_dir(&self) -> PathBuf {
-        self.workspace_root.join("runtime").join("extension_exports")
+        self.workspace_root
+            .join("runtime")
+            .join("extension_exports")
     }
 
     fn paired_proof_exports_dir(&self) -> PathBuf {
-        self.workspace_root.join("runtime").join("paired_proof_exports")
+        self.workspace_root
+            .join("runtime")
+            .join("paired_proof_exports")
     }
 
     fn refresh_from_runtime_file(&mut self) {
@@ -1526,7 +1565,8 @@ impl ChattyFactoryUiApp {
     fn toggle_extension_favorite(&mut self, entry_id: &str) {
         let was_removed = self.favorite_extension_entry_ids.remove(entry_id);
         if !was_removed {
-            self.favorite_extension_entry_ids.insert(entry_id.to_string());
+            self.favorite_extension_entry_ids
+                .insert(entry_id.to_string());
         }
         self.save_extension_favorites();
         let message = if was_removed {
@@ -1659,10 +1699,9 @@ impl ChattyFactoryUiApp {
             },
             profiles: self.proof_run_profiles.clone(),
         };
-        if let Err(error) = save_paired_proof_ui_preferences(
-            &self.paired_proof_ui_preferences_path(),
-            &preferences,
-        ) {
+        if let Err(error) =
+            save_paired_proof_ui_preferences(&self.paired_proof_ui_preferences_path(), &preferences)
+        {
             self.status_line = format!("Failed to save proof preferences: {error}");
             self.push_toast(
                 format!("Failed to save proof preferences: {error}"),
@@ -1780,7 +1819,8 @@ impl ChattyFactoryUiApp {
 
     fn mark_extension_recent(&mut self, entry_id: &str) {
         self.recent_extension_entry_ids.retain(|id| id != entry_id);
-        self.recent_extension_entry_ids.insert(0, entry_id.to_string());
+        self.recent_extension_entry_ids
+            .insert(0, entry_id.to_string());
         if self.recent_extension_entry_ids.len() > 10 {
             self.recent_extension_entry_ids.truncate(10);
         }
@@ -1842,11 +1882,8 @@ impl ChattyFactoryUiApp {
     ) {
         let export_dir = self.extension_exports_dir();
         let latest_export_path = export_dir.join(format!("{}.md", entry.entry_id));
-        let history_export_path = export_dir.join(format!(
-            "{}-{}.md",
-            entry.entry_id,
-            export_timestamp_slug()
-        ));
+        let history_export_path =
+            export_dir.join(format!("{}-{}.md", entry.entry_id, export_timestamp_slug()));
         let note = self
             .extension_notes
             .get(&entry.entry_id)
@@ -1918,10 +1955,7 @@ impl ChattyFactoryUiApp {
                     error.to_string(),
                     false,
                 );
-                self.push_toast(
-                    format!("Proof export failed: {error}"),
-                    ToastKind::Error,
-                );
+                self.push_toast(format!("Proof export failed: {error}"), ToastKind::Error);
             }
         }
     }
@@ -1950,7 +1984,8 @@ impl ChattyFactoryUiApp {
     }
 
     fn latest_paired_proof_export_path(&self, receipt_id: &str) -> PathBuf {
-        self.paired_proof_exports_dir().join(format!("{}.md", receipt_id))
+        self.paired_proof_exports_dir()
+            .join(format!("{}.md", receipt_id))
     }
 
     fn paired_proof_export_history_paths(&self, receipt_id: &str) -> Vec<PathBuf> {
@@ -1958,7 +1993,8 @@ impl ChattyFactoryUiApp {
     }
 
     fn latest_extension_export_path(&self, entry_id: &str) -> PathBuf {
-        self.extension_exports_dir().join(format!("{}.md", entry_id))
+        self.extension_exports_dir()
+            .join(format!("{}.md", entry_id))
     }
 
     fn extension_export_history_paths(&self, entry_id: &str) -> Vec<PathBuf> {
@@ -2016,24 +2052,14 @@ impl ChattyFactoryUiApp {
             Ok(()) => {
                 self.status_line = success_status.to_string();
                 if let Some((entry_id, title)) = activity {
-                    self.push_extension_activity(
-                        entry_id,
-                        title,
-                        short_path(path),
-                        true,
-                    );
+                    self.push_extension_activity(entry_id, title, short_path(path), true);
                 }
                 self.push_toast(success_toast, ToastKind::Success);
             }
             Err(error) => {
                 self.status_line = format!("{failure_status_label}: {error}");
                 if let Some((entry_id, title)) = activity {
-                    self.push_extension_activity(
-                        entry_id,
-                        title,
-                        error.to_string(),
-                        false,
-                    );
+                    self.push_extension_activity(entry_id, title, error.to_string(), false);
                 }
                 self.push_toast(failure_toast, ToastKind::Error);
             }
@@ -2103,24 +2129,14 @@ impl ChattyFactoryUiApp {
             UiTask::RefreshCompositionGovernance => {
                 "Refreshing composition governance registry".to_string()
             }
-            UiTask::RefreshPatchGovernance => {
-                "Refreshing patch governance registry".to_string()
-            }
-            UiTask::RefreshHelperGovernance => {
-                "Refreshing helper governance registry".to_string()
-            }
-            UiTask::RefreshBridgeGovernance => {
-                "Refreshing bridge governance registry".to_string()
-            }
-            UiTask::RefreshFamilyGovernance => {
-                "Refreshing family governance registry".to_string()
-            }
+            UiTask::RefreshPatchGovernance => "Refreshing patch governance registry".to_string(),
+            UiTask::RefreshHelperGovernance => "Refreshing helper governance registry".to_string(),
+            UiTask::RefreshBridgeGovernance => "Refreshing bridge governance registry".to_string(),
+            UiTask::RefreshFamilyGovernance => "Refreshing family governance registry".to_string(),
             UiTask::RefreshTemplateGovernance => {
                 "Refreshing template governance registry".to_string()
             }
-            UiTask::ApproveProposedConstraint { .. } => {
-                "Approving proposed constraint".to_string()
-            }
+            UiTask::ApproveProposedConstraint { .. } => "Approving proposed constraint".to_string(),
             UiTask::SetApprovedConstraintActive { active, .. } => {
                 if *active {
                     "Activating approved constraint".to_string()
@@ -2422,8 +2438,7 @@ fn patch_baseline_matches(entry: &PendingExtensionEntry, filter: PatchBaselineFi
         }
         PatchBaselineFilter::NoBaseline => {
             entry.extension_kind == "patch_recipe"
-                && entry.patch_change_since_last_live_status.as_deref()
-                    == Some("no_live_baseline")
+                && entry.patch_change_since_last_live_status.as_deref() == Some("no_live_baseline")
         }
         PatchBaselineFilter::Unknown => {
             entry.extension_kind == "patch_recipe"
@@ -2458,8 +2473,7 @@ fn helper_baseline_matches(entry: &PendingExtensionEntry, filter: HelperBaseline
         }
         HelperBaselineFilter::NoBaseline => {
             entry.extension_kind == "helper_lane"
-                && entry.helper_change_since_last_live_status.as_deref()
-                    == Some("no_live_baseline")
+                && entry.helper_change_since_last_live_status.as_deref() == Some("no_live_baseline")
         }
         HelperBaselineFilter::Unknown => {
             entry.extension_kind == "helper_lane"
@@ -2494,8 +2508,7 @@ fn bridge_baseline_matches(entry: &PendingExtensionEntry, filter: BridgeBaseline
         }
         BridgeBaselineFilter::NoBaseline => {
             entry.extension_kind == "chattycog_bridge_lane"
-                && entry.bridge_change_since_last_live_status.as_deref()
-                    == Some("no_live_baseline")
+                && entry.bridge_change_since_last_live_status.as_deref() == Some("no_live_baseline")
         }
         BridgeBaselineFilter::Unknown => {
             entry.extension_kind == "chattycog_bridge_lane"
@@ -2531,44 +2544,54 @@ fn proof_quality_badge(entry: &PendingExtensionEntry) -> Option<String> {
     if entry.extension_kind != "proof_harness_bundle" {
         return None;
     }
-    Some(match entry.proof_quality_status.as_deref().unwrap_or("unknown") {
-        "passing" => "proof:passing".to_string(),
-        "runnable_diverged" => "proof:diverged".to_string(),
-        "catalog_resolved" => "proof:catalog".to_string(),
-        "needs_contract_fix" => "proof:fix".to_string(),
-        other => format!("proof:{other}"),
-    })
+    Some(
+        match entry.proof_quality_status.as_deref().unwrap_or("unknown") {
+            "passing" => "proof:passing".to_string(),
+            "runnable_diverged" => "proof:diverged".to_string(),
+            "catalog_resolved" => "proof:catalog".to_string(),
+            "needs_contract_fix" => "proof:fix".to_string(),
+            other => format!("proof:{other}"),
+        },
+    )
 }
 
 fn proof_baseline_badge(entry: &PendingExtensionEntry) -> Option<String> {
     if entry.extension_kind != "proof_harness_bundle" {
         return None;
     }
-    Some(match entry
-        .proof_change_since_last_pass_status
-        .as_deref()
-        .unwrap_or("unknown")
-    {
-        "stable_since_last_pass" => "proof:stable".to_string(),
-        "changed_since_last_pass" => "proof:changed".to_string(),
-        "baseline_recorded" => "proof:baseline".to_string(),
-        "regressed_since_last_pass" => "proof:regressed".to_string(),
-        "no_passing_baseline" => "proof:no-baseline".to_string(),
-        other => format!("proof:baseline:{other}"),
-    })
+    Some(
+        match entry
+            .proof_change_since_last_pass_status
+            .as_deref()
+            .unwrap_or("unknown")
+        {
+            "stable_since_last_pass" => "proof:stable".to_string(),
+            "changed_since_last_pass" => "proof:changed".to_string(),
+            "baseline_recorded" => "proof:baseline".to_string(),
+            "regressed_since_last_pass" => "proof:regressed".to_string(),
+            "no_passing_baseline" => "proof:no-baseline".to_string(),
+            other => format!("proof:baseline:{other}"),
+        },
+    )
 }
 
 fn composition_drift_badge(entry: &PendingExtensionEntry) -> Option<String> {
     if entry.extension_kind != "composition_bundle" {
         return None;
     }
-    Some(match entry.composition_drift_status.as_deref().unwrap_or("unknown") {
-        "seed_aligned" => "composition:aligned".to_string(),
-        "structurally_customized" => "composition:custom".to_string(),
-        "drifted_risky" => "composition:risky".to_string(),
-        "unseeded" => "composition:unseeded".to_string(),
-        other => format!("composition:{other}"),
-    })
+    Some(
+        match entry
+            .composition_drift_status
+            .as_deref()
+            .unwrap_or("unknown")
+        {
+            "seed_aligned" => "composition:aligned".to_string(),
+            "structurally_customized" => "composition:custom".to_string(),
+            "drifted_risky" => "composition:risky".to_string(),
+            "unseeded" => "composition:unseeded".to_string(),
+            other => format!("composition:{other}"),
+        },
+    )
 }
 
 fn composition_baseline_badge(entry: &PendingExtensionEntry) -> Option<String> {
@@ -2595,14 +2618,16 @@ fn patch_drift_badge(entry: &PendingExtensionEntry) -> Option<String> {
     if entry.extension_kind != "patch_recipe" {
         return None;
     }
-    Some(match entry.patch_drift_status.as_deref().unwrap_or("unknown") {
-        "seed_aligned" => "patch:aligned".to_string(),
-        "lightly_customized" => "patch:custom".to_string(),
-        "structurally_customized" => "patch:structural".to_string(),
-        "drifted_risky" => "patch:risky".to_string(),
-        "unseeded" => "patch:unseeded".to_string(),
-        other => format!("patch:{other}"),
-    })
+    Some(
+        match entry.patch_drift_status.as_deref().unwrap_or("unknown") {
+            "seed_aligned" => "patch:aligned".to_string(),
+            "lightly_customized" => "patch:custom".to_string(),
+            "structurally_customized" => "patch:structural".to_string(),
+            "drifted_risky" => "patch:risky".to_string(),
+            "unseeded" => "patch:unseeded".to_string(),
+            other => format!("patch:{other}"),
+        },
+    )
 }
 
 fn patch_baseline_badge(entry: &PendingExtensionEntry) -> Option<String> {
@@ -2629,14 +2654,16 @@ fn helper_drift_badge(entry: &PendingExtensionEntry) -> Option<String> {
     if entry.extension_kind != "helper_lane" {
         return None;
     }
-    Some(match entry.helper_drift_status.as_deref().unwrap_or("unknown") {
-        "seed_aligned" => "helper:aligned".to_string(),
-        "lightly_customized" => "helper:custom".to_string(),
-        "structurally_customized" => "helper:structural".to_string(),
-        "drifted_risky" => "helper:risky".to_string(),
-        "unseeded" => "helper:unseeded".to_string(),
-        other => format!("helper:{other}"),
-    })
+    Some(
+        match entry.helper_drift_status.as_deref().unwrap_or("unknown") {
+            "seed_aligned" => "helper:aligned".to_string(),
+            "lightly_customized" => "helper:custom".to_string(),
+            "structurally_customized" => "helper:structural".to_string(),
+            "drifted_risky" => "helper:risky".to_string(),
+            "unseeded" => "helper:unseeded".to_string(),
+            other => format!("helper:{other}"),
+        },
+    )
 }
 
 fn helper_baseline_badge(entry: &PendingExtensionEntry) -> Option<String> {
@@ -2663,14 +2690,16 @@ fn bridge_drift_badge(entry: &PendingExtensionEntry) -> Option<String> {
     if entry.extension_kind != "chattycog_bridge_lane" {
         return None;
     }
-    Some(match entry.bridge_drift_status.as_deref().unwrap_or("unknown") {
-        "seed_aligned" => "bridge:aligned".to_string(),
-        "lightly_customized" => "bridge:custom".to_string(),
-        "structurally_customized" => "bridge:structural".to_string(),
-        "drifted_risky" => "bridge:risky".to_string(),
-        "unseeded" => "bridge:unseeded".to_string(),
-        other => format!("bridge:{other}"),
-    })
+    Some(
+        match entry.bridge_drift_status.as_deref().unwrap_or("unknown") {
+            "seed_aligned" => "bridge:aligned".to_string(),
+            "lightly_customized" => "bridge:custom".to_string(),
+            "structurally_customized" => "bridge:structural".to_string(),
+            "drifted_risky" => "bridge:risky".to_string(),
+            "unseeded" => "bridge:unseeded".to_string(),
+            other => format!("bridge:{other}"),
+        },
+    )
 }
 
 fn bridge_baseline_badge(entry: &PendingExtensionEntry) -> Option<String> {
@@ -2694,7 +2723,11 @@ fn bridge_baseline_badge(entry: &PendingExtensionEntry) -> Option<String> {
 }
 
 fn family_governed_artifact_set_summary(receipt: &FamilyGovernanceReceiptView) -> String {
-    let manifest_count = if receipt.manifest_path.trim().is_empty() { 0 } else { 1 };
+    let manifest_count = if receipt.manifest_path.trim().is_empty() {
+        0
+    } else {
+        1
+    };
     format!(
         "Governed artifact set: {manifest_count} family manifest plus declared primitive adapter surface"
     )
@@ -2760,9 +2793,7 @@ fn family_ecosystem_badge(family_id: &str) -> Option<&'static str> {
         | "chattycog_webview_module"
         | "chattycog_workspace_module" => Some("[ecosystem: Chatty-Cog]"),
         "chattyedu_native_window_module" => Some("[ecosystem: Chatty-EDU]"),
-        "chattycog_chattyedu_native_window_module" => {
-            Some("[ecosystem: Chatty-Cog + Chatty-EDU]")
-        }
+        "chattycog_chattyedu_native_window_module" => Some("[ecosystem: Chatty-Cog + Chatty-EDU]"),
         _ => None,
     }
 }
@@ -2836,7 +2867,9 @@ fn count_proof_baseline_status(
         .chain(registry.fully_live_entries.iter())
         .chain(registry.archived_entries.iter())
         .filter(|entry| entry.extension_kind == "proof_harness_bundle")
-        .filter(|entry| entry.proof_change_since_last_pass_status.as_deref() == Some(expected_status))
+        .filter(|entry| {
+            entry.proof_change_since_last_pass_status.as_deref() == Some(expected_status)
+        })
         .count()
 }
 
@@ -2850,7 +2883,9 @@ fn count_composition_baseline_status(
         .chain(registry.fully_live_entries.iter())
         .chain(registry.archived_entries.iter())
         .filter(|entry| entry.extension_kind == "composition_bundle")
-        .filter(|entry| entry.composition_change_since_last_live_status.as_deref() == Some(expected_status))
+        .filter(|entry| {
+            entry.composition_change_since_last_live_status.as_deref() == Some(expected_status)
+        })
         .count()
 }
 
@@ -2864,7 +2899,9 @@ fn count_patch_baseline_status(
         .chain(registry.fully_live_entries.iter())
         .chain(registry.archived_entries.iter())
         .filter(|entry| entry.extension_kind == "patch_recipe")
-        .filter(|entry| entry.patch_change_since_last_live_status.as_deref() == Some(expected_status))
+        .filter(|entry| {
+            entry.patch_change_since_last_live_status.as_deref() == Some(expected_status)
+        })
         .count()
 }
 
@@ -2878,7 +2915,9 @@ fn count_helper_baseline_status(
         .chain(registry.fully_live_entries.iter())
         .chain(registry.archived_entries.iter())
         .filter(|entry| entry.extension_kind == "helper_lane")
-        .filter(|entry| entry.helper_change_since_last_live_status.as_deref() == Some(expected_status))
+        .filter(|entry| {
+            entry.helper_change_since_last_live_status.as_deref() == Some(expected_status)
+        })
         .count()
 }
 
@@ -2892,7 +2931,9 @@ fn count_bridge_baseline_status(
         .chain(registry.fully_live_entries.iter())
         .chain(registry.archived_entries.iter())
         .filter(|entry| entry.extension_kind == "chattycog_bridge_lane")
-        .filter(|entry| entry.bridge_change_since_last_live_status.as_deref() == Some(expected_status))
+        .filter(|entry| {
+            entry.bridge_change_since_last_live_status.as_deref() == Some(expected_status)
+        })
         .count()
 }
 
@@ -2925,12 +2966,12 @@ fn latest_cross_family_proof_receipt_modified(
         })
         .filter_map(|path| {
             let modified = fs::metadata(&path).ok()?.modified().ok()?;
-            let label = modified
-                .into();
+            let label = modified.into();
             let label: chrono::DateTime<Utc> = label;
             Some((
                 modified,
-                label.with_timezone(&Local)
+                label
+                    .with_timezone(&Local)
                     .format("%Y-%m-%d %H:%M:%S")
                     .to_string(),
             ))
@@ -2944,7 +2985,9 @@ fn proof_governance_should_auto_refresh(
     auto_refresh_enabled: bool,
     last_auto_refresh_unix_secs: Option<i64>,
 ) -> bool {
-    if !auto_refresh_enabled || proof_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs) {
+    if !auto_refresh_enabled
+        || proof_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
+    {
         return false;
     }
     let latest_receipt = latest_cross_family_proof_receipt_modified(workspace_root);
@@ -3000,9 +3043,7 @@ fn patch_governance_refresh_is_stale(status: &PatchGovernanceRefreshStatusView) 
     status.age_minutes.unwrap_or(0) >= 60
 }
 
-fn patch_governance_auto_refresh_in_cooldown(
-    last_auto_refresh_unix_secs: Option<i64>,
-) -> bool {
+fn patch_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs: Option<i64>) -> bool {
     let Some(last_auto_refresh_unix_secs) = last_auto_refresh_unix_secs else {
         return false;
     };
@@ -3022,7 +3063,8 @@ fn patch_governance_should_auto_refresh(
     auto_refresh_enabled: bool,
     last_auto_refresh_unix_secs: Option<i64>,
 ) -> bool {
-    if !auto_refresh_enabled || patch_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
+    if !auto_refresh_enabled
+        || patch_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
     {
         return false;
     }
@@ -3036,9 +3078,7 @@ fn helper_governance_refresh_is_stale(status: &HelperGovernanceRefreshStatusView
     status.age_minutes.unwrap_or(0) >= 60
 }
 
-fn helper_governance_auto_refresh_in_cooldown(
-    last_auto_refresh_unix_secs: Option<i64>,
-) -> bool {
+fn helper_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs: Option<i64>) -> bool {
     let Some(last_auto_refresh_unix_secs) = last_auto_refresh_unix_secs else {
         return false;
     };
@@ -3058,7 +3098,8 @@ fn helper_governance_should_auto_refresh(
     auto_refresh_enabled: bool,
     last_auto_refresh_unix_secs: Option<i64>,
 ) -> bool {
-    if !auto_refresh_enabled || helper_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
+    if !auto_refresh_enabled
+        || helper_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
     {
         return false;
     }
@@ -3072,9 +3113,7 @@ fn bridge_governance_refresh_is_stale(status: &BridgeGovernanceRefreshStatusView
     status.age_minutes.unwrap_or(0) >= 60
 }
 
-fn bridge_governance_auto_refresh_in_cooldown(
-    last_auto_refresh_unix_secs: Option<i64>,
-) -> bool {
+fn bridge_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs: Option<i64>) -> bool {
     let Some(last_auto_refresh_unix_secs) = last_auto_refresh_unix_secs else {
         return false;
     };
@@ -3094,7 +3133,8 @@ fn bridge_governance_should_auto_refresh(
     auto_refresh_enabled: bool,
     last_auto_refresh_unix_secs: Option<i64>,
 ) -> bool {
-    if !auto_refresh_enabled || bridge_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
+    if !auto_refresh_enabled
+        || bridge_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
     {
         return false;
     }
@@ -3108,9 +3148,7 @@ fn family_governance_refresh_is_stale(status: &FamilyGovernanceRefreshStatusView
     status.age_minutes.unwrap_or(0) >= 60
 }
 
-fn family_governance_auto_refresh_in_cooldown(
-    last_auto_refresh_unix_secs: Option<i64>,
-) -> bool {
+fn family_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs: Option<i64>) -> bool {
     let Some(last_auto_refresh_unix_secs) = last_auto_refresh_unix_secs else {
         return false;
     };
@@ -3130,7 +3168,8 @@ fn family_governance_should_auto_refresh(
     auto_refresh_enabled: bool,
     last_auto_refresh_unix_secs: Option<i64>,
 ) -> bool {
-    if !auto_refresh_enabled || family_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
+    if !auto_refresh_enabled
+        || family_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
     {
         return false;
     }
@@ -3144,9 +3183,7 @@ fn template_governance_refresh_is_stale(status: &TemplateGovernanceRefreshStatus
     status.age_minutes.unwrap_or(0) >= 60
 }
 
-fn template_governance_auto_refresh_in_cooldown(
-    last_auto_refresh_unix_secs: Option<i64>,
-) -> bool {
+fn template_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs: Option<i64>) -> bool {
     let Some(last_auto_refresh_unix_secs) = last_auto_refresh_unix_secs else {
         return false;
     };
@@ -3166,7 +3203,8 @@ fn template_governance_should_auto_refresh(
     auto_refresh_enabled: bool,
     last_auto_refresh_unix_secs: Option<i64>,
 ) -> bool {
-    if !auto_refresh_enabled || template_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
+    if !auto_refresh_enabled
+        || template_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
     {
         return false;
     }
@@ -3397,13 +3435,15 @@ fn sort_extension_entries(entries: &mut Vec<&PendingExtensionEntry>, sort: Exten
                     _ => proof_baseline_risk_rank(b),
                 };
                 let a_drift_rank = match a.extension_kind.as_str() {
-                    "composition_bundle" => match a.composition_drift_status.as_deref().unwrap_or("unknown") {
-                        "drifted_risky" => 0,
-                        "structurally_customized" => 1,
-                        "seed_aligned" => 3,
-                        "unseeded" => 4,
-                        _ => 5,
-                    },
+                    "composition_bundle" => {
+                        match a.composition_drift_status.as_deref().unwrap_or("unknown") {
+                            "drifted_risky" => 0,
+                            "structurally_customized" => 1,
+                            "seed_aligned" => 3,
+                            "unseeded" => 4,
+                            _ => 5,
+                        }
+                    }
                     "patch_recipe" => match a.patch_drift_status.as_deref().unwrap_or("unknown") {
                         "drifted_risky" => 0,
                         "structurally_customized" => 1,
@@ -3420,28 +3460,28 @@ fn sort_extension_entries(entries: &mut Vec<&PendingExtensionEntry>, sort: Exten
                         "unseeded" => 4,
                         _ => 5,
                     },
-                    "chattycog_bridge_lane" => match a
-                        .bridge_drift_status
-                        .as_deref()
-                        .unwrap_or("unknown")
-                    {
-                        "drifted_risky" => 0,
-                        "structurally_customized" => 1,
-                        "lightly_customized" => 2,
-                        "seed_aligned" => 3,
-                        "unseeded" => 4,
-                        _ => 5,
-                    },
+                    "chattycog_bridge_lane" => {
+                        match a.bridge_drift_status.as_deref().unwrap_or("unknown") {
+                            "drifted_risky" => 0,
+                            "structurally_customized" => 1,
+                            "lightly_customized" => 2,
+                            "seed_aligned" => 3,
+                            "unseeded" => 4,
+                            _ => 5,
+                        }
+                    }
                     _ => proof_drift_risk_rank(a),
                 };
                 let b_drift_rank = match b.extension_kind.as_str() {
-                    "composition_bundle" => match b.composition_drift_status.as_deref().unwrap_or("unknown") {
-                        "drifted_risky" => 0,
-                        "structurally_customized" => 1,
-                        "seed_aligned" => 3,
-                        "unseeded" => 4,
-                        _ => 5,
-                    },
+                    "composition_bundle" => {
+                        match b.composition_drift_status.as_deref().unwrap_or("unknown") {
+                            "drifted_risky" => 0,
+                            "structurally_customized" => 1,
+                            "seed_aligned" => 3,
+                            "unseeded" => 4,
+                            _ => 5,
+                        }
+                    }
                     "patch_recipe" => match b.patch_drift_status.as_deref().unwrap_or("unknown") {
                         "drifted_risky" => 0,
                         "structurally_customized" => 1,
@@ -3458,24 +3498,24 @@ fn sort_extension_entries(entries: &mut Vec<&PendingExtensionEntry>, sort: Exten
                         "unseeded" => 4,
                         _ => 5,
                     },
-                    "chattycog_bridge_lane" => match b
-                        .bridge_drift_status
-                        .as_deref()
-                        .unwrap_or("unknown")
-                    {
-                        "drifted_risky" => 0,
-                        "structurally_customized" => 1,
-                        "lightly_customized" => 2,
-                        "seed_aligned" => 3,
-                        "unseeded" => 4,
-                        _ => 5,
-                    },
+                    "chattycog_bridge_lane" => {
+                        match b.bridge_drift_status.as_deref().unwrap_or("unknown") {
+                            "drifted_risky" => 0,
+                            "structurally_customized" => 1,
+                            "lightly_customized" => 2,
+                            "seed_aligned" => 3,
+                            "unseeded" => 4,
+                            _ => 5,
+                        }
+                    }
                     _ => proof_drift_risk_rank(b),
                 };
                 a_baseline_rank
                     .cmp(&b_baseline_rank)
                     .then_with(|| a_drift_rank.cmp(&b_drift_rank))
-                    .then_with(|| extension_status_rank(&a.status).cmp(&extension_status_rank(&b.status)))
+                    .then_with(|| {
+                        extension_status_rank(&a.status).cmp(&extension_status_rank(&b.status))
+                    })
                     .then_with(|| b.entry_id.cmp(&a.entry_id))
             });
         }
@@ -3545,7 +3585,9 @@ fn compare_mismatch_hints(left: &str, right: &str) -> Vec<String> {
         "replace this stub with deterministic patch logic",
     ] {
         if left.contains(marker) && !right.contains(marker) {
-            hints.push(format!("Left side still contains placeholder marker `{marker}`."));
+            hints.push(format!(
+                "Left side still contains placeholder marker `{marker}`."
+            ));
         }
     }
 
@@ -3564,7 +3606,11 @@ fn compare_mismatch_hints(left: &str, right: &str) -> Vec<String> {
     hints
 }
 
-fn lane_readiness_tone(status: &str, blocker_count: usize, mismatch_hint_count: usize) -> (&'static str, egui::Color32) {
+fn lane_readiness_tone(
+    status: &str,
+    blocker_count: usize,
+    mismatch_hint_count: usize,
+) -> (&'static str, egui::Color32) {
     if status == "fully_live" && blocker_count == 0 && mismatch_hint_count == 0 {
         ("Ready", egui::Color32::from_rgb(84, 168, 108))
     } else if status == "archived" {
@@ -3623,7 +3669,9 @@ impl App for ChattyFactoryUiApp {
                         .rounding(6.0)
                         .inner_margin(egui::Margin::same(10.0))
                         .show(ui, |ui| {
-                            ui.label(egui::RichText::new(&toast.message).color(egui::Color32::WHITE));
+                            ui.label(
+                                egui::RichText::new(&toast.message).color(egui::Color32::WHITE),
+                            );
                         });
                     ui.add_space(6.0);
                 }
@@ -5946,9 +5994,9 @@ fn run_ui_task(workspace_root: &Path, task: UiTask) -> anyhow::Result<UiTaskResu
     let bridge = HostBridge::new(workspace_root.to_path_buf());
     match task {
         UiTask::RefreshBrowser => map_host_action_result(bridge.refresh_project_browser()?),
-        UiTask::RefreshRuntime => map_host_action_result(bridge.refresh_runtime(
-            &HostPlannerOptions::default(),
-        )?),
+        UiTask::RefreshRuntime => {
+            map_host_action_result(bridge.refresh_runtime(&HostPlannerOptions::default())?)
+        }
         UiTask::RefreshProjectPatchReadiness => {
             map_host_action_result(bridge.refresh_project_patch_readiness_registry()?)
         }
@@ -5976,9 +6024,10 @@ fn run_ui_task(workspace_root: &Path, task: UiTask) -> anyhow::Result<UiTaskResu
         UiTask::ApproveProposedConstraint { request_id_or_path } => {
             map_host_action_result(bridge.approve_proposed_constraint(&request_id_or_path)?)
         }
-        UiTask::SetApprovedConstraintActive { constraint_id, active } => {
-            map_host_action_result(bridge.set_approved_constraint_active(&constraint_id, active)?)
-        }
+        UiTask::SetApprovedConstraintActive {
+            constraint_id,
+            active,
+        } => map_host_action_result(bridge.set_approved_constraint_active(&constraint_id, active)?),
         UiTask::ArchiveUnmatchedInactiveConstraints => {
             map_host_action_result(bridge.archive_unmatched_inactive_constraints()?)
         }
@@ -5991,9 +6040,7 @@ fn run_ui_task(workspace_root: &Path, task: UiTask) -> anyhow::Result<UiTaskResu
         UiTask::SelectProject { project_name } => {
             map_host_action_result(bridge.select_project(&project_name)?)
         }
-        UiTask::ClearSelectedProject => {
-            map_host_action_result(bridge.clear_selected_project()?)
-        }
+        UiTask::ClearSelectedProject => map_host_action_result(bridge.clear_selected_project()?),
         UiTask::ImplementExtension { entry_id } => {
             map_host_action_result(bridge.mark_pending_extension_implemented(&entry_id)?)
         }
@@ -6121,37 +6168,38 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
                 "-postcheck.json",
             );
             UiExecutionResult {
-            kind: execution.kind,
-            request_id: execution.request_id,
-            project_name: execution.project_name,
-            starter_override_id: execution.starter_override_id,
-            starter_override_summary: execution.starter_override_summary,
-            recommended_starter_id: execution.recommended_starter_id,
-            recommended_starter_summary: execution.recommended_starter_summary,
-            starter_recommendation_comparison: execution.starter_recommendation_comparison,
-            family_id: execution.family_id,
-            tool_kind: execution.tool_kind,
-            patch_kind: execution.patch_kind,
-            followup_request_mode: execution.followup_request_mode,
-            followup_rationale: execution.followup_rationale,
-            plan_confidence_score: execution.plan_confidence_score,
-            plan_confidence_band: execution.plan_confidence_band,
-            needs_llm_review: execution.needs_llm_review,
-            acceptance_status: execution.acceptance_status,
-            route_notes: execution.route_notes,
-            file_paths,
-            patch_lanes: execution.patch_lanes,
-            acceptance_recipes: execution.acceptance_recipes,
-            operator_bundles: execution.operator_bundles,
-            chattycog_hosting_mode: execution.chattycog_hosting_mode,
-            chattycog_ui_owner: execution.chattycog_ui_owner,
-            chattycog_bridge_capabilities: execution.chattycog_bridge_capabilities,
-            patch_diagnosis_path,
-            patch_plan_review_path,
-            patch_constraint_review_path,
-            patch_intent_freeze_path,
-            patch_postcheck_path,
-        }}),
+                kind: execution.kind,
+                request_id: execution.request_id,
+                project_name: execution.project_name,
+                starter_override_id: execution.starter_override_id,
+                starter_override_summary: execution.starter_override_summary,
+                recommended_starter_id: execution.recommended_starter_id,
+                recommended_starter_summary: execution.recommended_starter_summary,
+                starter_recommendation_comparison: execution.starter_recommendation_comparison,
+                family_id: execution.family_id,
+                tool_kind: execution.tool_kind,
+                patch_kind: execution.patch_kind,
+                followup_request_mode: execution.followup_request_mode,
+                followup_rationale: execution.followup_rationale,
+                plan_confidence_score: execution.plan_confidence_score,
+                plan_confidence_band: execution.plan_confidence_band,
+                needs_llm_review: execution.needs_llm_review,
+                acceptance_status: execution.acceptance_status,
+                route_notes: execution.route_notes,
+                file_paths,
+                patch_lanes: execution.patch_lanes,
+                acceptance_recipes: execution.acceptance_recipes,
+                operator_bundles: execution.operator_bundles,
+                chattycog_hosting_mode: execution.chattycog_hosting_mode,
+                chattycog_ui_owner: execution.chattycog_ui_owner,
+                chattycog_bridge_capabilities: execution.chattycog_bridge_capabilities,
+                patch_diagnosis_path,
+                patch_plan_review_path,
+                patch_constraint_review_path,
+                patch_intent_freeze_path,
+                patch_postcheck_path,
+            }
+        }),
         fallback_result: result.fallback_result.map(|fallback| UiFallbackResult {
             request_id: fallback.request_id,
             mode: fallback.mode,
@@ -6236,9 +6284,7 @@ fn load_proposed_constraint_receipt(path: &str) -> Option<ProposedConstraintRece
     serde_json::from_str(&contents).ok()
 }
 
-fn proposal_origin_label(
-    proposal: &ProposedConstraintReceiptView,
-) -> &'static str {
+fn proposal_origin_label(proposal: &ProposedConstraintReceiptView) -> &'static str {
     match proposal.source_verification_id.as_deref() {
         Some(source) if source.starts_with("triangulation-") => "triangulated",
         Some(_) => "build-verification",
@@ -6246,9 +6292,7 @@ fn proposal_origin_label(
     }
 }
 
-fn load_approved_constraint_shelf(
-    workspace_root: &Path,
-) -> Option<ApprovedConstraintShelfView> {
+fn load_approved_constraint_shelf(workspace_root: &Path) -> Option<ApprovedConstraintShelfView> {
     let path = workspace_root
         .join("runtime")
         .join("approved_constraint_shelf.json");
@@ -6256,9 +6300,7 @@ fn load_approved_constraint_shelf(
     serde_json::from_str(&contents).ok()
 }
 
-fn load_constraint_shelf_history(
-    workspace_root: &Path,
-) -> Option<ConstraintShelfHistoryView> {
+fn load_constraint_shelf_history(workspace_root: &Path) -> Option<ConstraintShelfHistoryView> {
     let path = workspace_root
         .join("runtime")
         .join("constraint_shelf_history.json");
@@ -6300,7 +6342,9 @@ fn load_latest_constraint_approval_origins(
 fn load_recent_constraint_shelf_mutations(
     workspace_root: &Path,
 ) -> Vec<ConstraintShelfMutationReceiptView> {
-    let path = workspace_root.join("runtime").join("constraint_shelf_mutations");
+    let path = workspace_root
+        .join("runtime")
+        .join("constraint_shelf_mutations");
     let Ok(entries) = std::fs::read_dir(path) else {
         return Vec::new();
     };
@@ -6354,7 +6398,9 @@ fn load_recent_failure_vault_entries(
 fn load_recent_triangulation_sessions(
     workspace_root: &Path,
 ) -> Vec<(String, TriangulationSessionView)> {
-    let path = workspace_root.join("runtime").join("triangulation_sessions");
+    let path = workspace_root
+        .join("runtime")
+        .join("triangulation_sessions");
     let Ok(entries) = std::fs::read_dir(path) else {
         return Vec::new();
     };
@@ -6458,11 +6504,7 @@ fn find_proposed_constraint_for_triangulation_session(
         let path_text = path.display().to_string();
         let contents = std::fs::read_to_string(&path).ok()?;
         let receipt = serde_json::from_str::<ProposedConstraintReceiptView>(&contents).ok()?;
-        if receipt
-            .source_verification_id
-            .as_deref()
-            == Some(triangulation_session_id)
-        {
+        if receipt.source_verification_id.as_deref() == Some(triangulation_session_id) {
             Some((path_text, receipt))
         } else {
             None
@@ -6529,8 +6571,7 @@ struct ApprovedConstraintMatchBreakdown {
 fn approved_constraint_match_breakdowns(
     matches: &[(String, BuildVerificationReceiptView)],
 ) -> BTreeMap<String, ApprovedConstraintMatchBreakdown> {
-    let mut breakdowns: BTreeMap<String, ApprovedConstraintMatchBreakdown> =
-        BTreeMap::new();
+    let mut breakdowns: BTreeMap<String, ApprovedConstraintMatchBreakdown> = BTreeMap::new();
     for (_, receipt) in matches {
         for constraint_id in &receipt.matched_approved_constraint_ids {
             let breakdown = breakdowns.entry(constraint_id.clone()).or_default();
@@ -6579,7 +6620,8 @@ fn load_proof_governance_refresh_status(
             refresh_modified = Some(modified);
             let modified_utc: chrono::DateTime<Utc> = modified.into();
             let modified_local = modified_utc.with_timezone(&Local);
-            status.refreshed_at_label = Some(modified_local.format("%Y-%m-%d %H:%M:%S").to_string());
+            status.refreshed_at_label =
+                Some(modified_local.format("%Y-%m-%d %H:%M:%S").to_string());
             if let Ok(elapsed) = modified.elapsed() {
                 status.age_minutes = Some(elapsed.as_secs() / 60);
             }
@@ -6731,20 +6773,22 @@ fn load_family_governance_refresh_status(
 }
 
 fn load_family_usage_summary(workspace_root: &Path) -> Option<FamilyUsageSummaryView> {
-    let path = workspace_root.join("runtime").join("family_usage_summary.json");
+    let path = workspace_root
+        .join("runtime")
+        .join("family_usage_summary.json");
     let contents = fs::read_to_string(path).ok()?;
     serde_json::from_str::<FamilyUsageSummaryView>(&contents).ok()
 }
 
 fn load_starter_usage_summary(workspace_root: &Path) -> Option<StarterUsageSummaryView> {
-    let path = workspace_root.join("runtime").join("starter_usage_summary.json");
+    let path = workspace_root
+        .join("runtime")
+        .join("starter_usage_summary.json");
     let contents = fs::read_to_string(path).ok()?;
     serde_json::from_str::<StarterUsageSummaryView>(&contents).ok()
 }
 
-fn load_triangulation_loop_summary(
-    workspace_root: &Path,
-) -> Option<TriangulationLoopSummaryView> {
+fn load_triangulation_loop_summary(workspace_root: &Path) -> Option<TriangulationLoopSummaryView> {
     let path = workspace_root
         .join("runtime")
         .join("triangulation_loop_summary.json");
@@ -6770,16 +6814,13 @@ fn load_recent_build_receipts(workspace_root: &Path) -> Vec<BuildReceiptView> {
     receipts.into_iter().map(|(_, receipt)| receipt).collect()
 }
 
-fn load_recent_project_starter_override_counts(
-    workspace_root: &Path,
-) -> BTreeMap<String, usize> {
+fn load_recent_project_starter_override_counts(workspace_root: &Path) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for receipt in load_recent_build_receipts(workspace_root)
         .into_iter()
         .take(20)
         .filter(|receipt| {
-            receipt.starter_recommendation_comparison.as_deref()
-                == Some("overrode_normal_routing")
+            receipt.starter_recommendation_comparison.as_deref() == Some("overrode_normal_routing")
         })
     {
         *counts.entry(receipt.project_name).or_insert(0) += 1;
@@ -6801,7 +6842,9 @@ fn latest_project_starter_override_receipt(
 }
 
 fn load_family_governance_receipts(workspace_root: &Path) -> Vec<FamilyGovernanceReceiptView> {
-    let receipts_dir = workspace_root.join("runtime").join("family_governance_receipts");
+    let receipts_dir = workspace_root
+        .join("runtime")
+        .join("family_governance_receipts");
     let Ok(entries) = std::fs::read_dir(receipts_dir) else {
         return Vec::new();
     };
@@ -6846,7 +6889,9 @@ fn load_template_governance_refresh_status(
 }
 
 fn load_template_governance_receipts(workspace_root: &Path) -> Vec<TemplateGovernanceReceiptView> {
-    let receipts_dir = workspace_root.join("runtime").join("template_governance_receipts");
+    let receipts_dir = workspace_root
+        .join("runtime")
+        .join("template_governance_receipts");
     let Ok(entries) = std::fs::read_dir(receipts_dir) else {
         return Vec::new();
     };
@@ -6955,7 +7000,8 @@ fn load_cross_family_paired_proof_receipts(
         })
         .collect::<Vec<_>>();
     paths.sort_by(|a, b| b.cmp(a));
-    paths.into_iter()
+    paths
+        .into_iter()
         .filter_map(|path| {
             let contents = fs::read_to_string(&path).ok()?;
             let receipt =
@@ -7137,7 +7183,10 @@ fn proof_receipt_matches_filter(
     filter == "all" || receipt.proof_template_id.as_deref() == Some(filter)
 }
 
-fn paired_proof_artifact_count(receipt: &CrossFamilyPairedProofReceiptSummary, receipt_path: &Path) -> usize {
+fn paired_proof_artifact_count(
+    receipt: &CrossFamilyPairedProofReceiptSummary,
+    receipt_path: &Path,
+) -> usize {
     [
         Some(receipt_path.to_string_lossy().to_string()),
         Some(receipt.comparison_receipt_path.clone()),
@@ -7162,8 +7211,7 @@ fn build_paired_proof_diff_summary(
     if latest.equivalent_capability_fulfillment != previous.equivalent_capability_fulfillment {
         lines.push(format!(
             "Outcome changed: {} -> {}",
-            previous.equivalent_capability_fulfillment,
-            latest.equivalent_capability_fulfillment
+            previous.equivalent_capability_fulfillment, latest.equivalent_capability_fulfillment
         ));
     }
     if latest.shared_request != previous.shared_request {
@@ -7256,7 +7304,9 @@ fn latest_catalog_path(runtime_root: &Path) -> Option<PathBuf> {
 }
 
 fn load_extension_favorites(workspace_root: &Path) -> BTreeSet<String> {
-    let path = workspace_root.join("runtime").join("extension_favorites.json");
+    let path = workspace_root
+        .join("runtime")
+        .join("extension_favorites.json");
     fs::read_to_string(path)
         .ok()
         .and_then(|contents| serde_json::from_str::<ExtensionFavoritesFile>(&contents).ok())
@@ -7265,7 +7315,9 @@ fn load_extension_favorites(workspace_root: &Path) -> BTreeSet<String> {
 }
 
 fn load_paired_proof_favorites(workspace_root: &Path) -> BTreeSet<String> {
-    let path = workspace_root.join("runtime").join("paired_proof_favorites.json");
+    let path = workspace_root
+        .join("runtime")
+        .join("paired_proof_favorites.json");
     fs::read_to_string(path)
         .ok()
         .and_then(|contents| serde_json::from_str::<ExtensionFavoritesFile>(&contents).ok())
@@ -7293,7 +7345,9 @@ fn save_paired_proof_ui_preferences(
 }
 
 fn load_paired_proof_notes(workspace_root: &Path) -> BTreeMap<String, String> {
-    let path = workspace_root.join("runtime").join("paired_proof_notes.json");
+    let path = workspace_root
+        .join("runtime")
+        .join("paired_proof_notes.json");
     fs::read_to_string(path)
         .ok()
         .and_then(|contents| serde_json::from_str::<ExtensionNotesFile>(&contents).ok())
@@ -7301,10 +7355,7 @@ fn load_paired_proof_notes(workspace_root: &Path) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
-fn save_extension_favorites(
-    path: &Path,
-    favorites: &BTreeSet<String>,
-) -> anyhow::Result<()> {
+fn save_extension_favorites(path: &Path, favorites: &BTreeSet<String>) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -7344,10 +7395,7 @@ fn load_extension_notes(workspace_root: &Path) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
-fn save_extension_notes(
-    path: &Path,
-    notes: &BTreeMap<String, String>,
-) -> anyhow::Result<()> {
+fn save_extension_notes(path: &Path, notes: &BTreeMap<String, String>) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -7359,7 +7407,9 @@ fn save_extension_notes(
 }
 
 fn load_extension_activity(workspace_root: &Path) -> Vec<ExtensionActivityItem> {
-    let path = workspace_root.join("runtime").join("extension_activity.json");
+    let path = workspace_root
+        .join("runtime")
+        .join("extension_activity.json");
     fs::read_to_string(path)
         .ok()
         .and_then(|contents| serde_json::from_str::<ExtensionActivityFile>(&contents).ok())
@@ -7367,10 +7417,7 @@ fn load_extension_activity(workspace_root: &Path) -> Vec<ExtensionActivityItem> 
         .unwrap_or_default()
 }
 
-fn save_extension_activity(
-    path: &Path,
-    activity: &[ExtensionActivityItem],
-) -> anyhow::Result<()> {
+fn save_extension_activity(path: &Path, activity: &[ExtensionActivityItem]) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -7422,7 +7469,10 @@ fn build_export_diff(latest_path: &Path, previous_path: &Path) -> String {
     let previous_lines = previous.lines().collect::<Vec<_>>();
 
     let mut lines = vec![
-        format!("latest: {}", short_path(latest_path.to_string_lossy().as_ref())),
+        format!(
+            "latest: {}",
+            short_path(latest_path.to_string_lossy().as_ref())
+        ),
         format!(
             "previous: {}",
             short_path(previous_path.to_string_lossy().as_ref())
@@ -7430,10 +7480,16 @@ fn build_export_diff(latest_path: &Path, previous_path: &Path) -> String {
         String::new(),
     ];
 
-    for line in latest_lines.iter().filter(|line| !previous_lines.contains(line)) {
+    for line in latest_lines
+        .iter()
+        .filter(|line| !previous_lines.contains(line))
+    {
         lines.push(format!("+ {}", line));
     }
-    for line in previous_lines.iter().filter(|line| !latest_lines.contains(line)) {
+    for line in previous_lines
+        .iter()
+        .filter(|line| !latest_lines.contains(line))
+    {
         lines.push(format!("- {}", line));
     }
 
@@ -7547,7 +7603,10 @@ fn build_paired_proof_summary_markdown(
         format!("# Paired Proof Summary: {}", receipt.receipt_id),
         String::new(),
         format!("- Shared request: {}", receipt.shared_request),
-        format!("- Equivalent capability fulfillment: {}", receipt.equivalent_capability_fulfillment),
+        format!(
+            "- Equivalent capability fulfillment: {}",
+            receipt.equivalent_capability_fulfillment
+        ),
         format!("- Left project: {}", receipt.left_project_name),
         format!("- Right project: {}", receipt.right_project_name),
         format!("- Paired receipt: {}", receipt_path.display()),
@@ -7598,8 +7657,13 @@ fn short_path(value: &str) -> String {
         .to_string()
 }
 
-fn first_patch_receipt_path(paths: &[String], required_fragment: &str, required_suffix: &str) -> Option<String> {
-    paths.iter()
+fn first_patch_receipt_path(
+    paths: &[String],
+    required_fragment: &str,
+    required_suffix: &str,
+) -> Option<String> {
+    paths
+        .iter()
         .find(|path| path.contains(required_fragment) && path.ends_with(required_suffix))
         .cloned()
 }

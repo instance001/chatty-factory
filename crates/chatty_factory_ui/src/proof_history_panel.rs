@@ -14,8 +14,9 @@ impl ChattyFactoryUiApp {
             return;
         }
 
-        if let Some((latest_receipt, latest_path)) =
-            filtered_paired_receipts.first().or_else(|| paired_receipts.first())
+        if let Some((latest_receipt, latest_path)) = filtered_paired_receipts
+            .first()
+            .or_else(|| paired_receipts.first())
         {
             self.render_latest_paired_proof_card(
                 ui,
@@ -60,10 +61,7 @@ impl ChattyFactoryUiApp {
                 },
                 template_label,
                 paired_proof_artifact_count(latest_receipt, latest_path),
-                latest_receipt
-                    .created_at
-                    .as_deref()
-                    .unwrap_or("unknown")
+                latest_receipt.created_at.as_deref().unwrap_or("unknown")
             ));
             ui.label(format!(
                 "Projects: {} vs {}",
@@ -76,10 +74,8 @@ impl ChattyFactoryUiApp {
                 ui.label(format!("Last touched: {}", last_touched));
             }
 
-            if let Some((previous_receipt, previous_path)) = filtered_paired_receipts
-                .iter()
-                .nth(1)
-                .or_else(|| {
+            if let Some((previous_receipt, previous_path)) =
+                filtered_paired_receipts.iter().nth(1).or_else(|| {
                     paired_receipts
                         .iter()
                         .find(|(receipt, _)| receipt.receipt_id != latest_receipt.receipt_id)
@@ -171,8 +167,7 @@ impl ChattyFactoryUiApp {
                         );
                     }
                     Err(error) => {
-                        self.status_line =
-                            format!("failed to open comparison receipt: {}", error);
+                        self.status_line = format!("failed to open comparison receipt: {}", error);
                     }
                 }
             }
@@ -214,7 +209,11 @@ impl ChattyFactoryUiApp {
                 .favorite_paired_proof_receipt_ids
                 .contains(&receipt.receipt_id);
             if ui
-                .button(if is_favorite { "Unpin Proof" } else { "Pin Proof" })
+                .button(if is_favorite {
+                    "Unpin Proof"
+                } else {
+                    "Pin Proof"
+                })
                 .clicked()
             {
                 self.toggle_paired_proof_favorite(&receipt.receipt_id);

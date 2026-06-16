@@ -1,8 +1,7 @@
 use super::*;
 use chatty_factory_core::{
-    build_starter_best_for, build_starter_choices, build_starter_label,
-    build_starter_lifecycle, build_starter_picker_label, derive_request_plan,
-    normalize_request,
+    build_starter_best_for, build_starter_choices, build_starter_label, build_starter_lifecycle,
+    build_starter_picker_label, derive_request_plan, normalize_request,
 };
 
 impl ChattyFactoryUiApp {

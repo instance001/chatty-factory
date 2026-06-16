@@ -1,4 +1,7 @@
-use crate::{contracts::{FamilyCapabilityManifest, FamilyPrimitiveAdapter}, FamilyId};
+use crate::{
+    contracts::{FamilyCapabilityManifest, FamilyPrimitiveAdapter},
+    FamilyId,
+};
 
 pub fn built_in_family_manifests() -> Vec<FamilyCapabilityManifest> {
     vec![
@@ -71,22 +74,21 @@ pub fn is_supported_explicit_stack(stack: &str) -> bool {
     })
 }
 
-pub fn rank_family_candidates(
-    lower: &str,
-    requested_capabilities: &[String],
-) -> Vec<FamilyId> {
+pub fn rank_family_candidates(lower: &str, requested_capabilities: &[String]) -> Vec<FamilyId> {
     let mut scored = built_in_family_manifests()
         .into_iter()
         .map(|manifest| {
             let mut score = 0usize;
-            let forbidden = manifest
-                .forbids_capabilities
-                .iter()
-                .any(|cap| requested_capabilities.iter().any(|requested| requested == cap));
-            let helper_required = manifest
-                .requires_helper_for
-                .iter()
-                .any(|cap| requested_capabilities.iter().any(|requested| requested == cap));
+            let forbidden = manifest.forbids_capabilities.iter().any(|cap| {
+                requested_capabilities
+                    .iter()
+                    .any(|requested| requested == cap)
+            });
+            let helper_required = manifest.requires_helper_for.iter().any(|cap| {
+                requested_capabilities
+                    .iter()
+                    .any(|requested| requested == cap)
+            });
             if forbidden || helper_required {
                 return (manifest.family_id, 0usize);
             }

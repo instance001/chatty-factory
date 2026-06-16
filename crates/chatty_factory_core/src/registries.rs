@@ -30,7 +30,11 @@ pub fn operator_bundle_registry() -> &'static [OperatorBundleSpec] {
 pub fn candidate_operator_bundle_ids_for(family_id: &str) -> Vec<String> {
     OPERATOR_BUNDLES
         .iter()
-        .filter(|spec| spec.family_ids.iter().any(|candidate| candidate == &family_id))
+        .filter(|spec| {
+            spec.family_ids
+                .iter()
+                .any(|candidate| candidate == &family_id)
+        })
         .map(|spec| spec.bundle_id.to_string())
         .collect()
 }

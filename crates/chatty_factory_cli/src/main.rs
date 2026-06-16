@@ -3,11 +3,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use chatty_factory_control::ControlPlane;
-use chatty_factory_core::{
-    build_starter_choices, default_request_text, is_known_build_starter_id,
-};
-use chatty_factory_host::{HostActionResult, HostBridge, HostPlannerOptions};
+use chatty_factory_core::{build_starter_choices, default_request_text, is_known_build_starter_id};
 use chatty_factory_families::built_in_families;
+use chatty_factory_host::{HostActionResult, HostBridge, HostPlannerOptions};
 use serde::Serialize;
 
 fn main() -> Result<()> {
@@ -37,7 +35,10 @@ fn main() -> Result<()> {
     if matches!(args.first().map(String::as_str), Some("helper-status")) {
         return run_helper_status_mode(&host_bridge, &args);
     }
-    if matches!(args.first().map(String::as_str), Some("compare-helper-monitoring")) {
+    if matches!(
+        args.first().map(String::as_str),
+        Some("compare-helper-monitoring")
+    ) {
         return run_compare_helper_monitoring_mode(&host_bridge, &args);
     }
     if matches!(args.first().map(String::as_str), Some("run-proof-template")) {
@@ -154,7 +155,10 @@ fn main() -> Result<()> {
     ) {
         return run_restore_approved_constraint_mode(&host_bridge, &args);
     }
-    if matches!(args.first().map(String::as_str), Some("implement-extension")) {
+    if matches!(
+        args.first().map(String::as_str),
+        Some("implement-extension")
+    ) {
         return run_implement_extension_mode(&host_bridge, &args);
     }
     if matches!(args.first().map(String::as_str), Some("archive-extension")) {
@@ -163,16 +167,28 @@ fn main() -> Result<()> {
     if matches!(args.first().map(String::as_str), Some("validate-extension")) {
         return run_validate_extension_mode(&host_bridge, &args);
     }
-    if matches!(args.first().map(String::as_str), Some("prepare-extension-promotion")) {
+    if matches!(
+        args.first().map(String::as_str),
+        Some("prepare-extension-promotion")
+    ) {
         return run_prepare_extension_promotion_mode(&host_bridge, &args);
     }
-    if matches!(args.first().map(String::as_str), Some("prepare-extension-apply-patch")) {
+    if matches!(
+        args.first().map(String::as_str),
+        Some("prepare-extension-apply-patch")
+    ) {
         return run_prepare_extension_apply_patch_mode(&host_bridge, &args);
     }
-    if matches!(args.first().map(String::as_str), Some("consume-extension-apply-patch")) {
+    if matches!(
+        args.first().map(String::as_str),
+        Some("consume-extension-apply-patch")
+    ) {
         return run_consume_extension_apply_patch_mode(&host_bridge, &args);
     }
-    if matches!(args.first().map(String::as_str), Some("validate-live-extension")) {
+    if matches!(
+        args.first().map(String::as_str),
+        Some("validate-live-extension")
+    ) {
         return run_validate_live_extension_mode(&host_bridge, &args);
     }
     if matches!(args.first().map(String::as_str), Some("selected-project")) {
@@ -194,10 +210,7 @@ fn main() -> Result<()> {
         return run_reverify_build_mode(&host_bridge, &args);
     }
     if matches!(args.first().map(String::as_str), Some("patch")) {
-        return run_patch_mode(
-            &host_bridge,
-            &args,
-        );
+        return run_patch_mode(&host_bridge, &args);
     }
     if matches!(args.first().map(String::as_str), Some("build")) {
         return run_build_mode(&host_bridge, &args);
@@ -234,22 +247,14 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_patch_mode(
-    host_bridge: &HostBridge,
-    args: &[String],
-) -> Result<()> {
+fn run_patch_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     if args.len() < 3 {
         anyhow::bail!("patch mode requires: patch <project_name> <request>");
     }
     let project_name = &args[1];
     let clean_args = strip_runtime_control_args(args);
     let raw_request = clean_args[2..].join(" ");
-    execute_patch_request(
-        host_bridge,
-        project_name,
-        &raw_request,
-        args,
-    )
+    execute_patch_request(host_bridge, project_name, &raw_request, args)
 }
 
 fn run_build_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
@@ -282,10 +287,7 @@ fn run_reverify_build_mode(host_bridge: &HostBridge, args: &[String]) -> Result<
     print_host_action_result(&result, has_json_flag(args))
 }
 
-fn run_approve_proposed_constraint_mode(
-    host_bridge: &HostBridge,
-    args: &[String],
-) -> Result<()> {
+fn run_approve_proposed_constraint_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     if args.len() < 2 {
         anyhow::bail!(
             "approve-proposed-constraint requires: approve-proposed-constraint <request_id_or_receipt_path>"
@@ -440,19 +442,14 @@ fn run_scaffold_extension_mode(host_bridge: &HostBridge, args: &[String]) -> Res
     print_host_action_result(&result, has_json_flag(args))
 }
 
-fn run_register_proof_harness_bundle_mode(
-    host_bridge: &HostBridge,
-    args: &[String],
-) -> Result<()> {
+fn run_register_proof_harness_bundle_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     if args.len() < 3 {
         anyhow::bail!(
             "register-proof-harness-bundle requires: register-proof-harness-bundle <template_manifest_json> <comparison_bundle_manifest_json>"
         );
     }
-    let result = host_bridge.register_proof_harness_bundle(
-        &PathBuf::from(&args[1]),
-        &PathBuf::from(&args[2]),
-    )?;
+    let result = host_bridge
+        .register_proof_harness_bundle(&PathBuf::from(&args[1]), &PathBuf::from(&args[2]))?;
     println!("ChattyFactory proof harness bundle registration");
     print_host_action_result(&result, has_json_flag(args))
 }
@@ -506,10 +503,7 @@ fn run_cross_family_helper_monitoring_proof_mode(
     print_host_action_result(&result, has_json_flag(args))
 }
 
-fn run_retry_search_model_proof_mode(
-    host_bridge: &HostBridge,
-    args: &[String],
-) -> Result<()> {
+fn run_retry_search_model_proof_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     let result =
         host_bridge.run_retry_search_model_escalation_proof(&planner_options_from_args(args))?;
     println!("ChattyFactory retry-search model proof");
@@ -519,7 +513,9 @@ fn run_retry_search_model_proof_mode(
 fn run_proof_template_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     let clean_args = strip_runtime_control_args(args);
     if clean_args.len() < 2 {
-        anyhow::bail!("run-proof-template requires: run-proof-template <template_id> [shared request]");
+        anyhow::bail!(
+            "run-proof-template requires: run-proof-template <template_id> [shared request]"
+        );
     }
     let template_id = &clean_args[1];
     let shared_request = clean_args
@@ -640,10 +636,7 @@ fn run_validate_extension_mode(host_bridge: &HostBridge, args: &[String]) -> Res
     print_host_action_result(&result, has_json_flag(args))
 }
 
-fn run_prepare_extension_promotion_mode(
-    host_bridge: &HostBridge,
-    args: &[String],
-) -> Result<()> {
+fn run_prepare_extension_promotion_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     if args.len() < 2 {
         anyhow::bail!(
             "prepare-extension-promotion requires: prepare-extension-promotion <entry_id>"
@@ -654,10 +647,7 @@ fn run_prepare_extension_promotion_mode(
     print_host_action_result(&result, has_json_flag(args))
 }
 
-fn run_prepare_extension_apply_patch_mode(
-    host_bridge: &HostBridge,
-    args: &[String],
-) -> Result<()> {
+fn run_prepare_extension_apply_patch_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     if args.len() < 2 {
         anyhow::bail!(
             "prepare-extension-apply-patch requires: prepare-extension-apply-patch <entry_id>"
@@ -668,10 +658,7 @@ fn run_prepare_extension_apply_patch_mode(
     print_host_action_result(&result, has_json_flag(args))
 }
 
-fn run_consume_extension_apply_patch_mode(
-    host_bridge: &HostBridge,
-    args: &[String],
-) -> Result<()> {
+fn run_consume_extension_apply_patch_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     if args.len() < 2 {
         anyhow::bail!(
             "consume-extension-apply-patch requires: consume-extension-apply-patch <entry_id>"
@@ -682,10 +669,7 @@ fn run_consume_extension_apply_patch_mode(
     print_host_action_result(&result, has_json_flag(args))
 }
 
-fn run_validate_live_extension_mode(
-    host_bridge: &HostBridge,
-    args: &[String],
-) -> Result<()> {
+fn run_validate_live_extension_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     if args.len() < 2 {
         anyhow::bail!("validate-live-extension requires: validate-live-extension <entry_id>");
     }
@@ -722,11 +706,8 @@ fn execute_patch_request(
     raw_request: &str,
     args: &[String],
 ) -> Result<()> {
-    let result = host_bridge.patch_request(
-        project_name,
-        raw_request,
-        &planner_options_from_args(args),
-    )?;
+    let result =
+        host_bridge.patch_request(project_name, raw_request, &planner_options_from_args(args))?;
     println!("ChattyFactory deterministic patch");
     println!("Project: {}", project_name);
     println!("Request: {}", raw_request);
@@ -748,10 +729,7 @@ fn run_deactivate_low_value_active_constraints_mode(host_bridge: &HostBridge) ->
     Ok(())
 }
 
-fn run_restore_approved_constraint_mode(
-    host_bridge: &HostBridge,
-    args: &[String],
-) -> Result<()> {
+fn run_restore_approved_constraint_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     if args.len() < 2 {
         anyhow::bail!(
             "restore-approved-constraint requires: restore-approved-constraint <constraint_id>"
@@ -820,7 +798,10 @@ fn build_starter_override_from_args(args: &[String]) -> Option<&str> {
     let mut i = 0usize;
     while i < args.len() {
         if args[i] == "--starter" {
-            return args.get(i + 1).map(String::as_str).filter(|value| !value.is_empty());
+            return args
+                .get(i + 1)
+                .map(String::as_str)
+                .filter(|value| !value.is_empty());
         }
         i += 1;
     }

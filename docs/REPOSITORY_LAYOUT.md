@@ -1,5 +1,9 @@
 # Repository Layout Proposal
 
+Historical note:
+- this is a proposal-era layout document
+- use [CURRENT_ARCHITECTURE.md](./CURRENT_ARCHITECTURE.md) for the current implementation shape
+
 This document proposes the initial layout for the `chatty-factory/` rebuild.
 
 The goal is not to perfectly predict the final tree. The goal is to give the rebuild clean architectural seams from the start so we do not drag prototype coupling into the new codebase.

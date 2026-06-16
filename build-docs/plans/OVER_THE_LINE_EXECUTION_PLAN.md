@@ -1,5 +1,9 @@
 # Over The Line Execution Plan
 
+Historical note:
+- this is a milestone-closing execution plan
+- use [../../docs/CURRENT_ARCHITECTURE.md](../../docs/CURRENT_ARCHITECTURE.md) for the current implementation shape
+
 ## Purpose
 
 This plan defines the shortest realistic path from:

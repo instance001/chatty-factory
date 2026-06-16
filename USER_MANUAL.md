@@ -1,5 +1,8 @@
 # ChattyFactory User Manual
 
+For the current technical architecture and crate/runtime ownership map, start with:
+- [Current Architecture](./docs/CURRENT_ARCHITECTURE.md)
+
 This manual assumes you know nothing about the project.
 
 If you want the shortest possible description, ChattyFactory is a local build-and-patch factory:
@@ -198,7 +201,22 @@ It is:
 ### Honest fallback behavior
 
 If a request is outside supported deterministic lanes, ChattyFactory should not pretend.
-Instead it will produce fallback artifacts, clarification information, and extension scaffolds for the missing lane.
+But that no longer has to mean an immediate hard stop.
+
+When the host can honestly identify a starter substrate and a concrete project shape,
+it may continue as a scaffold-first substrate attempt and record that decision in the
+runtime receipts.
+
+The same idea now applies to some follow-up patch requests too:
+
+- if a project is already grounded to a known family
+- and the follow-up request does not cleanly match a named patch lane
+- the host may continue through a substrate-first patch attempt instead of
+  immediately falling back to clarification paperwork
+- that soft-review decision is recorded in route notes and runtime artifacts
+
+Fallback artifacts, clarification information, and extension scaffolds are still used
+when the host cannot honestly freeze even that substrate-level attempt.
 
 That is expected behavior, not a failure of the architecture.
 
@@ -625,6 +643,8 @@ This usually means:
 - the request was outside supported deterministic lanes
 - clarification was required
 - the planner/runtime path needed help
+- or the host could only prepare a bounded substrate attempt rather than a fully
+  named deterministic lane
 
 Check:
 
@@ -632,6 +652,9 @@ Check:
 - `runtime/fallback_plan_receipts/`
 - `runtime/clarifications/`
 - `runtime/extension_stubs/`
+- `runtime/build_plans/`
+- `runtime/patch_plan_reviews/`
+- `runtime/task_execution_receipts/`
 
 ### Planner/runtime problems
 

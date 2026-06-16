@@ -1,5 +1,8 @@
 # ChattyFactory
 
+Start here for the current technical system shape:
+- [Current Architecture](./docs/CURRENT_ARCHITECTURE.md)
+
 ChattyFactory is a deterministic build-and-patch factory for plain-language
 software requests.
 
@@ -37,8 +40,10 @@ It now has:
 
 The product promise is intentionally bounded:
 
-- plain-language requests should land on supported deterministic lanes
+- plain-language requests should land on an honest starter substrate, even when
+  there is no exact deterministic family for the requested stack yet
 - vague requests may trigger clarification or planner guidance instead of fake certainty
+- but if the host can still honestly freeze a starter substrate or grounded patch substrate, it should prefer that bounded attempt over an immediate paperwork-only stop
 - existing-project patching is strongest on generated projects that still match declared family and patch contracts
 
 But the capability boundary is no longer supposed to be the old positive-lane catalog alone.
@@ -77,7 +82,10 @@ It is not claiming universal safe surgery across arbitrary unknown codebases.
 
 ## Key Docs
 
+- [Factory Shape](./docs/FACTORY_SHAPE.md)
 - [User Manual](./USER_MANUAL.md)
+- [Bounded Soft-Review Continuation](./docs/BOUNDED_SOFT_REVIEW_CONTINUATION.md)
+- [Current Architecture](./docs/CURRENT_ARCHITECTURE.md)
 - [Build Docs Archive](./build-docs/README.md)
 - [REBUILD_PLAN.md](./build-docs/plans/REBUILD_PLAN.md)
 - [Initial GitHub Release Plan](./build-docs/plans/INITIAL_GITHUB_RELEASE_PLAN.md)
@@ -283,7 +291,9 @@ The UI now reflects that same rule directly:
 - `Proof Runtime Posture` shows the current runtime budgets, recommended shell timeout, and a direct ladder-proof launch button
 
 If a request is too vague, ChattyFactory may emit clarification or planner
-handoff artifacts instead of guessing.
+handoff artifacts instead of guessing. But when the host can still honestly
+freeze a starter substrate or substrate-first patch attempt, it may continue
+and record that soft-review decision in runtime receipts and route notes.
 
 ## Initial Family Specs
 

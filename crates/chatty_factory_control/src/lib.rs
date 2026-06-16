@@ -257,6 +257,11 @@ impl ControlPlane {
         if let Some(tool_kind) = &plan.inferred_tool_kind {
             decision_reasons.push(format!("tool_kind={tool_kind}"));
         }
+        if plan.rationale.iter().any(|reason| {
+            reason.starts_with("no exact deterministic family matched; using scaffold substrate")
+        }) {
+            decision_reasons.push("scaffold_substrate_fallback".into());
+        }
         if !plan.planner_operator_ids.is_empty() {
             decision_reasons.push(format!(
                 "planner_operator_bundle={}",

@@ -58,7 +58,10 @@ pub fn render_governance_metric_strip(
         for metric in metrics.iter() {
             egui::Frame::none()
                 .fill(egui::Color32::from_rgb(224, 228, 232))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(176, 184, 194)))
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgb(176, 184, 194),
+                ))
                 .rounding(6.0)
                 .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                 .show(ui, |ui| {

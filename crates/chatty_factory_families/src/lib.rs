@@ -18,9 +18,8 @@ use registry::{
     acceptance_recipe_registry, acceptance_recipe_statuses_for,
     candidate_acceptance_recipe_ids_for, candidate_patch_recipe_ids_for,
     operator_bundle_statuses_for, operator_contribution_registry, patch_lane_statuses_for,
-    patch_recipe_surgical_maturity,
-    patch_primitive_classes_for, patch_structural_guard_spec,
-    patch_recipe_by_kind, patch_recipe_from_request_text, patch_recipe_registry,
+    patch_primitive_classes_for, patch_recipe_by_kind, patch_recipe_from_request_text,
+    patch_recipe_registry, patch_recipe_surgical_maturity, patch_structural_guard_spec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +56,7 @@ struct WebBuildBundle {
     index_html: String,
     app_js: String,
     styles_css: String,
+    readme_md: String,
 }
 
 #[derive(Debug, Clone)]
@@ -306,7 +306,11 @@ pub fn patch_preflight_readiness(
             format_with_superseded_note(
                 format!(
                     "required structural anchors are missing: {}",
-                    missing_required.into_iter().take(2).collect::<Vec<_>>().join(", ")
+                    missing_required
+                        .into_iter()
+                        .take(2)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
                 superseded_note.as_deref(),
             ),
@@ -391,26 +395,42 @@ fn structural_marker_present(project_dir: &Path, marker: &str) -> bool {
 
 fn artifact_group_present(project_dir: &Path, spec: &ProjectSpec, group: &str) -> bool {
     match group {
-        "entrypoints" => spec.entrypoints.iter().any(|path| project_dir.join(path).exists()),
+        "entrypoints" => spec
+            .entrypoints
+            .iter()
+            .any(|path| project_dir.join(path).exists()),
         "contract_files" => {
-            project_dir.join("ProjectSpec.json").exists() && project_dir.join("AcceptancePlan.json").exists()
+            project_dir.join("ProjectSpec.json").exists()
+                && project_dir.join("AcceptancePlan.json").exists()
         }
         "bridge_surfaces" => {
             project_dir.join("bridge").exists()
-                || spec.expected_files.iter().any(|path| path.starts_with("bridge/") && project_dir.join(path).exists())
+                || spec
+                    .expected_files
+                    .iter()
+                    .any(|path| path.starts_with("bridge/") && project_dir.join(path).exists())
                 || project_dir.join("chattycog_bridge.js").exists()
         }
         "helper_service_surfaces" => {
             !spec.helper_services.is_empty()
                 && spec.helper_services.iter().any(|helper| {
                     !helper.entrypoint.trim().is_empty()
-                        || helper.status_paths.iter().any(|path| project_dir.join(path).exists())
-                        || helper.output_paths.iter().any(|path| project_dir.join(path).exists())
+                        || helper
+                            .status_paths
+                            .iter()
+                            .any(|path| project_dir.join(path).exists())
+                        || helper
+                            .output_paths
+                            .iter()
+                            .any(|path| project_dir.join(path).exists())
                 })
         }
         "style_surfaces" => {
             project_dir.join("styles.css").exists()
-                || spec.expected_files.iter().any(|path| path.ends_with(".css") && project_dir.join(path).exists())
+                || spec
+                    .expected_files
+                    .iter()
+                    .any(|path| path.ends_with(".css") && project_dir.join(path).exists())
         }
         "logic_surfaces" => {
             project_dir.join("app.js").exists()
@@ -423,7 +443,10 @@ fn artifact_group_present(project_dir: &Path, spec: &ProjectSpec, group: &str) -
         }
         "documentation_surfaces" => {
             project_dir.join("README.md").exists()
-                || spec.expected_files.iter().any(|path| path.ends_with("README.md") && project_dir.join(path).exists())
+                || spec
+                    .expected_files
+                    .iter()
+                    .any(|path| path.ends_with("README.md") && project_dir.join(path).exists())
         }
         _ => true,
     }
@@ -593,8 +616,9 @@ fn build_local_inbox_helper_bundle(
             HelperPrimitiveSpec {
                 primitive_id: "local_inbox_summary_snapshot".into(),
                 primitive_kind: "summary_emitter".into(),
-                purpose: "Write the deterministic helper summary snapshot for bounded inbox processing."
-                    .into(),
+                purpose:
+                    "Write the deterministic helper summary snapshot for bounded inbox processing."
+                        .into(),
                 input_paths: vec!["bridge/incoming_assets/module_assets".into()],
                 output_paths: vec!["bridge/helpers/local_inbox/summary.json".into()],
                 status_paths: Vec::new(),
@@ -701,11 +725,12 @@ pub fn build_static_web_dashboard(
         entrypoints: vec!["index.html".into(), "app.js".into(), "styles.css".into()],
         expected_files: {
             let mut files = vec![
-            "index.html".into(),
-            "app.js".into(),
-            "styles.css".into(),
-            "ProjectSpec.json".into(),
-            "AcceptancePlan.json".into(),
+                "index.html".into(),
+                "app.js".into(),
+                "styles.css".into(),
+                "README.md".into(),
+                "ProjectSpec.json".into(),
+                "AcceptancePlan.json".into(),
             ];
             if let Some(helper_bundle) = &helper_bundle {
                 files.extend(helper_bundle.helper_service.expected_files.clone());
@@ -721,24 +746,30 @@ pub fn build_static_web_dashboard(
         acceptance_commands: vec!["static_file_check".into()],
         acceptance_checks: {
             let mut checks = vec![
-            AcceptanceCheck {
-                check_id: "file-index".into(),
-                kind: "exists".into(),
-                target: "index.html".into(),
-                expected: None,
-            },
-            AcceptanceCheck {
-                check_id: "file-app".into(),
-                kind: "exists".into(),
-                target: "app.js".into(),
-                expected: None,
-            },
-            AcceptanceCheck {
-                check_id: "marker-family".into(),
-                kind: "contains".into(),
-                target: "index.html".into(),
-                expected: Some("data-family=\"static_web_dashboard\"".into()),
-            },
+                AcceptanceCheck {
+                    check_id: "file-index".into(),
+                    kind: "exists".into(),
+                    target: "index.html".into(),
+                    expected: None,
+                },
+                AcceptanceCheck {
+                    check_id: "file-app".into(),
+                    kind: "exists".into(),
+                    target: "app.js".into(),
+                    expected: None,
+                },
+                AcceptanceCheck {
+                    check_id: "file-readme".into(),
+                    kind: "exists".into(),
+                    target: "README.md".into(),
+                    expected: None,
+                },
+                AcceptanceCheck {
+                    check_id: "marker-family".into(),
+                    kind: "contains".into(),
+                    target: "index.html".into(),
+                    expected: Some("data-family=\"static_web_dashboard\"".into()),
+                },
             ];
             if let Some(helper_bundle) = &helper_bundle {
                 checks.push(AcceptanceCheck {
@@ -809,6 +840,12 @@ pub fn build_static_web_dashboard(
                 expected: None,
             },
             AcceptanceCheck {
+                check_id: "readme-exists".into(),
+                kind: "exists".into(),
+                target: "README.md".into(),
+                expected: None,
+            },
+            AcceptanceCheck {
                 check_id: "family-marker".into(),
                 kind: "contains".into(),
                 target: "index.html".into(),
@@ -823,11 +860,12 @@ pub fn build_static_web_dashboard(
         ],
         required_files: {
             let mut files = vec![
-            "index.html".into(),
-            "app.js".into(),
-            "styles.css".into(),
-            "ProjectSpec.json".into(),
-            "AcceptancePlan.json".into(),
+                "index.html".into(),
+                "app.js".into(),
+                "styles.css".into(),
+                "README.md".into(),
+                "ProjectSpec.json".into(),
+                "AcceptancePlan.json".into(),
             ];
             if let Some(helper_bundle) = &helper_bundle {
                 files.extend(helper_bundle.helper_service.expected_files.clone());
@@ -889,8 +927,14 @@ pub fn build_static_web_dashboard(
                 expected: Some("summary,preview".into()),
             },
         );
-        ensure_marker(&mut acceptance_plan.required_markers, "helper-monitor-panel");
-        ensure_marker(&mut acceptance_plan.required_markers, "helper-preview-panel");
+        ensure_marker(
+            &mut acceptance_plan.required_markers,
+            "helper-monitor-panel",
+        );
+        ensure_marker(
+            &mut acceptance_plan.required_markers,
+            "helper-preview-panel",
+        );
     }
 
     let project_spec_json = to_string_pretty(&project_spec)?;
@@ -900,6 +944,7 @@ pub fn build_static_web_dashboard(
         ("index.html", bundle.index_html),
         ("app.js", bundle.app_js),
         ("styles.css", bundle.styles_css),
+        ("README.md", bundle.readme_md),
         ("ProjectSpec.json", project_spec_json),
         ("AcceptancePlan.json", acceptance_plan_json),
     ];
@@ -920,7 +965,10 @@ pub fn build_static_web_dashboard(
             "bridge/helpers/local_inbox/summary.json",
             helper_bundle.helper_summary_json,
         ));
-        files.push(("helpers/local_inbox_helper/README.md", helper_bundle.helper_readme));
+        files.push((
+            "helpers/local_inbox_helper/README.md",
+            helper_bundle.helper_readme,
+        ));
         files.push((
             "helpers/local_inbox_helper/HelperServiceSpec.json",
             to_string_pretty(&helper_bundle.helper_service)?,
@@ -1354,9 +1402,7 @@ pub fn build_chattycog_native_window_module(
         inputs.family_id,
         Some(FamilyId::ChattycogNativeWindowModule)
     ) {
-        bail!(
-            "chattycog native window builder requires family_id chattycog_native_window_module"
-        );
+        bail!("chattycog native window builder requires family_id chattycog_native_window_module");
     }
 
     let project_dir = output_root.join(&inputs.project_name);
@@ -1472,7 +1518,10 @@ pub fn build_chattycog_native_window_module(
             "AcceptancePlan.json".into(),
         ],
         features: inputs.feature_tokens.clone(),
-        acceptance_commands: vec!["cargo_check".into(), "cargo_run_native_window_self_test".into()],
+        acceptance_commands: vec![
+            "cargo_check".into(),
+            "cargo_run_native_window_self_test".into(),
+        ],
         acceptance_checks: vec![
             AcceptanceCheck {
                 check_id: "native-cargo-manifest".into(),
@@ -1591,7 +1640,10 @@ pub fn build_chattycog_native_window_module(
             "// bridge_status_panel_anchor".into(),
             "// ready_toggle_anchor".into(),
         ],
-        commands: vec!["cargo_check".into(), "cargo_run_native_window_self_test".into()],
+        commands: vec![
+            "cargo_check".into(),
+            "cargo_run_native_window_self_test".into(),
+        ],
         expected_outputs: vec!["visual_load.json".into(), "src/main.rs".into()],
         helper_checks: Vec::new(),
         schema_checks: Vec::new(),
@@ -1699,9 +1751,7 @@ pub fn build_chattyedu_native_window_module(
         inputs.family_id,
         Some(FamilyId::ChattyeduNativeWindowModule)
     ) {
-        bail!(
-            "chattyedu native window builder requires family_id chattyedu_native_window_module"
-        );
+        bail!("chattyedu native window builder requires family_id chattyedu_native_window_module");
     }
 
     let project_dir = output_root.join(&inputs.project_name);
@@ -1756,7 +1806,10 @@ pub fn build_chattyedu_native_window_module(
             "AcceptancePlan.json".into(),
         ],
         features: inputs.feature_tokens.clone(),
-        acceptance_commands: vec!["cargo_check".into(), "cargo_run_native_window_self_test".into()],
+        acceptance_commands: vec![
+            "cargo_check".into(),
+            "cargo_run_native_window_self_test".into(),
+        ],
         acceptance_checks: vec![
             AcceptanceCheck {
                 check_id: "native-cargo-manifest".into(),
@@ -1895,7 +1948,10 @@ pub fn build_chattyedu_native_window_module(
             "// bridge_status_panel_anchor".into(),
             "// ready_toggle_anchor".into(),
         ],
-        commands: vec!["cargo_check".into(), "cargo_run_native_window_self_test".into()],
+        commands: vec![
+            "cargo_check".into(),
+            "cargo_run_native_window_self_test".into(),
+        ],
         expected_outputs: vec!["visual_load.json".into(), "src/main.rs".into()],
         helper_checks: Vec::new(),
         schema_checks: Vec::new(),
@@ -2120,7 +2176,10 @@ pub fn build_chattycog_chattyedu_native_window_module(
             "AcceptancePlan.json".into(),
         ],
         features: inputs.feature_tokens.clone(),
-        acceptance_commands: vec!["cargo_check".into(), "cargo_run_native_window_self_test".into()],
+        acceptance_commands: vec![
+            "cargo_check".into(),
+            "cargo_run_native_window_self_test".into(),
+        ],
         acceptance_checks: vec![
             AcceptanceCheck {
                 check_id: "native-cargo-manifest".into(),
@@ -2260,7 +2319,10 @@ pub fn build_chattycog_chattyedu_native_window_module(
             "// bridge_status_panel_anchor".into(),
             "// ready_toggle_anchor".into(),
         ],
-        commands: vec!["cargo_check".into(), "cargo_run_native_window_self_test".into()],
+        commands: vec![
+            "cargo_check".into(),
+            "cargo_run_native_window_self_test".into(),
+        ],
         expected_outputs: vec!["visual_load.json".into(), "src/main.rs".into()],
         helper_checks: Vec::new(),
         schema_checks: Vec::new(),
@@ -2276,8 +2338,7 @@ pub fn build_chattycog_chattyedu_native_window_module(
         "# {display_name}\n\nThis module was built by ChattyFactory as a standalone Rust GUI dashboard that can be dropped into either Chatty-Cog or Chatty-EDU.\n\n## Module identity\n\n- **module_id**: `{module_id}`\n- **display_name**: `{display_name}`\n\n## What this module is for\n\n{summary}\n\n## Host compatibility\n\n- standalone by default\n- prefilled Chatty-Cog native-window plug files\n- prefilled Chatty-EDU bridge contract support through `CHATTYEDU_BRIDGE_STATUS`\n- shared `manifest.json`, `visual_load.json`, and `HANDSHAKE.md`\n\n## Outputs this module produces\n\n- a standalone Rust GUI dashboard ready for deterministic patch layering\n- Chatty-Cog discovery and bridge metadata\n- Chatty-EDU discovery and bridge metadata\n- deterministic project and acceptance contracts\n\n## Suspend rundown template\n\n> **Status:** blank dual-host native dashboard shell is live and ready for feature work\n> **What changed:** standalone GUI substrate and both host compatibility layers were emitted\n> **Open questions:** confirm the next module capability or patch bundle to add\n> **Next action:** apply the next accepted deterministic patch or feature bundle\n> **Artifacts:** `ProjectSpec.json`, `AcceptancePlan.json`, `bridge/status.json`, `network_capabilities.json`\n\n## Notes\n\nRemove whichever host plug files you do not need if you want to keep the dashboard bound to only one ecosystem or fully standalone.\n"
     );
 
-    let manifest_json =
-        render_named("wrappers/chattycog/manifest.json", &wrapper_context)?;
+    let manifest_json = render_named("wrappers/chattycog/manifest.json", &wrapper_context)?;
     let visual_load_json = render_chattycog_visual_load_json(
         chattycog_module_spec
             .visual_load
@@ -2368,9 +2429,7 @@ pub fn build_chattycog_workspace_module(
     inputs: &ScaffoldInputs,
 ) -> Result<BuildArtifacts> {
     if !matches!(inputs.family_id, Some(FamilyId::ChattycogWorkspaceModule)) {
-        bail!(
-            "chattycog workspace builder requires family_id chattycog_workspace_module"
-        );
+        bail!("chattycog workspace builder requires family_id chattycog_workspace_module");
     }
 
     let project_dir = output_root.join(&inputs.project_name);
@@ -3006,11 +3065,11 @@ pub fn build_rust_cli_tool(output_root: &Path, inputs: &ScaffoldInputs) -> Resul
         entrypoints: vec!["Cargo.toml".into(), "src/main.rs".into()],
         expected_files: {
             let mut files = vec![
-            "Cargo.toml".into(),
-            "src/main.rs".into(),
-            "README.md".into(),
-            "ProjectSpec.json".into(),
-            "AcceptancePlan.json".into(),
+                "Cargo.toml".into(),
+                "src/main.rs".into(),
+                "README.md".into(),
+                "ProjectSpec.json".into(),
+                "AcceptancePlan.json".into(),
             ];
             if let Some(helper_bundle) = &helper_bundle {
                 files.extend(helper_bundle.helper_service.expected_files.clone());
@@ -3230,53 +3289,53 @@ pub fn build_rust_cli_tool(output_root: &Path, inputs: &ScaffoldInputs) -> Resul
         ],
         required_files: {
             let mut files = if tool_kind == "file_sorter" {
-            vec![
-                "Cargo.toml".into(),
-                "src/main.rs".into(),
-                "README.md".into(),
-                "fixtures/input/sample.txt".into(),
-                "ProjectSpec.json".into(),
-                "AcceptancePlan.json".into(),
-            ]
-        } else if tool_kind == "csv_report" {
-            vec![
-                "Cargo.toml".into(),
-                "src/main.rs".into(),
-                "README.md".into(),
-                "fixtures/input/sample.csv".into(),
-                "ProjectSpec.json".into(),
-                "AcceptancePlan.json".into(),
-            ]
-        } else if tool_kind == "log_summary" {
-            vec![
-                "Cargo.toml".into(),
-                "src/main.rs".into(),
-                "README.md".into(),
-                "fixtures/input/app.log".into(),
-                "ProjectSpec.json".into(),
-                "AcceptancePlan.json".into(),
-            ]
-        } else if tool_kind == "text_stats" {
-            vec![
-                "Cargo.toml".into(),
-                "src/main.rs".into(),
-                "README.md".into(),
-                "fixtures/input/sample.txt".into(),
-                "ProjectSpec.json".into(),
-                "AcceptancePlan.json".into(),
-            ]
-        } else {
-            vec![
-                "Cargo.toml".into(),
-                "src/main.rs".into(),
-                "README.md".into(),
-                "fixtures/input/notes.txt".into(),
-                "fixtures/input/script.py".into(),
-                "fixtures/input/readme.md".into(),
-                "ProjectSpec.json".into(),
-                "AcceptancePlan.json".into(),
-            ]
-        };
+                vec![
+                    "Cargo.toml".into(),
+                    "src/main.rs".into(),
+                    "README.md".into(),
+                    "fixtures/input/sample.txt".into(),
+                    "ProjectSpec.json".into(),
+                    "AcceptancePlan.json".into(),
+                ]
+            } else if tool_kind == "csv_report" {
+                vec![
+                    "Cargo.toml".into(),
+                    "src/main.rs".into(),
+                    "README.md".into(),
+                    "fixtures/input/sample.csv".into(),
+                    "ProjectSpec.json".into(),
+                    "AcceptancePlan.json".into(),
+                ]
+            } else if tool_kind == "log_summary" {
+                vec![
+                    "Cargo.toml".into(),
+                    "src/main.rs".into(),
+                    "README.md".into(),
+                    "fixtures/input/app.log".into(),
+                    "ProjectSpec.json".into(),
+                    "AcceptancePlan.json".into(),
+                ]
+            } else if tool_kind == "text_stats" {
+                vec![
+                    "Cargo.toml".into(),
+                    "src/main.rs".into(),
+                    "README.md".into(),
+                    "fixtures/input/sample.txt".into(),
+                    "ProjectSpec.json".into(),
+                    "AcceptancePlan.json".into(),
+                ]
+            } else {
+                vec![
+                    "Cargo.toml".into(),
+                    "src/main.rs".into(),
+                    "README.md".into(),
+                    "fixtures/input/notes.txt".into(),
+                    "fixtures/input/script.py".into(),
+                    "fixtures/input/readme.md".into(),
+                    "ProjectSpec.json".into(),
+                    "AcceptancePlan.json".into(),
+                ]
+            };
             if let Some(helper_bundle) = &helper_bundle {
                 files.extend(helper_bundle.helper_service.expected_files.clone());
                 ensure_marker(&mut files, "bridge/incoming_assets/module_assets/.keep");
@@ -3383,7 +3442,10 @@ pub fn build_rust_cli_tool(output_root: &Path, inputs: &ScaffoldInputs) -> Resul
             "bridge/helpers/local_inbox/summary.json",
             helper_bundle.helper_summary_json,
         ));
-        files.push(("helpers/local_inbox_helper/README.md", helper_bundle.helper_readme));
+        files.push((
+            "helpers/local_inbox_helper/README.md",
+            helper_bundle.helper_readme,
+        ));
         files.push((
             "helpers/local_inbox_helper/HelperServiceSpec.json",
             to_string_pretty(&helper_bundle.helper_service)?,
@@ -3626,7 +3688,8 @@ fn dispatch_patch_recipe_request(
                 recipe.patch_kind,
             ) {
                 if resolved.recipe_id == recipe_id {
-                    let out = (resolved.handler)(project_dir, project_name, request_id, raw_request)?;
+                    let out =
+                        (resolved.handler)(project_dir, project_name, request_id, raw_request)?;
                     if out.0.patch_kind == resolved.patch_kind {
                         return Ok(Some(out));
                     }
@@ -4101,7 +4164,11 @@ pub fn patch_python_csv_report_email_sender(
         );
     }
 
-    if !spec.features.iter().any(|feature| feature == "email_sender") {
+    if !spec
+        .features
+        .iter()
+        .any(|feature| feature == "email_sender")
+    {
         spec.features.push("email_sender".into());
     }
     ensure_marker(&mut spec.supported_patch_kinds, "json_export");
@@ -4410,7 +4477,9 @@ fn render_rust_log_summary_main(
         out.push_str("        };\n");
         out.push_str("        format!(\"severity={} count={}\", severity_name, count)\n");
         out.push_str("    } else {\n");
-        out.push_str("        format!(\"errors={} warnings={} infos={}\", errors, warnings, infos)\n");
+        out.push_str(
+            "        format!(\"errors={} warnings={} infos={}\", errors, warnings, infos)\n",
+        );
         out.push_str("    };\n");
     } else {
         out.push_str("    let rendered = format!(\"errors={} warnings={} infos={}\", errors, warnings, infos);\n");
@@ -4426,7 +4495,9 @@ fn render_rust_log_summary_main(
     }
     if has_json_output {
         if has_severity_filter {
-            out.push_str("    let json_payload = if let Some(severity_name) = severity.as_deref() {\n");
+            out.push_str(
+                "    let json_payload = if let Some(severity_name) = severity.as_deref() {\n",
+            );
             out.push_str("        let count = match severity_name {\n");
             out.push_str("            \"error\" | \"errors\" => errors,\n");
             out.push_str("            \"warn\" | \"warning\" | \"warnings\" => warnings,\n");
@@ -4442,14 +4513,18 @@ fn render_rust_log_summary_main(
         }
         out.push_str("    if let Some(json_path) = json_out {\n");
         out.push_str("        if let Some(parent) = json_path.parent() {\n");
-        out.push_str("            fs::create_dir_all(parent).expect(\"create json output parent\");\n");
+        out.push_str(
+            "            fs::create_dir_all(parent).expect(\"create json output parent\");\n",
+        );
         out.push_str("        }\n");
         out.push_str("        fs::write(&json_path, format!(\"{}\\n\", json_payload)).expect(\"write json output\");\n");
         out.push_str("    }\n");
     }
     if has_markdown_output {
         if has_severity_filter {
-            out.push_str("    let markdown_payload = if let Some(severity_name) = severity.as_deref() {\n");
+            out.push_str(
+                "    let markdown_payload = if let Some(severity_name) = severity.as_deref() {\n",
+            );
             out.push_str("        let count = match severity_name {\n");
             out.push_str("            \"error\" | \"errors\" => errors,\n");
             out.push_str("            \"warn\" | \"warning\" | \"warnings\" => warnings,\n");
@@ -4465,7 +4540,9 @@ fn render_rust_log_summary_main(
         }
         out.push_str("    if let Some(markdown_path) = markdown_out {\n");
         out.push_str("        if let Some(parent) = markdown_path.parent() {\n");
-        out.push_str("            fs::create_dir_all(parent).expect(\"create markdown output parent\");\n");
+        out.push_str(
+            "            fs::create_dir_all(parent).expect(\"create markdown output parent\");\n",
+        );
         out.push_str("        }\n");
         out.push_str("        fs::write(&markdown_path, markdown_payload).expect(\"write markdown output\");\n");
         out.push_str("    }\n");
@@ -4491,12 +4568,8 @@ pub fn patch_rust_log_summary_severity_filter(
         serde_json::from_str(&fs::read_to_string(&acceptance_path)?)?;
     let (has_file_output, _, has_json_output, has_markdown_output) =
         rust_log_summary_feature_flags(&spec);
-    let main = render_rust_log_summary_main(
-        has_file_output,
-        true,
-        has_json_output,
-        has_markdown_output,
-    );
+    let main =
+        render_rust_log_summary_main(has_file_output, true, has_json_output, has_markdown_output);
 
     if !readme.contains("--severity error") {
         readme.push_str(
@@ -4751,12 +4824,8 @@ pub fn patch_rust_log_summary_markdown_export(
 
     let (has_file_output, has_severity_filter, has_json_output, _) =
         rust_log_summary_feature_flags(&spec);
-    let main = render_rust_log_summary_main(
-        has_file_output,
-        has_severity_filter,
-        has_json_output,
-        true,
-    );
+    let main =
+        render_rust_log_summary_main(has_file_output, has_severity_filter, has_json_output, true);
 
     if !readme.contains("--markdown-out fixtures/output/summary.md") {
         readme.push_str(
@@ -4764,7 +4833,11 @@ pub fn patch_rust_log_summary_markdown_export(
         );
     }
 
-    if !spec.features.iter().any(|feature| feature == "markdown_export") {
+    if !spec
+        .features
+        .iter()
+        .any(|feature| feature == "markdown_export")
+    {
         spec.features.push("markdown_export".into());
     }
     ensure_marker(&mut spec.supported_patch_kinds, "file_output");
@@ -5287,15 +5360,15 @@ pub fn patch_chattycog_webview_helper_summary_panel(
             expected: Some("bridge/helpers/local_inbox/summary.json".into()),
         },
     );
-      ensure_check(
-          &mut acceptance.checks,
-          AcceptanceCheck {
-              check_id: "helper-summary-output".into(),
-              kind: "helper_summary_snapshot".into(),
-              target: "bridge/helpers/local_inbox/summary.json".into(),
-              expected: Some(expected_observed_count),
-          },
-      );
+    ensure_check(
+        &mut acceptance.checks,
+        AcceptanceCheck {
+            check_id: "helper-summary-output".into(),
+            kind: "helper_summary_snapshot".into(),
+            target: "bridge/helpers/local_inbox/summary.json".into(),
+            expected: Some(expected_observed_count),
+        },
+    );
     ensure_marker(&mut acceptance.required_markers, "helper-summary-panel");
     ensure_marker(
         &mut acceptance.required_markers,
@@ -5441,8 +5514,14 @@ async function loadHelperSummary() {
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -5575,9 +5654,11 @@ pub fn patch_chattycog_webview_helper_summary_empty_state(
         }
     }
 
-    if !app_js.contains("helperSummaryEmptyState.textContent = \"Waiting for bounded helper run.\";")
+    if !app_js
+        .contains("helperSummaryEmptyState.textContent = \"Waiting for bounded helper run.\";")
     {
-        let old = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
+        let old =
+            "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
         let new = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n    if (helperSummaryEmptyState) {\n      helperSummaryEmptyState.hidden = false;\n      helperSummaryEmptyState.textContent = \"Waiting for bounded helper run.\";\n    }\n";
         if app_js.contains(old) {
             app_js = app_js.replacen(old, new, 1);
@@ -5598,11 +5679,20 @@ pub fn patch_chattycog_webview_helper_summary_empty_state(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -5641,7 +5731,10 @@ pub fn patch_chattycog_webview_helper_summary_empty_state(
             expected: Some("helperSummaryEmptyState".into()),
         },
     );
-    ensure_marker(&mut acceptance.required_markers, "helper-summary-empty-state");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "helper-summary-empty-state",
+    );
 
     refresh_project_contract_views(&mut spec);
     fs::write(&index_path, index)?;
@@ -5743,7 +5836,8 @@ pub fn patch_chattycog_webview_helper_last_run_stamp(
     }
 
     if !app_js.contains("helperLastRunStamp.textContent = \"Last helper update unavailable.\";") {
-        let old = "    helperSummaryStatus.textContent = \"Helper summary is not available yet.\";\n";
+        let old =
+            "    helperSummaryStatus.textContent = \"Helper summary is not available yet.\";\n";
         let new = "    helperSummaryStatus.textContent = \"Helper summary is not available yet.\";\n    if (helperLastRunStamp) {\n      helperLastRunStamp.textContent = \"Last helper update unavailable.\";\n    }\n";
         if app_js.contains(old) {
             app_js = app_js.replacen(old, new, 1);
@@ -5764,12 +5858,21 @@ pub fn patch_chattycog_webview_helper_last_run_stamp(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_last_run_stamp");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -5902,7 +6005,8 @@ pub fn patch_chattycog_webview_helper_summary_metadata_row(
     }
 
     if !app_js.contains("helperSummaryMetadata.textContent = \"Helper metadata unavailable.\";") {
-        let old = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
+        let old =
+            "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
         let new = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n    if (helperSummaryMetadata) {\n      helperSummaryMetadata.textContent = \"Helper metadata unavailable.\";\n    }\n";
         if app_js.contains(old) {
             app_js = app_js.replacen(old, new, 1);
@@ -5923,13 +6027,25 @@ pub fn patch_chattycog_webview_helper_summary_metadata_row(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_last_run_stamp");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_metadata_row");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_metadata_row",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -6061,9 +6177,11 @@ pub fn patch_chattycog_webview_helper_summary_count_delta(
         }
     }
 
-    if !app_js.contains("helperSummaryCountDelta.textContent = \"Helper count delta unavailable.\";")
+    if !app_js
+        .contains("helperSummaryCountDelta.textContent = \"Helper count delta unavailable.\";")
     {
-        let old = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
+        let old =
+            "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
         let new = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n    if (helperSummaryCountDelta) {\n      helperSummaryCountDelta.textContent = \"Helper count delta unavailable.\";\n    }\n";
         if app_js.contains(old) {
             app_js = app_js.replacen(old, new, 1);
@@ -6084,19 +6202,40 @@ pub fn patch_chattycog_webview_helper_summary_count_delta(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_last_run_stamp");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_count_delta");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_filter_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_metadata_row",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_count_delta",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_filter_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_filter_notice");
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_discovered_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_discovered_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "secondary_inbox_lane");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -6135,7 +6274,10 @@ pub fn patch_chattycog_webview_helper_summary_count_delta(
             expected: Some("helperSummaryCountDelta".into()),
         },
     );
-    ensure_marker(&mut acceptance.required_markers, "helper-summary-count-delta");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "helper-summary-count-delta",
+    );
 
     refresh_project_contract_views(&mut spec);
     fs::write(&index_path, index)?;
@@ -6228,9 +6370,11 @@ pub fn patch_chattycog_webview_helper_summary_lane_count_chip(
         }
     }
 
-    if !app_js.contains("helperSummaryLaneCountChip.textContent = \"Helper lane count unavailable.\";")
+    if !app_js
+        .contains("helperSummaryLaneCountChip.textContent = \"Helper lane count unavailable.\";")
     {
-        let old = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
+        let old =
+            "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
         let new = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n    if (helperSummaryLaneCountChip) {\n      helperSummaryLaneCountChip.textContent = \"Helper lane count unavailable.\";\n    }\n";
         if app_js.contains(old) {
             app_js = app_js.replacen(old, new, 1);
@@ -6251,20 +6395,44 @@ pub fn patch_chattycog_webview_helper_summary_lane_count_chip(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_last_run_stamp");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_count_delta");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_lane_count_chip");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_filter_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_metadata_row",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_count_delta",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_lane_count_chip",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_filter_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_filter_notice");
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_discovered_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_discovered_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "secondary_inbox_lane");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -6303,7 +6471,10 @@ pub fn patch_chattycog_webview_helper_summary_lane_count_chip(
             expected: Some("helperSummaryLaneCountChip".into()),
         },
     );
-    ensure_marker(&mut acceptance.required_markers, "helper-summary-lane-count-chip");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "helper-summary-lane-count-chip",
+    );
 
     refresh_project_contract_views(&mut spec);
     fs::write(&index_path, index)?;
@@ -6397,7 +6568,8 @@ pub fn patch_chattycog_webview_helper_summary_types_chip(
     }
 
     if !app_js.contains("helperSummaryTypesChip.textContent = \"Helper types unavailable.\";") {
-        let old = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
+        let old =
+            "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
         let new = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n    if (helperSummaryTypesChip) {\n      helperSummaryTypesChip.textContent = \"Helper types unavailable.\";\n    }\n";
         if app_js.contains(old) {
             app_js = app_js.replacen(old, new, 1);
@@ -6418,21 +6590,45 @@ pub fn patch_chattycog_webview_helper_summary_types_chip(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_last_run_stamp");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_count_delta");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_lane_count_chip");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_metadata_row",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_count_delta",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_lane_count_chip",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_types_chip");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_filter_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_filter_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_filter_notice");
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_discovered_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_discovered_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "secondary_inbox_lane");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -6471,7 +6667,10 @@ pub fn patch_chattycog_webview_helper_summary_types_chip(
             expected: Some("helperSummaryTypesChip".into()),
         },
     );
-    ensure_marker(&mut acceptance.required_markers, "helper-summary-types-chip");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "helper-summary-types-chip",
+    );
 
     refresh_project_contract_views(&mut spec);
     fs::write(&index_path, index)?;
@@ -6564,9 +6763,11 @@ pub fn patch_chattycog_webview_helper_summary_filter_notice(
         }
     }
 
-    if !app_js.contains("helperSummaryFilterNotice.textContent = \"Helper filter notice unavailable.\";")
+    if !app_js
+        .contains("helperSummaryFilterNotice.textContent = \"Helper filter notice unavailable.\";")
     {
-        let old = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
+        let old =
+            "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
         let new = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n    if (helperSummaryFilterNotice) {\n      helperSummaryFilterNotice.textContent = \"Helper filter notice unavailable.\";\n    }\n";
         if app_js.contains(old) {
             app_js = app_js.replacen(old, new, 1);
@@ -6587,14 +6788,29 @@ pub fn patch_chattycog_webview_helper_summary_filter_notice(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_last_run_stamp");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_filter_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_metadata_row",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_filter_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -6633,7 +6849,10 @@ pub fn patch_chattycog_webview_helper_summary_filter_notice(
             expected: Some("helperSummaryFilterNotice".into()),
         },
     );
-    ensure_marker(&mut acceptance.required_markers, "helper-summary-filter-notice");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "helper-summary-filter-notice",
+    );
 
     refresh_project_contract_views(&mut spec);
     fs::write(&index_path, index)?;
@@ -6738,8 +6957,10 @@ pub fn patch_chattycog_webview_lane_scoped_filter_notice(
         }
     }
 
-    if !app_js.contains("laneScopedFilterNotice.textContent = \"Lane filter rules unavailable.\";") {
-        let old = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
+    if !app_js.contains("laneScopedFilterNotice.textContent = \"Lane filter rules unavailable.\";")
+    {
+        let old =
+            "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
         let new = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n    if (laneScopedFilterNotice) {\n      laneScopedFilterNotice.textContent = \"Lane filter rules unavailable.\";\n    }\n";
         if app_js.contains(old) {
             app_js = app_js.replacen(old, new, 1);
@@ -6760,17 +6981,35 @@ pub fn patch_chattycog_webview_lane_scoped_filter_notice(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_last_run_stamp");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_filter_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_metadata_row",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_filter_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_filter_notice");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_discovered_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_discovered_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "secondary_inbox_lane");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -6814,7 +7053,10 @@ pub fn patch_chattycog_webview_lane_scoped_filter_notice(
         "helper-summary-output",
         Some(expected_observed_count),
     );
-    ensure_marker(&mut acceptance.required_markers, "lane-scoped-filter-notice");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "lane-scoped-filter-notice",
+    );
 
     refresh_project_contract_views(&mut spec);
     fs::write(&index_path, index)?;
@@ -6908,7 +7150,8 @@ pub fn patch_chattycog_webview_lane_scoped_metadata_row(
     }
 
     if !app_js.contains("laneScopedMetadata.textContent = \"Lane metadata unavailable.\";") {
-        let old = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
+        let old =
+            "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
         let new = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n    if (laneScopedMetadata) {\n      laneScopedMetadata.textContent = \"Lane metadata unavailable.\";\n    }\n";
         if app_js.contains(old) {
             app_js = app_js.replacen(old, new, 1);
@@ -6929,18 +7172,36 @@ pub fn patch_chattycog_webview_lane_scoped_metadata_row(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_last_run_stamp");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_filter_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_metadata_row",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_filter_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_filter_notice");
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_discovered_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_discovered_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "secondary_inbox_lane");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -7062,7 +7323,9 @@ pub fn patch_chattycog_webview_helper_summary_discovered_notice(
         }
     }
 
-    if !app_js.contains("helperSummaryDiscoveredNotice.textContent = discoveredCount > acceptedCount") {
+    if !app_js
+        .contains("helperSummaryDiscoveredNotice.textContent = discoveredCount > acceptedCount")
+    {
         let old = "    const files = Array.isArray(summary.observed_files) ? summary.observed_files : [];\n";
         let new = "    const files = Array.isArray(summary.observed_files) ? summary.observed_files : [];\n    const acceptedCount = files.length;\n    const discoveredCount = Number(summary.discovered_file_count || acceptedCount || 0);\n    if (helperSummaryDiscoveredNotice) {\n      helperSummaryDiscoveredNotice.textContent = discoveredCount > acceptedCount\n        ? `Discovered ${discoveredCount} helper file(s), with ${acceptedCount} accepted for output.`\n        : `Discovered ${discoveredCount} helper file(s), all accepted for output.`;\n    }\n";
         if app_js.contains(old) {
@@ -7072,9 +7335,11 @@ pub fn patch_chattycog_webview_helper_summary_discovered_notice(
         }
     }
 
-    if !app_js.contains("helperSummaryDiscoveredNotice.textContent = \"Helper discovery notice unavailable.\";")
-    {
-        let old = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
+    if !app_js.contains(
+        "helperSummaryDiscoveredNotice.textContent = \"Helper discovery notice unavailable.\";",
+    ) {
+        let old =
+            "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
         let new = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n    if (helperSummaryDiscoveredNotice) {\n      helperSummaryDiscoveredNotice.textContent = \"Helper discovery notice unavailable.\";\n    }\n";
         if app_js.contains(old) {
             app_js = app_js.replacen(old, new, 1);
@@ -7095,15 +7360,33 @@ pub fn patch_chattycog_webview_helper_summary_discovered_notice(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_last_run_stamp");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_filter_notice");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_discovered_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_metadata_row",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_filter_notice",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_discovered_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -7142,7 +7425,10 @@ pub fn patch_chattycog_webview_helper_summary_discovered_notice(
             expected: Some("helperSummaryDiscoveredNotice".into()),
         },
     );
-    ensure_marker(&mut acceptance.required_markers, "helper-summary-discovered-notice");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "helper-summary-discovered-notice",
+    );
 
     refresh_project_contract_views(&mut spec);
     fs::write(&index_path, index)?;
@@ -7215,15 +7501,20 @@ pub fn patch_chattycog_webview_secondary_inbox_lane(
         serde_json::from_str(&fs::read_to_string(&acceptance_path)?)?;
 
     let secondary_lane = "bridge/incoming_assets/secondary_assets".to_string();
-    let secondary_sample = "bridge/incoming_assets/secondary_assets/secondary-inbox-note.txt".to_string();
+    let secondary_sample =
+        "bridge/incoming_assets/secondary_assets/secondary-inbox-note.txt".to_string();
     let secondary_processed =
-        "bridge/helpers/local_inbox/processed/secondary_assets/secondary-inbox-note.txt".to_string();
+        "bridge/helpers/local_inbox/processed/secondary_assets/secondary-inbox-note.txt"
+            .to_string();
     let module_processed =
         "bridge/helpers/local_inbox/processed/module_assets/sample-inbox-note.txt".to_string();
     let legacy_processed = "bridge/helpers/local_inbox/processed/sample-inbox-note.txt".to_string();
 
     ensure_marker(&mut helper_spec.input_paths, &secondary_lane);
-    ensure_marker(&mut helper_spec.expected_files, "bridge/incoming_assets/secondary_assets/.keep");
+    ensure_marker(
+        &mut helper_spec.expected_files,
+        "bridge/incoming_assets/secondary_assets/.keep",
+    );
     ensure_marker(&mut helper_spec.expected_files, &secondary_sample);
     ensure_marker(&mut helper_spec.expected_files, &module_processed);
     ensure_marker(&mut helper_spec.expected_files, &secondary_processed);
@@ -7231,7 +7522,10 @@ pub fn patch_chattycog_webview_secondary_inbox_lane(
         .expected_files
         .retain(|existing| existing != &legacy_processed);
     if let Some(policy) = helper_spec.launch_policy.as_mut() {
-        ensure_marker(&mut policy.expected_files, "bridge/incoming_assets/secondary_assets");
+        ensure_marker(
+            &mut policy.expected_files,
+            "bridge/incoming_assets/secondary_assets",
+        );
         ensure_marker(&mut policy.expected_files, &secondary_sample);
     }
     if !helper_spec
@@ -7254,9 +7548,7 @@ pub fn patch_chattycog_webview_secondary_inbox_lane(
             status_paths: Vec::new(),
             dependency_mode: "standalone".into(),
             requires_primitives: Vec::new(),
-            notes: vec![
-                "Adds a second bounded input lane for helper composition.".into(),
-            ],
+            notes: vec!["Adds a second bounded input lane for helper composition.".into()],
             created_at: None,
         },
     );
@@ -7266,8 +7558,14 @@ pub fn patch_chattycog_webview_secondary_inbox_lane(
         .find(|primitive| primitive.primitive_id == "local_inbox_processed_output")
     {
         ensure_marker(&mut primitive.input_paths, &secondary_lane);
-        ensure_marker(&mut primitive.output_paths, "bridge/helpers/local_inbox/processed");
-        ensure_marker(&mut primitive.requires_primitives, "secondary_assets_inbox_lane");
+        ensure_marker(
+            &mut primitive.output_paths,
+            "bridge/helpers/local_inbox/processed",
+        );
+        ensure_marker(
+            &mut primitive.requires_primitives,
+            "secondary_assets_inbox_lane",
+        );
         ensure_marker(
             &mut primitive.notes,
             "Includes accepted files from the secondary helper inbox lane.",
@@ -7309,19 +7607,40 @@ pub fn patch_chattycog_webview_secondary_inbox_lane(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_last_run_stamp");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_filter_notice");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_discovered_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_metadata_row",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_filter_notice",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_discovered_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "secondary_inbox_lane");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
-    ensure_marker(&mut spec.expected_files, "bridge/incoming_assets/secondary_assets/.keep");
+    ensure_marker(
+        &mut spec.expected_files,
+        "bridge/incoming_assets/secondary_assets/.keep",
+    );
     ensure_marker(&mut spec.expected_files, &secondary_sample);
     ensure_marker(&mut spec.expected_files, &module_processed);
     ensure_marker(&mut spec.expected_files, &secondary_processed);
@@ -7491,7 +7810,8 @@ pub fn patch_chattycog_webview_helper_summary_status_chip(
     }
 
     if !app_js.contains("helperSummaryStatusChip.dataset.summaryStatus = \"unavailable\";") {
-        let old = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
+        let old =
+            "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
         let new = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n    if (helperSummaryStatusChip) {\n      helperSummaryStatusChip.textContent = \"Summary status unavailable\";\n      helperSummaryStatusChip.dataset.summaryStatus = \"unavailable\";\n    }\n";
         if app_js.contains(old) {
             app_js = app_js.replacen(old, new, 1);
@@ -7512,22 +7832,49 @@ pub fn patch_chattycog_webview_helper_summary_status_chip(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_last_run_stamp");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_count_delta");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_lane_count_chip");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_metadata_row",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_count_delta",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_lane_count_chip",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_types_chip");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_status_chip");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_filter_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_status_chip",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_filter_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_filter_notice");
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_discovered_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_discovered_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "secondary_inbox_lane");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -7566,7 +7913,10 @@ pub fn patch_chattycog_webview_helper_summary_status_chip(
             expected: Some("helperSummaryStatusChip".into()),
         },
     );
-    ensure_marker(&mut acceptance.required_markers, "helper-summary-status-chip");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "helper-summary-status-chip",
+    );
 
     refresh_project_contract_views(&mut spec);
     fs::write(&index_path, index)?;
@@ -7649,7 +7999,8 @@ pub fn patch_chattycog_webview_helper_summary_updated_at_chip(
         }
     }
 
-    if !app_js.contains("helperSummaryUpdatedAtChip.textContent = `Summary updated ${updatedAt}`;") {
+    if !app_js.contains("helperSummaryUpdatedAtChip.textContent = `Summary updated ${updatedAt}`;")
+    {
         let old = "    const files = Array.isArray(summary.observed_files) ? summary.observed_files : [];\n";
         let new = "    const files = Array.isArray(summary.observed_files) ? summary.observed_files : [];\n    const updatedAt = String(summary.updated_at || \"unknown\");\n    if (helperSummaryUpdatedAtChip) {\n      helperSummaryUpdatedAtChip.textContent = `Summary updated ${updatedAt}`;\n    }\n";
         if app_js.contains(old) {
@@ -7659,9 +8010,11 @@ pub fn patch_chattycog_webview_helper_summary_updated_at_chip(
         }
     }
 
-    if !app_js.contains("helperSummaryUpdatedAtChip.textContent = \"Summary update time unavailable\";")
+    if !app_js
+        .contains("helperSummaryUpdatedAtChip.textContent = \"Summary update time unavailable\";")
     {
-        let old = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
+        let old =
+            "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n";
         let new = "    helperSummaryFiles.innerHTML = \"<li>Waiting for bounded helper run.</li>\";\n    if (helperSummaryUpdatedAtChip) {\n      helperSummaryUpdatedAtChip.textContent = \"Summary update time unavailable\";\n    }\n";
         if app_js.contains(old) {
             app_js = app_js.replacen(old, new, 1);
@@ -7682,23 +8035,53 @@ pub fn patch_chattycog_webview_helper_summary_updated_at_chip(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_empty_state");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_empty_state",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_last_run_stamp");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_count_delta");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_lane_count_chip");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_metadata_row",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_count_delta",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_lane_count_chip",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_types_chip");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_status_chip");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_updated_at_chip");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_filter_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_status_chip",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_updated_at_chip",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_filter_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_filter_notice");
     ensure_marker(&mut spec.supported_patch_kinds, "lane_scoped_metadata_row");
-    ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_discovered_notice");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "helper_summary_discovered_notice",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "secondary_inbox_lane");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -7737,7 +8120,10 @@ pub fn patch_chattycog_webview_helper_summary_updated_at_chip(
             expected: Some("helperSummaryUpdatedAtChip".into()),
         },
     );
-    ensure_marker(&mut acceptance.required_markers, "helper-summary-updated-at-chip");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "helper-summary-updated-at-chip",
+    );
 
     refresh_project_contract_views(&mut spec);
     fs::write(&index_path, index)?;
@@ -7889,8 +8275,14 @@ const helperSummaryFiles = document.getElementById("helper-summary-files");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_badges");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_status_chip");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -8014,11 +8406,7 @@ pub fn patch_chattycog_webview_processed_files_panel(
     if !app_js.contains("processed-files-status") {
         let panel_block = "\nconst processedFilesStatus = document.getElementById(\"processed-files-status\");\nconst processedFilesList = document.getElementById(\"processed-files-list\");\n\nasync function loadProcessedFilesPanel() {\n  if (!processedFilesStatus || !processedFilesList) return;\n  try {\n    const response = await fetch(\"bridge/helpers/local_inbox/summary.json\");\n    if (!response.ok) {\n      throw new Error(`processed files summary fetch failed: ${response.status}`);\n    }\n    const summary = await response.json();\n    const files = Array.isArray(summary.observed_files) ? summary.observed_files : [];\n    processedFilesStatus.textContent = files.length\n      ? `Processed ${files.length} helper file(s).`\n      : \"No processed helper files yet.\";\n    processedFilesList.innerHTML = files.map((name) => `<li data-processed-file=\"${name}\">${name}</li>`).join(\"\") || \"<li>No processed helper files yet.</li>\";\n  } catch (_error) {\n    processedFilesStatus.textContent = \"Processed helper files are not available yet.\";\n    processedFilesList.innerHTML = \"<li>Waiting for helper output.</li>\";\n  }\n}\n";
         if app_js.contains("loadHelperSummary();") {
-            app_js = app_js.replacen(
-                "loadHelperSummary();",
-                "loadHelperSummary();",
-                1,
-            );
+            app_js = app_js.replacen("loadHelperSummary();", "loadHelperSummary();", 1);
             app_js.push_str(panel_block);
             app_js.push_str("\nloadProcessedFilesPanel();\n");
         } else if app_js.contains("writeStatus();") {
@@ -8154,7 +8542,10 @@ pub fn patch_chattycog_webview_auto_refresh_helper_panels(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
     ensure_check(
         &mut spec.acceptance_checks,
         AcceptanceCheck {
@@ -8182,14 +8573,21 @@ pub fn patch_chattycog_webview_auto_refresh_helper_panels(
             expected: Some("window.setInterval".into()),
         },
     );
-    ensure_marker(&mut acceptance.required_markers, "scheduleHelperPanelRefresh");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "scheduleHelperPanelRefresh",
+    );
 
     refresh_project_contract_views(&mut spec);
     fs::write(&app_js_path, app_js)?;
     fs::write(&spec_path, to_string_pretty(&spec)?)?;
     fs::write(&acceptance_path, to_string_pretty(&acceptance)?)?;
 
-    let modified_files = vec![app_js_path.clone(), spec_path.clone(), acceptance_path.clone()];
+    let modified_files = vec![
+        app_js_path.clone(),
+        spec_path.clone(),
+        acceptance_path.clone(),
+    ];
     let patch_receipt = PatchReceipt {
         patch_id: format!("patch-{}", request_id),
         request_id: request_id.to_string(),
@@ -8274,8 +8672,14 @@ pub fn patch_chattycog_webview_processed_file_preview_panel(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_check(
         &mut spec.acceptance_checks,
         AcceptanceCheck {
@@ -8321,7 +8725,10 @@ pub fn patch_chattycog_webview_processed_file_preview_panel(
             expected: None,
         },
     );
-    ensure_marker(&mut acceptance.required_markers, "processed-file-preview-panel");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "processed-file-preview-panel",
+    );
 
     refresh_project_contract_views(&mut spec);
     fs::write(&index_path, index)?;
@@ -8422,8 +8829,14 @@ pub fn patch_chattycog_webview_processed_file_selection(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "processed_file_selection");
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
@@ -8480,7 +8893,10 @@ pub fn patch_chattycog_webview_processed_file_selection(
             expected: Some(".processed-files-list li.is-selected".into()),
         },
     );
-    ensure_marker(&mut acceptance.required_markers, "data-select-processed-file");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "data-select-processed-file",
+    );
     ensure_marker(&mut acceptance.required_markers, "selectedProcessedFile");
 
     refresh_project_contract_views(&mut spec);
@@ -8582,11 +8998,9 @@ pub fn patch_chattycog_webview_file_type_filter(
         project_helper.allowed_extensions = helper_spec.allowed_extensions.clone();
         project_helper.lane_allowed_extensions = helper_spec.lane_allowed_extensions.clone();
         project_helper.primitives = helper_spec.primitives.clone();
-        if !project_helper
-            .notes
-            .iter()
-            .any(|note| note.contains("Only .txt inbox files from module_assets should be processed"))
-        {
+        if !project_helper.notes.iter().any(|note| {
+            note.contains("Only .txt inbox files from module_assets should be processed")
+        }) {
             project_helper.notes.push(
                 "Only .txt inbox files from module_assets should be processed by the bounded helper runner.".into(),
             );
@@ -8604,62 +9018,68 @@ pub fn patch_chattycog_webview_file_type_filter(
     ensure_marker(&mut spec.supported_patch_kinds, "asset_inbox_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "helper_summary_panel");
     ensure_marker(&mut spec.supported_patch_kinds, "processed_files_panel");
-    ensure_marker(&mut spec.supported_patch_kinds, "auto_refresh_helper_panels");
-    ensure_marker(&mut spec.supported_patch_kinds, "processed_file_preview_panel");
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "auto_refresh_helper_panels",
+    );
+    ensure_marker(
+        &mut spec.supported_patch_kinds,
+        "processed_file_preview_panel",
+    );
     ensure_marker(&mut spec.supported_patch_kinds, "file_type_filter");
     ensure_check(
         &mut spec.acceptance_checks,
-            AcceptanceCheck {
-                check_id: "helper-file-type-filter-spec".into(),
-                kind: "contains".into(),
-                target: "helpers/local_inbox_helper/HelperServiceSpec.json".into(),
-                expected: Some("\"lane_allowed_extensions\": {".into()),
-            },
-        );
+        AcceptanceCheck {
+            check_id: "helper-file-type-filter-spec".into(),
+            kind: "contains".into(),
+            target: "helpers/local_inbox_helper/HelperServiceSpec.json".into(),
+            expected: Some("\"lane_allowed_extensions\": {".into()),
+        },
+    );
     ensure_check(
         &mut spec.acceptance_checks,
-            AcceptanceCheck {
-                check_id: "helper-file-type-filter-lane".into(),
-                kind: "contains".into(),
-                target: "helpers/local_inbox_helper/HelperServiceSpec.json".into(),
-                expected: Some("\"module_assets\"".into()),
-            },
-        );
-        ensure_check(
-            &mut spec.acceptance_checks,
-            AcceptanceCheck {
-                check_id: "helper-file-type-filter-extension".into(),
-                kind: "contains".into(),
-                target: "helpers/local_inbox_helper/HelperServiceSpec.json".into(),
-                expected: Some("\".txt\"".into()),
-            },
+        AcceptanceCheck {
+            check_id: "helper-file-type-filter-lane".into(),
+            kind: "contains".into(),
+            target: "helpers/local_inbox_helper/HelperServiceSpec.json".into(),
+            expected: Some("\"module_assets\"".into()),
+        },
+    );
+    ensure_check(
+        &mut spec.acceptance_checks,
+        AcceptanceCheck {
+            check_id: "helper-file-type-filter-extension".into(),
+            kind: "contains".into(),
+            target: "helpers/local_inbox_helper/HelperServiceSpec.json".into(),
+            expected: Some("\".txt\"".into()),
+        },
     );
     ensure_check(
         &mut acceptance.checks,
-            AcceptanceCheck {
-                check_id: "helper-file-type-filter-spec".into(),
-                kind: "contains".into(),
-                target: "helpers/local_inbox_helper/HelperServiceSpec.json".into(),
-                expected: Some("\"lane_allowed_extensions\": {".into()),
-            },
-        );
+        AcceptanceCheck {
+            check_id: "helper-file-type-filter-spec".into(),
+            kind: "contains".into(),
+            target: "helpers/local_inbox_helper/HelperServiceSpec.json".into(),
+            expected: Some("\"lane_allowed_extensions\": {".into()),
+        },
+    );
     ensure_check(
         &mut acceptance.checks,
-            AcceptanceCheck {
-                check_id: "helper-file-type-filter-lane".into(),
-                kind: "contains".into(),
-                target: "helpers/local_inbox_helper/HelperServiceSpec.json".into(),
-                expected: Some("\"module_assets\"".into()),
-            },
-        );
-        ensure_check(
-            &mut acceptance.checks,
-            AcceptanceCheck {
-                check_id: "helper-file-type-filter-extension".into(),
-                kind: "contains".into(),
-                target: "helpers/local_inbox_helper/HelperServiceSpec.json".into(),
-                expected: Some("\".txt\"".into()),
-            },
+        AcceptanceCheck {
+            check_id: "helper-file-type-filter-lane".into(),
+            kind: "contains".into(),
+            target: "helpers/local_inbox_helper/HelperServiceSpec.json".into(),
+            expected: Some("\"module_assets\"".into()),
+        },
+    );
+    ensure_check(
+        &mut acceptance.checks,
+        AcceptanceCheck {
+            check_id: "helper-file-type-filter-extension".into(),
+            kind: "contains".into(),
+            target: "helpers/local_inbox_helper/HelperServiceSpec.json".into(),
+            expected: Some("\".txt\"".into()),
+        },
     );
     ensure_check(
         &mut acceptance.checks,
@@ -8681,22 +9101,22 @@ pub fn patch_chattycog_webview_file_type_filter(
     );
     ensure_check(
         &mut acceptance.checks,
-            AcceptanceCheck {
-                check_id: "helper-file-type-filter-summary-extension".into(),
-                kind: "contains".into(),
-                target: "bridge/helpers/local_inbox/summary.json".into(),
-                expected: Some("\"lane_allowed_extensions\": {".into()),
-            },
-        );
-        ensure_check(
-            &mut acceptance.checks,
-            AcceptanceCheck {
-                check_id: "helper-file-type-filter-summary-lane".into(),
-                kind: "contains".into(),
-                target: "bridge/helpers/local_inbox/summary.json".into(),
-                expected: Some("\"module_assets\"".into()),
-            },
-        );
+        AcceptanceCheck {
+            check_id: "helper-file-type-filter-summary-extension".into(),
+            kind: "contains".into(),
+            target: "bridge/helpers/local_inbox/summary.json".into(),
+            expected: Some("\"lane_allowed_extensions\": {".into()),
+        },
+    );
+    ensure_check(
+        &mut acceptance.checks,
+        AcceptanceCheck {
+            check_id: "helper-file-type-filter-summary-lane".into(),
+            kind: "contains".into(),
+            target: "bridge/helpers/local_inbox/summary.json".into(),
+            expected: Some("\"module_assets\"".into()),
+        },
+    );
     ensure_check(
         &mut acceptance.checks,
         AcceptanceCheck {
@@ -8706,8 +9126,14 @@ pub fn patch_chattycog_webview_file_type_filter(
             expected: Some("sample-ignore.json".into()),
         },
     );
-    ensure_marker(&mut acceptance.required_markers, "\"lane_allowed_extensions\": {");
-    ensure_marker(&mut acceptance.required_markers, "\"filtered_out_file_count\": 1");
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "\"lane_allowed_extensions\": {",
+    );
+    ensure_marker(
+        &mut acceptance.required_markers,
+        "\"filtered_out_file_count\": 1",
+    );
 
     refresh_project_contract_views(&mut spec);
     fs::write(&helper_spec_path, to_string_pretty(&helper_spec)?)?;
@@ -8806,7 +9232,11 @@ pub fn patch_chattycog_native_bridge_status_panel(
     fs::write(&spec_path, to_string_pretty(&spec)?)?;
     fs::write(&acceptance_path, to_string_pretty(&acceptance)?)?;
 
-    let modified_files = vec![main_path.clone(), spec_path.clone(), acceptance_path.clone()];
+    let modified_files = vec![
+        main_path.clone(),
+        spec_path.clone(),
+        acceptance_path.clone(),
+    ];
     let patch_receipt = PatchReceipt {
         patch_id: format!("patch-{}", request_id),
         request_id: request_id.to_string(),
@@ -8893,7 +9323,11 @@ pub fn patch_chattycog_native_ready_toggle(
     fs::write(&spec_path, to_string_pretty(&spec)?)?;
     fs::write(&acceptance_path, to_string_pretty(&acceptance)?)?;
 
-    let modified_files = vec![main_path.clone(), spec_path.clone(), acceptance_path.clone()];
+    let modified_files = vec![
+        main_path.clone(),
+        spec_path.clone(),
+        acceptance_path.clone(),
+    ];
     let patch_receipt = PatchReceipt {
         patch_id: format!("patch-{}", request_id),
         request_id: request_id.to_string(),
@@ -8938,9 +9372,10 @@ pub fn patch_chattycog_workspace_room_state_fields(
         .and_then(|value| value.as_array_mut())
         .ok_or_else(|| anyhow::anyhow!("ui.json fields array missing"))?;
 
-    if !fields.iter().any(|field| {
-        field.get("id").and_then(|value| value.as_str()) == Some("room_policy")
-    }) {
+    if !fields
+        .iter()
+        .any(|field| field.get("id").and_then(|value| value.as_str()) == Some("room_policy"))
+    {
         fields.push(serde_json::json!({
             "id": "room_policy",
             "label": "Room Policy",
@@ -8949,9 +9384,10 @@ pub fn patch_chattycog_workspace_room_state_fields(
             "default": "general"
         }));
     }
-    if !fields.iter().any(|field| {
-        field.get("id").and_then(|value| value.as_str()) == Some("session_label")
-    }) {
+    if !fields
+        .iter()
+        .any(|field| field.get("id").and_then(|value| value.as_str()) == Some("session_label"))
+    {
         fields.push(serde_json::json!({
             "id": "session_label",
             "label": "Session Label",
@@ -9046,9 +9482,10 @@ pub fn patch_chattycog_workspace_session_overview(
         .get_mut("fields")
         .and_then(|value| value.as_array_mut())
         .ok_or_else(|| anyhow::anyhow!("ui.json fields array missing"))?;
-    if !fields.iter().any(|field| {
-        field.get("id").and_then(|value| value.as_str()) == Some("participants")
-    }) {
+    if !fields
+        .iter()
+        .any(|field| field.get("id").and_then(|value| value.as_str()) == Some("participants"))
+    {
         fields.push(serde_json::json!({
             "id": "participants",
             "label": "Participants",
@@ -9130,6 +9567,7 @@ fn render_static_web_dashboard_bundle(inputs: &ScaffoldInputs) -> Result<WebBuil
         index_html: render_named("families/static_web_dashboard/index.html", &context)?,
         app_js: render_named("families/static_web_dashboard/app.js", &context)?,
         styles_css: render_named("families/static_web_dashboard/styles.css", &context)?,
+        readme_md: render_named("families/static_web_dashboard/README.md", &context)?,
     })
 }
 
@@ -9175,10 +9613,7 @@ fn ensure_marker(markers: &mut Vec<String>, marker: &str) {
     }
 }
 
-fn upsert_helper_primitive(
-    helper_spec: &mut HelperServiceSpec,
-    primitive: HelperPrimitiveSpec,
-) {
+fn upsert_helper_primitive(helper_spec: &mut HelperServiceSpec, primitive: HelperPrimitiveSpec) {
     if let Some(existing) = helper_spec
         .primitives
         .iter_mut()
@@ -9195,7 +9630,10 @@ fn update_check_expected(
     check_id: &str,
     expected: Option<String>,
 ) {
-    if let Some(existing) = checks.iter_mut().find(|existing| existing.check_id == check_id) {
+    if let Some(existing) = checks
+        .iter_mut()
+        .find(|existing| existing.check_id == check_id)
+    {
         existing.expected = expected;
     }
 }
@@ -9274,7 +9712,6 @@ fn apply_acceptance_recipe_contributions(
     }
 }
 
-
 pub(crate) fn patch_python_cli_tool_csv_report_new_patch_lane(
     project_dir: &std::path::Path,
     project_name: &str,
@@ -9283,7 +9720,6 @@ pub(crate) fn patch_python_cli_tool_csv_report_new_patch_lane(
 ) -> anyhow::Result<(PatchArtifacts, chatty_factory_core::PatchReceipt)> {
     patch_python_csv_report_email_sender(project_dir, project_name, request_id, request)
 }
-
 
 pub(crate) fn patch_rust_cli_tool_log_summary_new_patch_lane(
     project_dir: &std::path::Path,

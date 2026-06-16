@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
-use crate::{
-    ContextBundle, ProjectSnapshot, ProjectSpec, SnapshotGateResult, timestamp_id,
-};
+use crate::{timestamp_id, ContextBundle, ProjectSnapshot, ProjectSpec, SnapshotGateResult};
 
 pub fn build_project_snapshot(project_dir: &Path, spec: &ProjectSpec) -> Result<ProjectSnapshot> {
     let mut discovered_files = Vec::new();
@@ -55,13 +53,20 @@ pub fn gate_patch_project_snapshot(
 
     for path in spec.entrypoints.iter().chain(spec.expected_files.iter()) {
         if !is_safe_relpath(path) {
-            bail!("snapshot gate failed: unsafe project-relative path declared: {}", path);
+            bail!(
+                "snapshot gate failed: unsafe project-relative path declared: {}",
+                path
+            );
         }
         if checked_paths.iter().any(|existing| existing == path) {
             continue;
         }
         checked_paths.push(path.clone());
-        if !snapshot.discovered_files.iter().any(|existing| existing == path) {
+        if !snapshot
+            .discovered_files
+            .iter()
+            .any(|existing| existing == path)
+        {
             missing_paths.push(path.clone());
         }
     }
@@ -71,9 +76,12 @@ pub fn gate_patch_project_snapshot(
         format!("snapshot_file_count={}", snapshot.discovered_files.len()),
     ];
     if missing_paths.is_empty() {
-        rationale.push("all declared patch-scope files were present in the project snapshot".into());
+        rationale
+            .push("all declared patch-scope files were present in the project snapshot".into());
     } else {
-        rationale.push("one or more declared patch-scope files were missing from the project snapshot".into());
+        rationale.push(
+            "one or more declared patch-scope files were missing from the project snapshot".into(),
+        );
     }
 
     Ok(SnapshotGateResult {
@@ -92,7 +100,11 @@ pub fn gate_patch_project_snapshot(
     })
 }
 
-fn collect_relative_files(project_root: &Path, current_dir: &Path, out: &mut Vec<String>) -> Result<()> {
+fn collect_relative_files(
+    project_root: &Path,
+    current_dir: &Path,
+    out: &mut Vec<String>,
+) -> Result<()> {
     for entry in fs::read_dir(current_dir)? {
         let entry = entry?;
         let path = entry.path();

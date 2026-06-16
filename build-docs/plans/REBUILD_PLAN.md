@@ -1,5 +1,9 @@
 # ChattyFactory Rebuild Plan
 
+Historical note:
+- this is a planning-era execution document
+- use [../../docs/CURRENT_ARCHITECTURE.md](../../docs/CURRENT_ARCHITECTURE.md) for the current implementation shape
+
 This document is the working plan for rebuilding ChattyFactory inside `chatty-factory/` as a cleaner standalone product that can also emit a drop-in ChattyCog module wrapper.
 
 It is not a retrospective on the old prototype. It is the execution document for replacing the prototype's most entangled LLM-driven machinery with deterministic host-owned systems wherever practical.

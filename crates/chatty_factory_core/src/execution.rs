@@ -4,9 +4,7 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
-use crate::{
-    timestamp_id, ExecutionPolicy, ExecutionReceipt, ExecutionSmokeCheck, FamilyId,
-};
+use crate::{timestamp_id, ExecutionPolicy, ExecutionReceipt, ExecutionSmokeCheck, FamilyId};
 
 pub fn build_execution_policy(
     request_id: &str,
@@ -76,7 +74,10 @@ pub fn build_execution_policy(
         | Some(FamilyId::ChattycogWorkspaceModule) => (
             Vec::new(),
             vec!["project_root_confined".into(), "entrypoints_exist".into()],
-            vec!["web families are currently guarded by path confinement and entrypoint checks".into()],
+            vec![
+                "web families are currently guarded by path confinement and entrypoint checks"
+                    .into(),
+            ],
         ),
         None => (
             Vec::new(),
@@ -104,8 +105,14 @@ pub fn run_execution_policy(policy: &ExecutionPolicy) -> Result<ExecutionReceipt
     let allowed_root = PathBuf::from(&policy.allowed_root);
     let mut checks = Vec::new();
 
-    checks.push(run_project_root_confined_check(&project_dir, &allowed_root)?);
-    checks.push(run_entrypoints_exist_check(&project_dir, &policy.allowed_entrypoints)?);
+    checks.push(run_project_root_confined_check(
+        &project_dir,
+        &allowed_root,
+    )?);
+    checks.push(run_entrypoints_exist_check(
+        &project_dir,
+        &policy.allowed_entrypoints,
+    )?);
 
     match policy.family_id.as_ref() {
         Some(FamilyId::PythonCliTool) => {
@@ -148,7 +155,10 @@ pub fn run_execution_policy(policy: &ExecutionPolicy) -> Result<ExecutionReceipt
     })
 }
 
-fn run_project_root_confined_check(project_dir: &Path, allowed_root: &Path) -> Result<ExecutionSmokeCheck> {
+fn run_project_root_confined_check(
+    project_dir: &Path,
+    allowed_root: &Path,
+) -> Result<ExecutionSmokeCheck> {
     if !project_dir.starts_with(allowed_root) {
         bail!(
             "project root is outside the allowed output root: {}",
@@ -167,7 +177,10 @@ fn run_project_root_confined_check(project_dir: &Path, allowed_root: &Path) -> R
     })
 }
 
-fn run_entrypoints_exist_check(project_dir: &Path, entrypoints: &[String]) -> Result<ExecutionSmokeCheck> {
+fn run_entrypoints_exist_check(
+    project_dir: &Path,
+    entrypoints: &[String],
+) -> Result<ExecutionSmokeCheck> {
     for entrypoint in entrypoints {
         let path = project_dir.join(entrypoint);
         if !path.exists() {
@@ -186,7 +199,10 @@ fn run_entrypoints_exist_check(project_dir: &Path, entrypoints: &[String]) -> Re
     })
 }
 
-fn run_python_py_compile_check(project_dir: &Path, entrypoints: &[String]) -> Result<ExecutionSmokeCheck> {
+fn run_python_py_compile_check(
+    project_dir: &Path,
+    entrypoints: &[String],
+) -> Result<ExecutionSmokeCheck> {
     let script = entrypoints
         .iter()
         .find(|entrypoint| entrypoint.ends_with(".py"))

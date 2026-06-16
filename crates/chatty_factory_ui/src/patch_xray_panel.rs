@@ -78,7 +78,8 @@ impl ChattyFactoryUiApp {
         ui: &mut egui::Ui,
         project_name: &str,
     ) {
-        let recent_patch_xrays = load_recent_project_patch_xrays(&self.workspace_root, project_name);
+        let recent_patch_xrays =
+            load_recent_project_patch_xrays(&self.workspace_root, project_name);
         let visible_patch_xrays: Vec<_> = recent_patch_xrays
             .iter()
             .filter(|xray| {
@@ -154,12 +155,7 @@ impl ChattyFactoryUiApp {
             }
             if !xray.diagnosis.declared_ownership_boundaries.is_empty() {
                 ui.label("Declared boundaries");
-                for note in xray
-                    .diagnosis
-                    .declared_ownership_boundaries
-                    .iter()
-                    .take(2)
-                {
+                for note in xray.diagnosis.declared_ownership_boundaries.iter().take(2) {
                     ui.label(format!("- {note}"));
                 }
             }
@@ -360,9 +356,12 @@ impl ChattyFactoryUiApp {
             }
         }
         if let Some(freeze) = &freeze {
-            let superseded_by = freeze.intended_patch_kind.as_deref().and_then(|patch_kind| {
-                current_patch_lane_superseded_for_execution(result, patch_kind)
-            });
+            let superseded_by = freeze
+                .intended_patch_kind
+                .as_deref()
+                .and_then(|patch_kind| {
+                    current_patch_lane_superseded_for_execution(result, patch_kind)
+                });
             if let Some(patch_kind) = &freeze.intended_patch_kind {
                 if let Some(maturity) = freeze
                     .patch_surgical_maturity
@@ -640,7 +639,9 @@ fn load_patch_constraint_review_receipt(path: &str) -> Option<PatchConstraintRev
     serde_json::from_str(&contents).ok()
 }
 
-fn load_patch_diagnosis_postcheck_receipt(path: &str) -> Option<PatchDiagnosisPostcheckReceiptView> {
+fn load_patch_diagnosis_postcheck_receipt(
+    path: &str,
+) -> Option<PatchDiagnosisPostcheckReceiptView> {
     let contents = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&contents).ok()
 }
@@ -771,22 +772,10 @@ fn project_patch_xray_outcome_reason(xray: &ProjectPatchXrayView) -> String {
 
 fn patch_lane_maturity_badge(maturity: &str) -> egui::RichText {
     let (label, color) = match maturity {
-        "narrow_surface_contract" => (
-            "narrow-surface",
-            egui::Color32::from_rgb(70, 140, 90),
-        ),
-        "broad_surface_contract" => (
-            "broad-surface",
-            egui::Color32::from_rgb(90, 120, 150),
-        ),
-        "legacy_shape_sensitive" => (
-            "legacy-shape",
-            egui::Color32::from_rgb(170, 110, 70),
-        ),
-        "anchor_only_contract" => (
-            "anchor-only",
-            egui::Color32::from_rgb(140, 120, 70),
-        ),
+        "narrow_surface_contract" => ("narrow-surface", egui::Color32::from_rgb(70, 140, 90)),
+        "broad_surface_contract" => ("broad-surface", egui::Color32::from_rgb(90, 120, 150)),
+        "legacy_shape_sensitive" => ("legacy-shape", egui::Color32::from_rgb(170, 110, 70)),
+        "anchor_only_contract" => ("anchor-only", egui::Color32::from_rgb(140, 120, 70)),
         "uncontracted" => ("uncontracted", egui::Color32::from_gray(130)),
         _ => (maturity, egui::Color32::GRAY),
     };

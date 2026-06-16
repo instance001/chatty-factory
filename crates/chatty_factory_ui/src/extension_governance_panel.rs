@@ -101,7 +101,9 @@ impl ChattyFactoryUiApp {
             let composition_acceptance_paths = entry
                 .integrated_paths
                 .iter()
-                .filter(|path| path.contains("operator_registry") && path.contains("acceptance_recipes"))
+                .filter(|path| {
+                    path.contains("operator_registry") && path.contains("acceptance_recipes")
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             let artifact_summary = extension_governed_artifact_set_summary(entry);
@@ -134,7 +136,10 @@ impl ChattyFactoryUiApp {
                 ));
                 for acceptance_path in &composition_acceptance_paths {
                     ui.horizontal_wrapped(|ui| {
-                        ui.label(format!("Acceptance artifact: {}", short_path(acceptance_path)));
+                        ui.label(format!(
+                            "Acceptance artifact: {}",
+                            short_path(acceptance_path)
+                        ));
                         if ui.small_button("Open Acceptance").clicked() {
                             self.reveal_governed_artifact(
                                 acceptance_path,
@@ -153,7 +158,9 @@ impl ChattyFactoryUiApp {
             let patch_acceptance_path = entry
                 .integrated_paths
                 .iter()
-                .find(|path| path.contains("operator_registry") && path.contains("acceptance_recipes"))
+                .find(|path| {
+                    path.contains("operator_registry") && path.contains("acceptance_recipes")
+                })
                 .cloned();
             let artifact_summary = extension_governed_artifact_set_summary(entry);
             render_governance_detail_block(

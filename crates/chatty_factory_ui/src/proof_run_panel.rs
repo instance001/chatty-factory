@@ -150,15 +150,17 @@ impl ChattyFactoryUiApp {
                     ui.separator();
                     ui.label(format!("Kind: {}", template.template_kind));
                     if ui.small_button("Open Template Contract").clicked() {
-                        let template_path =
-                            proof_template_manifest_path(&self.workspace_root, &template.template_id)
-                                .unwrap_or_else(|| {
-                                    self.workspace_root
-                                        .join("crates")
-                                        .join("chatty_factory_core")
-                                        .join("src")
-                                        .join("proof_harness.rs")
-                                });
+                        let template_path = proof_template_manifest_path(
+                            &self.workspace_root,
+                            &template.template_id,
+                        )
+                        .unwrap_or_else(|| {
+                            self.workspace_root
+                                .join("crates")
+                                .join("chatty_factory_core")
+                                .join("src")
+                                .join("proof_harness.rs")
+                        });
                         let path_text = template_path.to_string_lossy().to_string();
                         match open_path_in_explorer(&path_text, true) {
                             Ok(()) => {
@@ -182,10 +184,7 @@ impl ChattyFactoryUiApp {
                                     error.to_string(),
                                     false,
                                 );
-                                self.push_toast(
-                                    format!("Open failed: {error}"),
-                                    ToastKind::Error,
-                                );
+                                self.push_toast(format!("Open failed: {error}"), ToastKind::Error);
                             }
                         }
                     }
@@ -204,8 +203,7 @@ impl ChattyFactoryUiApp {
                         let path_text = bundle_path.to_string_lossy().to_string();
                         match open_path_in_explorer(&path_text, true) {
                             Ok(()) => {
-                                self.status_line =
-                                    "Opened comparison bundle contract".to_string();
+                                self.status_line = "Opened comparison bundle contract".to_string();
                                 self.push_extension_activity(
                                     Some(template.template_id.clone()),
                                     "Open Comparison Bundle Contract",
@@ -225,10 +223,7 @@ impl ChattyFactoryUiApp {
                                     error.to_string(),
                                     false,
                                 );
-                                self.push_toast(
-                                    format!("Open failed: {error}"),
-                                    ToastKind::Error,
-                                );
+                                self.push_toast(format!("Open failed: {error}"), ToastKind::Error);
                             }
                         }
                     }
@@ -306,10 +301,12 @@ impl ChattyFactoryUiApp {
         let estimated_retry_search_outer_timeout_secs = latest_retry_search_proof
             .as_ref()
             .map(|(receipt, _)| receipt.expected_outer_timeout_secs)
-            .or_else(|| estimate_retry_search_outer_timeout_secs(
-                &self.runtime_status,
-                self.planner_model.trim(),
-            ));
+            .or_else(|| {
+                estimate_retry_search_outer_timeout_secs(
+                    &self.runtime_status,
+                    self.planner_model.trim(),
+                )
+            });
         let shell_timeout_buffer_secs = latest_retry_search_proof
             .as_ref()
             .and_then(|(receipt, _)| {
@@ -427,10 +424,7 @@ impl ChattyFactoryUiApp {
             }
         });
         if ui
-            .add_enabled(
-                !self.task_running,
-                egui::Button::new("Run Proof Template"),
-            )
+            .add_enabled(!self.task_running, egui::Button::new("Run Proof Template"))
             .clicked()
         {
             self.spawn_task(UiTask::RunProofTemplate {
