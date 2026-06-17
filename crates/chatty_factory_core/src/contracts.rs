@@ -125,6 +125,39 @@ pub struct RequestPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BuildIntentFreeze {
+    pub freeze_id: String,
+    pub request_id: String,
+    pub source_request_plan_id: String,
+    pub mode: Option<RequestMode>,
+    pub raw_request: String,
+    pub project_name: String,
+    pub selected_family_id: Option<FamilyId>,
+    pub starter_override_id: Option<String>,
+    pub recommended_starter_id: Option<String>,
+    pub explicit_stack: Option<String>,
+    pub desired_surface: Option<DesiredSurface>,
+    pub exoskeleton_target: Option<ExoskeletonTarget>,
+    pub inferred_tool_kind: Option<String>,
+    pub interpreted_goal: String,
+    #[serde(default)]
+    pub candidate_family_ids: Vec<FamilyId>,
+    #[serde(default)]
+    pub requested_capabilities: Vec<String>,
+    #[serde(default)]
+    pub hard_requirements: Vec<String>,
+    #[serde(default)]
+    pub preference_notes: Vec<String>,
+    #[serde(default)]
+    pub ambiguity_flags: Vec<String>,
+    #[serde(default)]
+    pub constraint_notes: Vec<String>,
+    #[serde(default)]
+    pub freeze_notes: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct BuildFeatureSlice {
     pub slice_id: String,
     #[serde(default)]
@@ -175,6 +208,7 @@ pub struct BuildPlanArtifact {
     pub build_plan_id: String,
     pub request_id: String,
     pub source_request_plan_id: String,
+    pub source_build_intent_freeze_id: String,
     pub project_name: String,
     pub family_id: Option<FamilyId>,
     pub starter_override_id: Option<String>,
@@ -205,6 +239,7 @@ pub struct BuildPlanArtifact {
 pub struct BuildPlanReview {
     pub review_id: String,
     pub request_id: String,
+    pub build_intent_freeze_id: String,
     pub source_build_plan_id: String,
     pub project_name: String,
     pub family_id: Option<FamilyId>,
@@ -253,6 +288,7 @@ pub struct BuildConstraintReviewReceipt {
 pub struct BuildExecutionWorkOrder {
     pub work_order_id: String,
     pub request_id: String,
+    pub build_intent_freeze_id: String,
     pub build_plan_id: String,
     pub build_plan_review_id: String,
     pub build_constraint_review_id: String,
@@ -434,6 +470,7 @@ pub struct TaskDecompositionInferenceReceipt {
     pub task_shape: String,
     pub task_subtype: String,
     pub inference_pattern: String,
+    #[serde(default)]
     pub failure_class: String,
     #[serde(default)]
     pub constraint_principles: Vec<String>,
@@ -1146,6 +1183,10 @@ pub struct BuildVerificationReceipt {
     pub suggested_tool_kind: Option<String>,
     pub suggested_extension_kind: String,
     pub failure_class: FailureClass,
+    #[serde(default)]
+    pub normalized_failure_class: String,
+    #[serde(default)]
+    pub recommended_next_action: String,
     pub failure_mode: String,
     #[serde(default)]
     pub matched_approved_constraint_ids: Vec<String>,
@@ -1157,6 +1198,8 @@ pub struct BuildVerificationReceipt {
     pub blocked_methods: Vec<String>,
     #[serde(default)]
     pub findings: Vec<String>,
+    #[serde(default)]
+    pub recommended_next_step: String,
     pub decision: String,
     pub created_at: Option<String>,
 }
@@ -1775,6 +1818,12 @@ pub struct RetrySearchProofReceipt {
     #[serde(default)]
     pub internal_timeout_observed: bool,
     #[serde(default)]
+    pub normalized_failure_class: String,
+    #[serde(default)]
+    pub recommended_next_action: String,
+    #[serde(default)]
+    pub recommended_next_step: String,
+    #[serde(default)]
     pub notes: Vec<String>,
     pub created_at: Option<String>,
 }
@@ -1822,6 +1871,8 @@ pub struct FallbackBuildSpec {
     pub suggested_proof_seed_template_id: Option<String>,
     pub suggested_proof_seed_bundle_id: Option<String>,
     pub stub_bundle_path: Option<String>,
+    #[serde(default)]
+    pub recommended_next_action: String,
     pub recommended_next_step: String,
     pub created_at: Option<String>,
 }

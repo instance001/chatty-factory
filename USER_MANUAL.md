@@ -225,6 +225,32 @@ One important nuance now:
 - "not yet proven at this task size" should increasingly become a decomposition
   or runtime-mode lesson
 - it should not automatically become "unsupported forever"
+- the host should choose the next move mechanically from evidence, not improvise
+  a new explanation every time
+
+In practice that means the receipts are starting to carry three separate ideas:
+
+- `normalized_failure_class`
+  - the broad generic failure bucket selected from evidence
+- `recommended_next_action`
+  - the host-owned action id for what should happen next
+- `recommended_next_step`
+  - the human-readable wording of that next move
+
+That is no longer limited to build fallback.
+The same pattern now appears in:
+
+- build verification receipts
+- patch postcheck receipts
+- retry-search ladder proof receipts
+
+Examples of next actions include:
+
+- retry with a changed method
+- decompose by matched grammar
+- escalate the model ladder
+- clarify and refreeze intent
+- surface an unmet requirement honestly
 
 ## 4A. Adaptive Decomposition In Plain English
 
@@ -448,6 +474,10 @@ The desktop UI now surfaces this in two places:
   - factory-owned ladder ceiling
   - recommended shell timeout
   - `Run Retry-Search Ladder Proof`
+
+Reference hostile proof note:
+
+- [Qwen3-8B Retry-Search Hostile Proof](./docs/QWEN3_8B_RETRY_SEARCH_HOSTILE_PROOF.md)
 
 Run a planner handoff manually:
 

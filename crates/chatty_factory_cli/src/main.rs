@@ -876,8 +876,14 @@ fn print_host_action_result(result: &HostActionResult, as_json: bool) -> Result<
             execution.plan_confidence_score, execution.plan_confidence_band
         );
         println!("llm_review={}", execution.needs_llm_review);
+        if let Some(outcome_class) = &execution.outcome_class {
+            println!("outcome={outcome_class}");
+        }
         if let Some(status) = &execution.acceptance_status {
             println!("acceptance={status}");
+        }
+        for note in &execution.outcome_notes {
+            println!("outcome_note={note}");
         }
         for note in &execution.route_notes {
             println!("route_note={note}");
@@ -947,6 +953,9 @@ fn print_host_action_result(result: &HostActionResult, as_json: bool) -> Result<
         if let Some(mode) = &fallback.mode {
             println!("fallback_mode={mode}");
         }
+        if let Some(outcome_class) = &fallback.outcome_class {
+            println!("fallback_outcome={outcome_class}");
+        }
         if let Some(route_class) = &fallback.composition_route_class {
             println!("fallback_composition_route_class={route_class}");
         }
@@ -958,6 +967,9 @@ fn print_host_action_result(result: &HostActionResult, as_json: bool) -> Result<
         }
         println!("fallback_goal={}", fallback.interpreted_goal);
         println!("fallback_question={}", fallback.question);
+        if let Some(next_action) = &fallback.recommended_next_action {
+            println!("fallback_next_action={next_action}");
+        }
         println!("fallback_next_step={}", fallback.recommended_next_step);
         if let Some(class) = &fallback.build_failure_class {
             println!("fallback_build_failure_class={class}");
@@ -973,6 +985,9 @@ fn print_host_action_result(result: &HostActionResult, as_json: bool) -> Result<
         }
         for reason in &fallback.reasons {
             println!("fallback_reason={reason}");
+        }
+        for note in &fallback.outcome_notes {
+            println!("fallback_outcome_note={note}");
         }
         for family_id in &fallback.candidate_family_ids {
             println!("fallback_candidate_family={family_id}");

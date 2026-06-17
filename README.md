@@ -61,10 +61,21 @@ The intended architecture distinction is now explicit:
 - constraint principles are generic and stable
 - failure classes are generic classifications selected from evidence
 - decomposition grammars are reusable split patterns
+- next actions are selected mechanically by the host from normalized failure
+  class and retry posture evidence
 - the factory should infer mappings between task shape, failure class, and grammar
   instead of accumulating bespoke negative rules for each new task class
 - and negative constraints should be promoted from triangulated provisional evidence,
   not written directly from one-off failures
+
+That means the host now owns not just "did this fail," but also:
+
+- `normalized_failure_class`
+- `recommended_next_action`
+- `recommended_next_step`
+
+for fallback and build-verification flows, and now also for patch postcheck and
+retry-search ladder proof receipts.
 
 ## What It Does Well
 
@@ -83,9 +94,13 @@ It is not claiming universal safe surgery across arbitrary unknown codebases.
 ## Key Docs
 
 - [Factory Shape](./docs/FACTORY_SHAPE.md)
+- [Negative Constraints Engine Parts List](./docs/NEGATIVE_CONSTRAINTS_ENGINE_PARTS_LIST.md)
+- [Negative Constraints Engine Gap Audit](./docs/NEGATIVE_CONSTRAINTS_ENGINE_GAP_AUDIT.md)
+- [Negative Constraints Engine Implementation Sequence](./docs/NEGATIVE_CONSTRAINTS_ENGINE_IMPLEMENTATION_SEQUENCE.md)
 - [User Manual](./USER_MANUAL.md)
 - [Bounded Soft-Review Continuation](./docs/BOUNDED_SOFT_REVIEW_CONTINUATION.md)
 - [Current Architecture](./docs/CURRENT_ARCHITECTURE.md)
+- [Qwen3-8B Retry-Search Hostile Proof](./docs/QWEN3_8B_RETRY_SEARCH_HOSTILE_PROOF.md)
 - [Build Docs Archive](./build-docs/README.md)
 - [REBUILD_PLAN.md](./build-docs/plans/REBUILD_PLAN.md)
 - [Initial GitHub Release Plan](./build-docs/plans/INITIAL_GITHUB_RELEASE_PLAN.md)

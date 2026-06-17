@@ -34,6 +34,35 @@ It is the core product boundary:
 - the model proposes bounded shape
 - the host owns truth
 
+That host-owned truth now includes first-class build outcome labeling.
+Execution and fallback flows can surface labels such as:
+
+- `full_success`
+- `partial_success`
+- `degraded_fallback`
+- `requirement_not_met`
+
+based on frozen requirements and actual host receipts rather than optimistic
+summary wording alone.
+
+Host-owned truth now also includes a first-class mechanical next-action layer.
+The host records:
+
+- normalized failure class
+- recommended next action
+- recommended next step
+
+from trapped evidence, instead of leaving "what to do next" scattered across ad
+hoc fallback wording.
+
+This is now present across:
+
+- build fallback and build verification flows
+- task-attempt vault and triangulation findings
+- patch preflight skip and substrate-attempt flows
+- patch postcheck receipts
+- retry-search ladder proof receipts
+
 ## Workspace Map
 
 The workspace root is defined in [Cargo.toml](/C:/Users/User/Desktop/github_portal/chatty-factory/Cargo.toml:1).
@@ -65,6 +94,7 @@ It is persisted under `runtime/` as host-owned receipts and summaries.
 Important runtime families include:
 
 - `build_plans/`
+- `build_intent_freezes/`
 - `build_plan_reviews/`
 - `build_execution_work_orders/`
 - `plan_tasks/`
@@ -75,6 +105,8 @@ Important runtime families include:
 - `constraint_promotion_candidates/`
 - `retry_search_proofs/`
 - `build_verification_receipts/`
+- `fallback_build_specs/`
+- `fallback_plan_receipts/`
 - `patch_diagnoses/`
 - `patch_intent_freezes/`
 - `patch_receipts/`
@@ -89,16 +121,18 @@ The current build side is roughly:
 1. request normalization and route/starter choice
 2. if there is no exact family match, the host may still select a nearest honest
    starter substrate and continue as a scaffold-first attempt
-3. frozen build plan artifact
-4. plan self-review and constraint review
-5. build execution work order
-6. frozen task graph
-7. task execution across:
+3. frozen build intent
+4. frozen build plan artifact
+5. plan self-review and constraint review
+6. build execution work order
+7. frozen task graph
+8. task execution across:
    - host-sync
    - host-mechanical
    - model-authored microtasks
-8. verification and acceptance receipts
-9. decomposition or triangulation if work still fails narrowly
+9. verification and acceptance receipts
+10. normalized failure classification and host-owned next-action selection
+11. decomposition or triangulation if work still fails narrowly
 
 The current patch side is roughly:
 
@@ -109,6 +143,7 @@ The current patch side is roughly:
    may continue as a substrate-first patch attempt under bounded soft review
 5. bounded patch execution
 6. postcheck and patch receipt classification
+7. normalized failure classification and host-owned next-action selection
 
 The exact continuation policy is documented in
 [Bounded Soft-Review Continuation](./BOUNDED_SOFT_REVIEW_CONTINUATION.md).
@@ -125,6 +160,7 @@ Instead it is moving toward:
 - model ladder escalation when one model posture is exhausted
 - decomposition when a task is still too broad
 - triangulation when repeated failures need narrow classification
+- host-owned mechanical next-action selection keyed from normalized failure class
 
 This is visible in:
 
@@ -141,15 +177,17 @@ The intended chain is:
 
 1. failure enters a provisional vault
 2. alternate methods or decomposed variants are tried
-3. evidence is grouped into triangulation sessions
-4. only repeated convergent floor-level evidence becomes a promotion candidate
-5. only then does something approach the real constraint shelf
+3. the host selects the next action mechanically from normalized failure class
+4. evidence is grouped into triangulation sessions
+5. only repeated convergent floor-level evidence becomes a promotion candidate
+6. only then does something approach the real constraint shelf
 
 The key distinction is:
 
 - constraint principles are generic
 - failure classes are generic
 - decomposition grammars are reusable
+- next-action routing is host-owned and mechanical
 - durable negative constraints should be narrow and triangulated
 
 See also:
@@ -173,6 +211,12 @@ The retry-search ladder proof additionally records:
 - expected outer timeout ceiling
 - final outcome
 - internal timeout evidence
+- normalized failure class
+- recommended next action
+- recommended next step
+
+A concrete repeatable example is documented in
+[Qwen3-8B Retry-Search Hostile Proof](./QWEN3_8B_RETRY_SEARCH_HOSTILE_PROOF.md).
 
 That means shell timeout alone is not the authoritative proof result.
 The receipt is.
@@ -232,6 +276,9 @@ Treat these as the main current references:
 
 - [README.md](/C:/Users/User/Desktop/github_portal/chatty-factory/README.md)
 - [USER_MANUAL.md](/C:/Users/User/Desktop/github_portal/chatty-factory/USER_MANUAL.md)
+- [Negative Constraints Engine Parts List](/C:/Users/User/Desktop/github_portal/chatty-factory/docs/NEGATIVE_CONSTRAINTS_ENGINE_PARTS_LIST.md)
+- [Negative Constraints Engine Gap Audit](/C:/Users/User/Desktop/github_portal/chatty-factory/docs/NEGATIVE_CONSTRAINTS_ENGINE_GAP_AUDIT.md)
+- [Negative Constraints Engine Implementation Sequence](/C:/Users/User/Desktop/github_portal/chatty-factory/docs/NEGATIVE_CONSTRAINTS_ENGINE_IMPLEMENTATION_SEQUENCE.md)
 - [Contract Inventory](/C:/Users/User/Desktop/github_portal/chatty-factory/docs/CONTRACT_INVENTORY.md)
 - [UI Module Structure](/C:/Users/User/Desktop/github_portal/chatty-factory/docs/UI_MODULE_STRUCTURE.md)
 - this document

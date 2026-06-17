@@ -324,6 +324,12 @@ struct RetrySearchProofReceiptView {
     #[serde(default)]
     internal_timeout_observed: bool,
     #[serde(default)]
+    normalized_failure_class: String,
+    #[serde(default)]
+    recommended_next_action: String,
+    #[serde(default)]
+    recommended_next_step: String,
+    #[serde(default)]
     notes: Vec<String>,
     created_at: Option<String>,
 }
@@ -426,6 +432,8 @@ struct ProjectPatchReadinessReceiptView {
 struct BuildVerificationReceiptView {
     review_subject: String,
     failure_class: String,
+    #[serde(default)]
+    normalized_failure_class: String,
     failure_mode: String,
     suggested_family_id: Option<String>,
     suggested_tool_kind: Option<String>,
@@ -909,6 +917,9 @@ struct UiExecutionResult {
     kind: String,
     request_id: String,
     project_name: String,
+    build_intent_freeze_path: Option<String>,
+    outcome_class: Option<String>,
+    outcome_notes: Vec<String>,
     starter_override_id: Option<String>,
     starter_override_summary: Option<String>,
     recommended_starter_id: Option<String>,
@@ -1059,6 +1070,8 @@ fn default_build_starter_override_id() -> String {
 struct UiFallbackResult {
     request_id: String,
     mode: Option<String>,
+    outcome_class: Option<String>,
+    outcome_notes: Vec<String>,
     question: String,
     interpreted_goal: String,
     reasons: Vec<String>,
@@ -1074,6 +1087,7 @@ struct UiFallbackResult {
     suggested_artifacts: Vec<String>,
     acceptance_targets: Vec<String>,
     implementation_notes: Vec<String>,
+    recommended_next_action: Option<String>,
     recommended_next_step: String,
     pending_extension_ids: Vec<String>,
     pending_extension_scaffold_roots: Vec<String>,
@@ -4589,6 +4603,12 @@ impl App for ChattyFactoryUiApp {
                     if let Some(status) = &result.acceptance_status {
                         ui.label(format!("Acceptance: {status}"));
                     }
+                    if let Some(outcome_class) = &result.outcome_class {
+                        ui.label(format!("Outcome: {outcome_class}"));
+                    }
+                    if let Some(path) = &result.build_intent_freeze_path {
+                        ui.label(format!("Build freeze: {path}"));
+                    }
                     ui.label(format!("Request id: {}", result.request_id));
                     ui.label(format!("Route note count: {}", result.route_notes.len()));
                     ui.label(format!(
@@ -4618,6 +4638,12 @@ impl App for ChattyFactoryUiApp {
                             if !result.route_notes.is_empty() {
                                 ui.label("Route notes");
                                 for note in result.route_notes.iter().take(4) {
+                                    ui.label(format!("- {note}"));
+                                }
+                            }
+                            if !result.outcome_notes.is_empty() {
+                                ui.label("Outcome notes");
+                                for note in result.outcome_notes.iter().take(4) {
                                     ui.label(format!("- {note}"));
                                 }
                             }
@@ -4693,12 +4719,18 @@ impl App for ChattyFactoryUiApp {
                     if let Some(mode) = &fallback.mode {
                         ui.label(format!("Mode: {mode}"));
                     }
+                    if let Some(outcome_class) = &fallback.outcome_class {
+                        ui.label(format!("Outcome: {outcome_class}"));
+                    }
                     ui.label(format!("Goal: {}", fallback.interpreted_goal));
                     ui.label(format!("Question: {}", fallback.question));
                     ui.label(format!(
                         "Extension target: {}",
                         fallback.suggested_extension_kind
                     ));
+                    if let Some(next_action) = &fallback.recommended_next_action {
+                        ui.label(format!("Next action: {next_action}"));
+                    }
                     ui.label(format!(
                         "Next step: {}",
                         fallback.recommended_next_step
@@ -4752,6 +4784,12 @@ impl App for ChattyFactoryUiApp {
                                 ui.label("Reasons");
                                 for reason in fallback.reasons.iter().take(5) {
                                     ui.label(format!("- {reason}"));
+                                }
+                            }
+                            if !fallback.outcome_notes.is_empty() {
+                                ui.label("Outcome notes");
+                                for note in fallback.outcome_notes.iter().take(4) {
+                                    ui.label(format!("- {note}"));
                                 }
                             }
                             if !fallback.candidate_family_ids.is_empty() {
@@ -4867,8 +4905,13 @@ impl App for ChattyFactoryUiApp {
                         if let Some(verification) = load_build_verification_receipt(path) {
                             ui.label("Build verification");
                             ui.label(format!(
-                                "- subject: {} [{} | {}]",
+                                "- subject: {} [{} | {} | {}]",
                                 verification.review_subject,
+                                if verification.normalized_failure_class.is_empty() {
+                                    "unclassified".to_string()
+                                } else {
+                                    verification.normalized_failure_class.clone()
+                                },
                                 verification.failure_class,
                                 verification.failure_mode
                             ));
@@ -5391,8 +5434,15 @@ impl App for ChattyFactoryUiApp {
                     for (path, receipt) in recent_matches.into_iter().take(6) {
                         ui.separator();
                         ui.label(format!(
-                            "{} [{} | {}]",
-                            receipt.review_subject, receipt.failure_class, receipt.failure_mode
+                            "{} [{} | {} | {}]",
+                            receipt.review_subject,
+                            if receipt.normalized_failure_class.is_empty() {
+                                "unclassified".to_string()
+                            } else {
+                                receipt.normalized_failure_class.clone()
+                            },
+                            receipt.failure_class,
+                            receipt.failure_mode
                         ));
                         for constraint_id in receipt.matched_approved_constraint_ids.iter().take(3)
                         {
@@ -6171,6 +6221,9 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
                 kind: execution.kind,
                 request_id: execution.request_id,
                 project_name: execution.project_name,
+                build_intent_freeze_path: execution.build_intent_freeze_path,
+                outcome_class: execution.outcome_class,
+                outcome_notes: execution.outcome_notes,
                 starter_override_id: execution.starter_override_id,
                 starter_override_summary: execution.starter_override_summary,
                 recommended_starter_id: execution.recommended_starter_id,
@@ -6203,6 +6256,8 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
         fallback_result: result.fallback_result.map(|fallback| UiFallbackResult {
             request_id: fallback.request_id,
             mode: fallback.mode,
+            outcome_class: fallback.outcome_class,
+            outcome_notes: fallback.outcome_notes,
             question: fallback.question,
             interpreted_goal: fallback.interpreted_goal,
             reasons: fallback.reasons,
@@ -6218,6 +6273,7 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
             suggested_artifacts: fallback.suggested_artifacts,
             acceptance_targets: fallback.acceptance_targets,
             implementation_notes: fallback.implementation_notes,
+            recommended_next_action: fallback.recommended_next_action,
             recommended_next_step: fallback.recommended_next_step,
             pending_extension_ids: fallback.pending_extension_ids,
             pending_extension_scaffold_roots: fallback.pending_extension_scaffold_roots,

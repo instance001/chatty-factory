@@ -368,6 +368,24 @@ impl ChattyFactoryUiApp {
                     receipt.model_candidate_count,
                     receipt.retry_posture_count
                 ));
+                if !receipt.normalized_failure_class.is_empty() {
+                    ui.label(format!(
+                        "Latest ladder failure class: {}",
+                        receipt.normalized_failure_class
+                    ));
+                }
+                if !receipt.recommended_next_action.is_empty() {
+                    ui.label(format!(
+                        "Latest ladder next action: {}",
+                        receipt.recommended_next_action
+                    ));
+                }
+                if !receipt.recommended_next_step.is_empty() {
+                    ui.label(format!(
+                        "Latest ladder next step: {}",
+                        receipt.recommended_next_step
+                    ));
+                }
                 ui.label(format!(
                     "Latest ladder receipt: {}",
                     short_path(receipt_path.to_string_lossy().as_ref())

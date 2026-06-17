@@ -61,6 +61,12 @@ struct PatchDiagnosisPostcheckReceiptView {
     out_of_contract_modified_files: Vec<String>,
     #[serde(default)]
     declared_surface_groups: Vec<String>,
+    #[serde(default)]
+    normalized_failure_class: String,
+    #[serde(default)]
+    recommended_next_action: String,
+    #[serde(default)]
+    recommended_next_step: String,
 }
 
 #[derive(Debug, Clone)]
@@ -504,6 +510,18 @@ impl ChattyFactoryUiApp {
             }
             if let Some(summary) = &postcheck.contract_confidence_summary {
                 ui.label(format!("Confidence: {summary}"));
+            }
+            if !postcheck.normalized_failure_class.is_empty() {
+                ui.label(format!(
+                    "Failure class: {}",
+                    postcheck.normalized_failure_class
+                ));
+            }
+            if !postcheck.recommended_next_action.is_empty() {
+                ui.label(format!("Next action: {}", postcheck.recommended_next_action));
+            }
+            if !postcheck.recommended_next_step.is_empty() {
+                ui.label(format!("Next step: {}", postcheck.recommended_next_step));
             }
             if !postcheck.declared_surface_groups.is_empty() {
                 ui.label(format!(

@@ -97,9 +97,12 @@ Owns the proof-run control surface:
 - template / bundle contract reveal actions
 - shared request input
 - run-proof action
+- retry-search ladder proof launch action
 - proof history filter controls
 
 This is the current home for proof-launch setup and template-facing proof control flow.
+It is also where repeatable hostile ladder proofs are launched when the goal is
+to validate receipt-owned retry-search behavior rather than a happy-path proof result.
 
 ### `proof_history_panel.rs`
 
@@ -126,6 +129,23 @@ Owns the general request/build/patch control surface:
 - current target project summary
 
 This is the current home for the non-proof request/action work area.
+
+The request/result surface is also where the operator now sees host-owned
+fallback guidance such as:
+
+- outcome class
+- recommended next action
+- recommended next step
+- build verification linkage
+
+That presentation is still rooted in `main.rs`, but it is now part of the
+intentional receipt-first operator surface rather than incidental status text.
+
+The proof and patch evidence surfaces now follow the same pattern too:
+
+- the proof runtime panel shows retry-search ladder next action and next step
+- the patch X-ray panel shows postcheck failure class, next action, and next
+  step when present
 
 ## Extraction Rule
 
