@@ -1098,6 +1098,12 @@ pub struct PatchPlanReview {
     #[serde(default)]
     pub reviewed_replacement_bundle_status: Option<String>,
     #[serde(default)]
+    pub normalized_failure_class: String,
+    #[serde(default)]
+    pub recommended_next_action: String,
+    #[serde(default)]
+    pub recommended_next_step: String,
+    #[serde(default)]
     pub findings: Vec<String>,
     #[serde(default)]
     pub blocked_reasons: Vec<String>,
@@ -1165,6 +1171,12 @@ pub struct ConstraintReviewReceipt {
     pub blocked_methods: Vec<String>,
     #[serde(default)]
     pub recommended_replacements: Vec<String>,
+    #[serde(default)]
+    pub normalized_failure_class: String,
+    #[serde(default)]
+    pub recommended_next_action: String,
+    #[serde(default)]
+    pub recommended_next_step: String,
     pub decision: String,
     #[serde(default)]
     pub findings: Vec<String>,
@@ -1255,6 +1267,12 @@ pub struct ConstraintApprovalReceipt {
     pub shelf_path: String,
     pub proposal_path: String,
     pub rationale: Vec<String>,
+    #[serde(default)]
+    pub normalized_failure_class: String,
+    #[serde(default)]
+    pub recommended_next_action: String,
+    #[serde(default)]
+    pub recommended_next_step: String,
     pub created_at: Option<String>,
 }
 
@@ -1269,6 +1287,12 @@ pub struct ConstraintShelfMutationReceipt {
     pub proposal_source_id: Option<String>,
     pub shelf_path: String,
     pub status: String,
+    #[serde(default)]
+    pub normalized_failure_class: String,
+    #[serde(default)]
+    pub recommended_next_action: String,
+    #[serde(default)]
+    pub recommended_next_step: String,
     pub created_at: Option<String>,
 }
 
@@ -1779,6 +1803,12 @@ pub struct PrimitiveProofHarnessReceipt {
     pub right_primitive_execution_plan_path: Option<String>,
     pub comparison_receipt_path: String,
     pub equivalent_capability_fulfillment: bool,
+    #[serde(default)]
+    pub normalized_failure_class: String,
+    #[serde(default)]
+    pub recommended_next_action: String,
+    #[serde(default)]
+    pub recommended_next_step: String,
     #[serde(default)]
     pub notes: Vec<String>,
     pub created_at: Option<String>,

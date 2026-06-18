@@ -67,6 +67,24 @@ impl ChattyFactoryUiApp {
                 "Projects: {} vs {}",
                 latest_receipt.left_project_name, latest_receipt.right_project_name
             ));
+            if !latest_receipt.normalized_failure_class.is_empty() {
+                ui.label(format!(
+                    "Failure class: {}",
+                    latest_receipt.normalized_failure_class
+                ));
+            }
+            if !latest_receipt.recommended_next_action.is_empty() {
+                ui.label(format!(
+                    "Next action: {}",
+                    latest_receipt.recommended_next_action
+                ));
+            }
+            if !latest_receipt.recommended_next_step.is_empty() {
+                ui.label(format!(
+                    "Next step: {}",
+                    latest_receipt.recommended_next_step
+                ));
+            }
 
             if let Some(last_touched) =
                 latest_proof_last_touched(&self.extension_activity, &latest_receipt.receipt_id)

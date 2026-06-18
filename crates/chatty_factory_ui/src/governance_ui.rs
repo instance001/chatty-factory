@@ -105,6 +105,9 @@ pub fn render_governance_detail_block(
     baseline_status: Option<&str>,
     drift_notes: &[String],
     baseline_notes: &[String],
+    normalized_failure_class: Option<&str>,
+    recommended_next_action: Option<&str>,
+    recommended_next_step: Option<&str>,
 ) {
     if let Some(summary) = artifact_summary {
         ui.label(summary);
@@ -120,5 +123,14 @@ pub fn render_governance_detail_block(
     }
     for note in baseline_notes {
         ui.label(governance_baseline_note_summary(label, note));
+    }
+    if let Some(failure_class) = normalized_failure_class.filter(|value| !value.trim().is_empty()) {
+        ui.label(format!("{label} failure class: {failure_class}"));
+    }
+    if let Some(action) = recommended_next_action.filter(|value| !value.trim().is_empty()) {
+        ui.label(format!("{label} next action: {action}"));
+    }
+    if let Some(step) = recommended_next_step.filter(|value| !value.trim().is_empty()) {
+        ui.label(format!("{label} next step: {step}"));
     }
 }

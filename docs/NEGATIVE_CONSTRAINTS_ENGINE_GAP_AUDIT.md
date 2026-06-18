@@ -566,102 +566,25 @@ host-owned selector is now visibly real in:
 - build verification
 - task-attempt vaulting
 - triangulation findings
+- patch plan review and patch constraint review
 - patch preflight skip/substrate flows
 - patch postcheck
+- declarative paired-proof receipts
 - retry-search ladder proof receipts
+- extension governance refresh/drift receipts for proof/composition/patch/helper/bridge
+- constraint approval receipts and shelf mutation receipts
 
 That is strong progress, but some governed surfaces still carry bespoke
 decision wording, partial evidence mapping, or receipt shapes that are not yet
 fully normalized.
 
-### 1. Patch plan review and patch constraint review
-
-Current state:
-
-- these flows still lean on:
-  - `blocked_reasons`
-  - `recommended_replacement_patch_kinds`
-  - `replacement_guidance`
-  - violation-specific prose
-
-Why this matters:
-
-- they do govern the next move
-- but they do not yet emit the same explicit:
-  - `normalized_failure_class`
-  - `recommended_next_action`
-  - `recommended_next_step`
-
-Result:
-
-- patch preflight and patch postcheck are now selector-aware
-- but the patch planning/governance layer feeding them is still only partially
-  normalized
-
-### 2. Declarative paired-proof flows
-
-Current state:
-
-- cross-family proof runs already emit:
-  - outcome class
-  - comparison receipts
-  - lineage/drift evidence
-- but they do not yet expose a generic next-action routing layer the way the
-  retry-search ladder proof now does
-
-Why this matters:
-
-- paired proof equivalence failures and drift findings are still interpreted
-  more as proof-specific result states than as generic governed failures with a
-  reusable next move
-
-### 3. Extension/governance registries
-
-Current state:
-
-- proof/composition/patch/helper/bridge governance refresh flows emit:
-  - refresh status
-  - drift status
-  - change-since-last-live or change-since-last-pass notes
-  - blockers and archived reasons
-
-Why this matters:
-
-- these are governed surfaces with real go/no-go implications
-- but they are still largely status/note driven rather than selector driven
-
-Result:
-
-- the operator can inspect them
-- the host is not yet routing from those findings through the same universal
-  failure-class-to-next-action mechanism
-
-### 4. Constraint approval and shelf lifecycle
-
-Current state:
-
-- proposed vs approved constraint separation is real
-- mutation history is real
-- approval origin is tracked
-
-What is still missing:
-
-- a selector-aware bridge from:
-  - converged failure evidence
-  - promotion candidate posture
-  - shelf lifecycle action
-
-Why this matters:
-
-- the factory can now trap and narrow more failure evidence than before
-- but promotion and archival still behave more like governance workflow than a
-  unified continuation engine
-
-### 5. Outcome-class versus next-action reuse
+### 1. Outcome-class versus next-action reuse
 
 Current state:
 
 - `outcome_class` is now useful across execution and fallback views
+- execution results now carry explicit host-owned `recommended_next_action`
+  and `recommended_next_step`, not just fallback receipts
 - `recommended_next_action` is now useful across several receipt types
 
 What is still missing:
@@ -671,10 +594,30 @@ What is still missing:
   - normalized failure class is the routing key
   - next action is the continuation choice
 
+Working rule now frozen:
+
+- operator-facing end-state surfaces get `outcome_class`
+  - execution results
+  - fallback results
+- governed evidence receipts get `normalized_failure_class` when the host is
+  classifying why a bounded attempt, review, or governance posture failed
+- any receipt that the host expects operators or later orchestration to resume
+  from should carry `recommended_next_action` and `recommended_next_step`
+- simple artifact receipts such as `BuildReceipt`, `PatchReceipt`, and
+  `HelperRuntimeReceipt` should stay narrow and not grow outcome/continuation
+  fields unless they become routing surfaces
+
+Detailed family-by-family classification now lives in
+[Receipt Field Ownership Audit](./RECEIPT_FIELD_OWNERSHIP_AUDIT.md).
+
+The forward-looking checklist for new receipt families lives in
+[Receipt Design Gate](./RECEIPT_DESIGN_GATE.md).
+
 Why this matters:
 
-- some flows are now excellent at this split
-- others still blur "what happened" and "what should happen next"
+- the split is now real in the main execution and fallback surfaces
+- but some secondary receipt families still need a firm rule about whether they
+  should carry outcome summary, continuation posture, or both
 
 ## Practical Meaning Of The Remaining Gap
 
@@ -693,10 +636,8 @@ It is:
 
 1. finish normalizing the remaining governed surfaces onto the same receipt
    pattern
-2. decide which receipt families truly need:
-   - normalized failure class
-   - recommended next action
-   - recommended next step
+2. apply the frozen field-ownership rule consistently instead of letting new
+   receipt families accrete both outcome and continuation by default
 3. keep outcome summary separate from continuation routing
 
 ## Short Conclusion

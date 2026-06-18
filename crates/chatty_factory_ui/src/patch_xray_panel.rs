@@ -17,6 +17,12 @@ struct PatchPlanReviewReceiptView {
     #[serde(default)]
     reviewed_replacement_bundle_status: Option<String>,
     #[serde(default)]
+    normalized_failure_class: String,
+    #[serde(default)]
+    recommended_next_action: String,
+    #[serde(default)]
+    recommended_next_step: String,
+    #[serde(default)]
     reviewed_target_files: Vec<String>,
     #[serde(default)]
     dropped_target_files: Vec<String>,
@@ -30,6 +36,12 @@ struct PatchPlanReviewReceiptView {
 struct PatchConstraintReviewReceiptView {
     review_subject: String,
     decision: String,
+    #[serde(default)]
+    normalized_failure_class: String,
+    #[serde(default)]
+    recommended_next_action: String,
+    #[serde(default)]
+    recommended_next_step: String,
     #[serde(default)]
     blocked_methods: Vec<String>,
     #[serde(default)]
@@ -263,6 +275,21 @@ impl ChattyFactoryUiApp {
         ui.label(egui::RichText::new("Patch X-ray").strong());
         if let Some(review) = &review {
             ui.label(format!("Plan review: {}", review.decision));
+            if !review.normalized_failure_class.is_empty() {
+                ui.label(format!(
+                    "Plan failure class: {}",
+                    review.normalized_failure_class
+                ));
+            }
+            if !review.recommended_next_action.is_empty() {
+                ui.label(format!(
+                    "Plan next action: {}",
+                    review.recommended_next_action
+                ));
+            }
+            if !review.recommended_next_step.is_empty() {
+                ui.label(format!("Plan next step: {}", review.recommended_next_step));
+            }
             if let (Some(original), Some(reviewed)) = (
                 review.original_intended_patch_kind.as_deref(),
                 review.reviewed_intended_patch_kind.as_deref(),
@@ -330,6 +357,24 @@ impl ChattyFactoryUiApp {
                 "Constraint subject: {}",
                 constraint_review.review_subject
             ));
+            if !constraint_review.normalized_failure_class.is_empty() {
+                ui.label(format!(
+                    "Constraint failure class: {}",
+                    constraint_review.normalized_failure_class
+                ));
+            }
+            if !constraint_review.recommended_next_action.is_empty() {
+                ui.label(format!(
+                    "Constraint next action: {}",
+                    constraint_review.recommended_next_action
+                ));
+            }
+            if !constraint_review.recommended_next_step.is_empty() {
+                ui.label(format!(
+                    "Constraint next step: {}",
+                    constraint_review.recommended_next_step
+                ));
+            }
             if !constraint_review.blocked_methods.is_empty() {
                 ui.label(format!(
                     "Blocked methods: {}",

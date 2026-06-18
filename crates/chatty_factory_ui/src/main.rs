@@ -503,6 +503,12 @@ struct ConstraintApprovalReceiptView {
     proposal_origin: String,
     #[serde(default)]
     proposal_source_id: String,
+    #[serde(default)]
+    normalized_failure_class: String,
+    #[serde(default)]
+    recommended_next_action: String,
+    #[serde(default)]
+    recommended_next_step: String,
     created_at: Option<String>,
 }
 
@@ -516,6 +522,12 @@ struct ConstraintShelfMutationReceiptView {
     #[serde(default)]
     proposal_source_id: Option<String>,
     status: String,
+    #[serde(default)]
+    normalized_failure_class: String,
+    #[serde(default)]
+    recommended_next_action: String,
+    #[serde(default)]
+    recommended_next_step: String,
     created_at: Option<String>,
 }
 
@@ -920,6 +932,8 @@ struct UiExecutionResult {
     build_intent_freeze_path: Option<String>,
     outcome_class: Option<String>,
     outcome_notes: Vec<String>,
+    recommended_next_action: Option<String>,
+    recommended_next_step: String,
     starter_override_id: Option<String>,
     starter_override_summary: Option<String>,
     recommended_starter_id: Option<String>,
@@ -971,6 +985,13 @@ struct CrossFamilyPairedProofReceiptSummary {
     right_primitive_execution_plan_path: Option<String>,
     comparison_receipt_path: String,
     equivalent_capability_fulfillment: bool,
+    #[serde(default)]
+    normalized_failure_class: String,
+    #[serde(default)]
+    recommended_next_action: String,
+    #[serde(default)]
+    recommended_next_step: String,
+    #[serde(default)]
     notes: Vec<String>,
     created_at: Option<String>,
 }
@@ -4606,6 +4627,12 @@ impl App for ChattyFactoryUiApp {
                     if let Some(outcome_class) = &result.outcome_class {
                         ui.label(format!("Outcome: {outcome_class}"));
                     }
+                    if let Some(next_action) = &result.recommended_next_action {
+                        ui.label(format!("Next action: {next_action}"));
+                    }
+                    if !result.recommended_next_step.is_empty() {
+                        ui.label(format!("Next step: {}", result.recommended_next_step));
+                    }
                     if let Some(path) = &result.build_intent_freeze_path {
                         ui.label(format!("Build freeze: {path}"));
                     }
@@ -5423,6 +5450,24 @@ impl App for ChattyFactoryUiApp {
                         if !approval.proposal_source_id.is_empty() {
                             ui.label(format!("Origin source id: {}", approval.proposal_source_id));
                         }
+                        if !approval.normalized_failure_class.is_empty() {
+                            ui.label(format!(
+                                "Approval failure class: {}",
+                                approval.normalized_failure_class
+                            ));
+                        }
+                        if !approval.recommended_next_action.is_empty() {
+                            ui.label(format!(
+                                "Approval next action: {}",
+                                approval.recommended_next_action
+                            ));
+                        }
+                        if !approval.recommended_next_step.is_empty() {
+                            ui.label(format!(
+                                "Approval next step: {}",
+                                approval.recommended_next_step
+                            ));
+                        }
                     }
                     if let Some(guidance) = constraint.replacement_guidance.as_deref() {
                         ui.label(format!("Guidance: {guidance}"));
@@ -5488,6 +5533,24 @@ impl App for ChattyFactoryUiApp {
                             ui.label(format!("Source id: {source_id}"));
                         }
                         ui.label(format!("Status: {}", mutation.status));
+                        if !mutation.normalized_failure_class.is_empty() {
+                            ui.label(format!(
+                                "Failure class: {}",
+                                mutation.normalized_failure_class
+                            ));
+                        }
+                        if !mutation.recommended_next_action.is_empty() {
+                            ui.label(format!(
+                                "Next action: {}",
+                                mutation.recommended_next_action
+                            ));
+                        }
+                        if !mutation.recommended_next_step.is_empty() {
+                            ui.label(format!(
+                                "Next step: {}",
+                                mutation.recommended_next_step
+                            ));
+                        }
                         if let Some(created_at) = mutation.created_at.as_deref() {
                             ui.label(format!("When: {created_at}"));
                         }
@@ -6224,6 +6287,8 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
                 build_intent_freeze_path: execution.build_intent_freeze_path,
                 outcome_class: execution.outcome_class,
                 outcome_notes: execution.outcome_notes,
+                recommended_next_action: execution.recommended_next_action,
+                recommended_next_step: execution.recommended_next_step,
                 starter_override_id: execution.starter_override_id,
                 starter_override_summary: execution.starter_override_summary,
                 recommended_starter_id: execution.recommended_starter_id,

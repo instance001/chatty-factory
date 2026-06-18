@@ -27,6 +27,27 @@ impl ChattyFactoryUiApp {
             if let Some(change_status) = entry.proof_change_since_last_pass_status.as_deref() {
                 ui.label(format!("Change since last pass: {change_status}"));
             }
+            if let Some(failure_class) = entry
+                .proof_normalized_failure_class
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                ui.label(format!("Proof failure class: {failure_class}"));
+            }
+            if let Some(action) = entry
+                .proof_recommended_next_action
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                ui.label(format!("Proof next action: {action}"));
+            }
+            if let Some(step) = entry
+                .proof_recommended_next_step
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                ui.label(format!("Proof next step: {step}"));
+            }
             ui.label(format!(
                 "Scaffolded from: {}",
                 if entry.source_stub_path.trim().is_empty() {
@@ -115,6 +136,9 @@ impl ChattyFactoryUiApp {
                 entry.composition_change_since_last_live_status.as_deref(),
                 &entry.composition_drift_notes,
                 &entry.composition_change_since_last_live_notes,
+                entry.composition_normalized_failure_class.as_deref(),
+                entry.composition_recommended_next_action.as_deref(),
+                entry.composition_recommended_next_step.as_deref(),
             );
             if let Some(path) = entry.composition_lineage_receipt_path.as_deref() {
                 ui.label(format!("Composition receipt: {path}"));
@@ -171,6 +195,9 @@ impl ChattyFactoryUiApp {
                 entry.patch_change_since_last_live_status.as_deref(),
                 &entry.patch_drift_notes,
                 &entry.patch_change_since_last_live_notes,
+                entry.patch_normalized_failure_class.as_deref(),
+                entry.patch_recommended_next_action.as_deref(),
+                entry.patch_recommended_next_step.as_deref(),
             );
             if let Some(path) = entry.patch_lineage_receipt_path.as_deref() {
                 ui.label(format!("Patch receipt: {path}"));
@@ -214,6 +241,9 @@ impl ChattyFactoryUiApp {
                 entry.helper_change_since_last_live_status.as_deref(),
                 &entry.helper_drift_notes,
                 &entry.helper_change_since_last_live_notes,
+                entry.helper_normalized_failure_class.as_deref(),
+                entry.helper_recommended_next_action.as_deref(),
+                entry.helper_recommended_next_step.as_deref(),
             );
             if let Some(path) = entry.helper_lineage_receipt_path.as_deref() {
                 ui.label(format!("Helper receipt: {path}"));
@@ -239,6 +269,9 @@ impl ChattyFactoryUiApp {
                 entry.bridge_change_since_last_live_status.as_deref(),
                 &entry.bridge_drift_notes,
                 &entry.bridge_change_since_last_live_notes,
+                entry.bridge_normalized_failure_class.as_deref(),
+                entry.bridge_recommended_next_action.as_deref(),
+                entry.bridge_recommended_next_step.as_deref(),
             );
             if let Some(path) = entry.bridge_lineage_receipt_path.as_deref() {
                 ui.label(format!("Bridge receipt: {path}"));

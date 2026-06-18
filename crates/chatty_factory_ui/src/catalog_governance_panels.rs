@@ -185,6 +185,9 @@ impl ChattyFactoryUiApp {
                     Some(&receipt.change_since_last_live_status),
                     &receipt.drift_notes,
                     &receipt.change_since_last_live_notes,
+                    None,
+                    None,
+                    None,
                 );
                 ui.label(format!("Manifest: {}", short_path(&receipt.manifest_path)));
                 ui.horizontal_wrapped(|ui| {
@@ -365,6 +368,9 @@ impl ChattyFactoryUiApp {
                     Some(&receipt.change_since_last_live_status),
                     &receipt.drift_notes,
                     &receipt.change_since_last_live_notes,
+                    None,
+                    None,
+                    None,
                 );
                 for path in &receipt.artifact_paths {
                     ui.label(format!("- {}", short_path(path)));

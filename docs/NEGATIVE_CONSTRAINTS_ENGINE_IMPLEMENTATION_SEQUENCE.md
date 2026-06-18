@@ -180,18 +180,17 @@ Coverage note:
 
 - build fallback and verification
 - task-attempt vault and triangulation
+- patch plan review and patch constraint review
 - patch preflight/postcheck
+- declarative paired-proof result receipts
 - retry-search ladder proof
+- extension governance refresh/drift receipts for proof/composition/patch/helper/bridge
+- constraint approval receipts and shelf mutation receipts
 
 can now be treated as the first real selector-covered surfaces.
 
 The next wave after Phase 4 is not inventing the selector again.
 It is extending the same selector coverage into:
-
-- patch plan review and patch constraint review
-- declarative paired-proof result flows
-- extension governance refresh/drift surfaces
-- constraint approval and shelf lifecycle actions
 
 ## Phase 5. Generalize Decomposition Grammars
 

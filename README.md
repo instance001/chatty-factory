@@ -349,6 +349,9 @@ Current architectural posture:
   host can execute safely, not the size of the positive family catalog
 - the next execution pivot is toward atomized microtasks, so unsupported work
   becomes small reviewed tasks instead of giant all-or-nothing generations
+- the shared selector now reaches extension governance too:
+  - proof/composition/patch/helper/bridge refresh receipts now persist
+    normalized failure class plus host-chosen next action and next step
 - adaptive decomposition is now real for at least one proven task family:
   - broad `toolbar_ui_block`
   - to `toolbar_label_sentence`

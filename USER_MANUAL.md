@@ -158,6 +158,20 @@ The UI and CLI surfaces now also reflect build-task governance more clearly:
   - factory-owned ladder ceiling
   - configured shell timeout buffer
   - recommended shell timeout for operators
+- execution result posture:
+  - execution views now separate outcome class from the host-chosen next action
+    and next step
+- extension governance selector posture:
+  - proof/composition/patch/helper/bridge entries now surface normalized
+    failure class, recommended next action, and recommended next step
+
+Rule of thumb:
+
+- `Outcome` tells you what happened.
+- `Next action` and `Next step` tell you what the host thinks should happen
+  next.
+- Many lower-level receipts only carry the continuation posture because they are
+  evidence surfaces, not final operator summaries.
 
 ## 4. What ChattyFactory Can Do Today
 

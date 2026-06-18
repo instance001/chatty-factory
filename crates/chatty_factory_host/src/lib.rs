@@ -90,6 +90,9 @@ struct ProofLineageReceipt {
     pub bundle_content_hash: String,
     pub drift_status: String,
     pub drift_notes: Vec<String>,
+    pub normalized_failure_class: String,
+    pub recommended_next_action: String,
+    pub recommended_next_step: String,
     pub latest_paired_proof_receipt_id: Option<String>,
     pub latest_equivalent_capability_fulfillment: Option<bool>,
     pub last_passing_paired_proof_receipt_id: Option<String>,
@@ -126,6 +129,9 @@ struct CompositionGovernanceReceipt {
     pub drift_notes: Vec<String>,
     pub change_since_last_live_status: String,
     pub change_since_last_live_notes: Vec<String>,
+    pub normalized_failure_class: String,
+    pub recommended_next_action: String,
+    pub recommended_next_step: String,
     pub baseline_artifact_hashes: BTreeMap<String, String>,
     pub created_at: Option<String>,
 }
@@ -156,6 +162,9 @@ struct PatchGovernanceReceipt {
     pub drift_notes: Vec<String>,
     pub change_since_last_live_status: String,
     pub change_since_last_live_notes: Vec<String>,
+    pub normalized_failure_class: String,
+    pub recommended_next_action: String,
+    pub recommended_next_step: String,
     pub baseline_artifact_hashes: BTreeMap<String, String>,
     pub created_at: Option<String>,
 }
@@ -250,6 +259,9 @@ struct HelperGovernanceReceipt {
     pub drift_notes: Vec<String>,
     pub change_since_last_live_status: String,
     pub change_since_last_live_notes: Vec<String>,
+    pub normalized_failure_class: String,
+    pub recommended_next_action: String,
+    pub recommended_next_step: String,
     pub baseline_artifact_hashes: BTreeMap<String, String>,
     pub created_at: Option<String>,
 }
@@ -278,6 +290,9 @@ struct BridgeGovernanceReceipt {
     pub drift_notes: Vec<String>,
     pub change_since_last_live_status: String,
     pub change_since_last_live_notes: Vec<String>,
+    pub normalized_failure_class: String,
+    pub recommended_next_action: String,
+    pub recommended_next_step: String,
     pub baseline_artifact_hashes: BTreeMap<String, String>,
     pub created_at: Option<String>,
 }
@@ -549,6 +564,305 @@ fn normalized_failure_class_for_patch_postcheck(
         String::new()
     } else {
         "verification_failure".into()
+    }
+}
+
+fn normalized_failure_class_for_patch_plan_review(
+    decision: &str,
+    blocked_reasons: &[String],
+) -> String {
+    if decision == "blocked_pending_replan" {
+        if blocked_reasons.iter().any(|reason| {
+            let lower = reason.to_ascii_lowercase();
+            lower.contains("surface contract")
+                || lower.contains("target file")
+                || lower.contains("declared patch surface")
+        }) {
+            "contract_mismatch".into()
+        } else {
+            "route_selection_mismatch".into()
+        }
+    } else if decision == "proceed_with_refined_plan" {
+        "route_selection_mismatch".into()
+    } else {
+        String::new()
+    }
+}
+
+fn patch_plan_review_next_action(
+    decision: &str,
+    normalized_failure_class: &str,
+) -> MechanicalNextAction {
+    match decision {
+        "proceed_with_original_plan" => MechanicalNextAction {
+            action_id: "execute_original_patch_plan".into(),
+            recommended_next_step:
+                "execute the current patch plan as reviewed; no further routing change is required"
+                    .into(),
+            rationale: vec![
+                "patch self-review preserved the original plan without narrowing or redirection".into(),
+            ],
+        },
+        "proceed_with_refined_plan" => MechanicalNextAction {
+            action_id: "execute_refined_patch_plan".into(),
+            recommended_next_step:
+                "execute the refined patch plan that self-review narrowed or redirected"
+                    .into(),
+            rationale: vec![
+                "patch self-review changed the plan shape before execution".into(),
+                "the host should follow the refined reviewed plan rather than the original request wording".into(),
+            ],
+        },
+        _ => select_mechanical_next_action(
+            normalized_failure_class,
+            Some("bundle"),
+            0,
+            false,
+        ),
+    }
+}
+
+fn normalized_failure_class_for_patch_constraint_review(
+    decision: &str,
+    violations: &[ConstraintViolation],
+) -> String {
+    if decision == "block_execution" {
+        if violations.iter().any(|violation| {
+            let lower = violation.reason.to_ascii_lowercase();
+            lower.contains("missing")
+                || lower.contains("anchor")
+                || lower.contains("legacy")
+                || lower.contains("structural")
+        }) {
+            "contract_mismatch".into()
+        } else {
+            "verification_failure".into()
+        }
+    } else if matches!(
+        decision,
+        "allow_composed_replacement_bundle" | "allow_refined_patch_kind"
+    ) {
+        "route_selection_mismatch".into()
+    } else {
+        String::new()
+    }
+}
+
+fn patch_constraint_review_next_action(
+    decision: &str,
+    normalized_failure_class: &str,
+) -> MechanicalNextAction {
+    match decision {
+        "allow_current_plan" => MechanicalNextAction {
+            action_id: "execute_current_patch_plan".into(),
+            recommended_next_step:
+                "execute the current reviewed patch plan; constraint review did not find a forbidden method"
+                    .into(),
+            rationale: vec![
+                "constraint review found no active blocking implementation constraint".into(),
+            ],
+        },
+        "allow_bundle_already_present_skip" => MechanicalNextAction {
+            action_id: "skip_historical_patch_as_already_present".into(),
+            recommended_next_step:
+                "skip the historical patch method because the modern replacement bundle is already present"
+                    .into(),
+            rationale: vec![
+                "constraint review accepted the replacement bundle as already satisfied".into(),
+            ],
+        },
+        "allow_composed_replacement_bundle" => MechanicalNextAction {
+            action_id: "execute_composed_replacement_bundle".into(),
+            recommended_next_step:
+                "execute the modern replacement bundle instead of the blocked historical patch method"
+                    .into(),
+            rationale: vec![
+                "constraint review preserved a composed replacement execution set".into(),
+            ],
+        },
+        "allow_refined_patch_kind" => MechanicalNextAction {
+            action_id: "execute_refined_patch_kind".into(),
+            recommended_next_step:
+                "execute the refined patch kind that survived constraint review instead of the original method"
+                    .into(),
+            rationale: vec![
+                "constraint review rejected the original method but preserved a refined patch kind".into(),
+            ],
+        },
+        _ => select_mechanical_next_action(
+            normalized_failure_class,
+            Some("leaf_semantic_unit"),
+            0,
+            false,
+        ),
+    }
+}
+
+fn paired_proof_next_action(
+    equivalent_capability_fulfillment: bool,
+) -> (String, MechanicalNextAction) {
+    if equivalent_capability_fulfillment {
+        (
+            String::new(),
+            MechanicalNextAction {
+                action_id: "none_proof_equivalence_passed".into(),
+                recommended_next_step:
+                    "paired proof passed; keep the receipt as baseline evidence and continue from the proven equivalent state"
+                        .into(),
+                rationale: vec![
+                    "the paired proof satisfied the required capability bundle across both generated projects".into(),
+                ],
+            },
+        )
+    } else {
+        let normalized_failure_class = "verification_failure".to_string();
+        let next_action = select_mechanical_next_action(
+            &normalized_failure_class,
+            Some("bundle"),
+            0,
+            false,
+        );
+        (normalized_failure_class, next_action)
+    }
+}
+
+fn normalized_failure_class_for_governance_receipt(
+    drift_status: &str,
+    baseline_status: &str,
+    blockers: &[String],
+) -> String {
+    if blockers.iter().any(|blocker| {
+        let lower = blocker.to_ascii_lowercase();
+        lower.contains("missing")
+    }) {
+        return "missing_expected_files".into();
+    }
+    if !blockers.is_empty() {
+        return "contract_mismatch".into();
+    }
+    if baseline_status.starts_with("regressed_") {
+        return "contract_mismatch".into();
+    }
+    if drift_status == "drifted_risky" {
+        return "verification_failure".into();
+    }
+    String::new()
+}
+
+fn governance_next_action(
+    normalized_failure_class: &str,
+    stable_guidance: &str,
+) -> MechanicalNextAction {
+    if normalized_failure_class.is_empty() {
+        MechanicalNextAction {
+            action_id: "retain_current_governance_state".into(),
+            recommended_next_step: stable_guidance.into(),
+            rationale: vec![
+                "governance refresh found no concrete failure class that requires reroute or repair"
+                    .into(),
+            ],
+        }
+    } else {
+        select_mechanical_next_action(
+            normalized_failure_class,
+            Some("bundle"),
+            0,
+            false,
+        )
+    }
+}
+
+fn normalized_failure_class_for_constraint_approval(status: &str) -> String {
+    match status {
+        "approved" => String::new(),
+        _ => "verification_failure".into(),
+    }
+}
+
+fn constraint_approval_next_action(normalized_failure_class: &str) -> MechanicalNextAction {
+    if normalized_failure_class.is_empty() {
+        MechanicalNextAction {
+            action_id: "keep_constraint_active_and_monitor_matches".into(),
+            recommended_next_step:
+                "keep the approved constraint active on the shelf and continue monitoring future match evidence"
+                    .into(),
+            rationale: vec![
+                "constraint approval completed successfully and the shelf now contains the approved rule"
+                    .into(),
+            ],
+        }
+    } else {
+        select_mechanical_next_action(
+            normalized_failure_class,
+            Some("bundle"),
+            0,
+            false,
+        )
+    }
+}
+
+fn normalized_failure_class_for_constraint_shelf_mutation(action: &str, status: &str) -> String {
+    match (action, status) {
+        ("approve", "approved_into_shelf")
+        | ("activate", "applied")
+        | ("deactivate", "applied")
+        | ("bulk_deactivate_low_value_active", "deactivated")
+        | ("archive", "removed_from_shelf")
+        | ("restore", "restored_from_history") => String::new(),
+        _ => "verification_failure".into(),
+    }
+}
+
+fn constraint_shelf_mutation_next_action(
+    action: &str,
+    normalized_failure_class: &str,
+) -> MechanicalNextAction {
+    if !normalized_failure_class.is_empty() {
+        return select_mechanical_next_action(
+            normalized_failure_class,
+            Some("bundle"),
+            0,
+            false,
+        );
+    }
+
+    let (action_id, step, rationale) = match action {
+        "approve" => (
+            "monitor_newly_approved_constraint",
+            "leave the approved rule on the shelf and watch future match evidence before narrowing or retiring it",
+            "the rule is now active shelf evidence and should earn its keep through future matches",
+        ),
+        "activate" => (
+            "monitor_reactivated_constraint",
+            "leave the constraint active and monitor whether new failures match it cleanly",
+            "reactivation succeeded, so the next move is evidence collection rather than further shelf mutation",
+        ),
+        "deactivate" | "bulk_deactivate_low_value_active" => (
+            "leave_constraint_inactive_and_monitor",
+            "leave the constraint inactive and monitor whether new evidence justifies reactivation or archival",
+            "inactive shelf state is now the host-owned posture until new match evidence arrives",
+        ),
+        "archive" => (
+            "retain_archived_constraint_in_history",
+            "leave the constraint archived in shelf history and restore it only if new evidence makes it relevant again",
+            "the host moved the rule out of the active shelf without deleting the evidence trail",
+        ),
+        "restore" => (
+            "monitor_restored_constraint",
+            "leave the restored constraint on the shelf and watch whether fresh failures actually match it",
+            "restore succeeded, so the next move is evidence gathering rather than immediate re-mutation",
+        ),
+        _ => (
+            "retain_current_shelf_state",
+            "keep the current shelf state and continue monitoring future evidence",
+            "the mutation completed and no further reroute is required immediately",
+        ),
+    };
+
+    MechanicalNextAction {
+        action_id: action_id.into(),
+        recommended_next_step: step.into(),
+        rationale: vec![rationale.into()],
     }
 }
 
@@ -836,6 +1150,82 @@ fn classify_fallback_outcome(
     }
     notes.push(summary.to_string());
     ("degraded_fallback".into(), notes)
+}
+
+fn execution_outcome_next_action(
+    kind: &str,
+    outcome_class: &str,
+    acceptance_status: Option<&str>,
+) -> MechanicalNextAction {
+    match outcome_class {
+        "full_success" => MechanicalNextAction {
+            action_id: "retain_verified_state".into(),
+            recommended_next_step:
+                "keep the verified artifact state as the new baseline and continue from this grounded result"
+                    .into(),
+            rationale: vec![
+                format!("execution outcome for `{kind}` classified as `full_success`"),
+                "the host verified the current bounded result, so no repair reroute is required"
+                    .into(),
+            ],
+        },
+        "partial_success" => {
+            let step = if matches!(kind, "patch_prepare" | "patch_skip") {
+                "continue with the bounded follow-up patch route instead of treating the prepared substrate as final completion"
+            } else if matches!(acceptance_status, Some("failed" | "partial")) {
+                "inspect the verification receipts and continue with a bounded follow-up rather than treating the artifact as complete"
+            } else {
+                "continue with the next bounded follow-up step the receipts point to; the current result is usable evidence, not final completion"
+            };
+            MechanicalNextAction {
+                action_id: "continue_with_bounded_followup".into(),
+                recommended_next_step: step.into(),
+                rationale: vec![
+                    format!("execution outcome for `{kind}` classified as `partial_success`"),
+                    "the host distinguishes usable progress from full completion and keeps continuation explicit".into(),
+                ],
+            }
+        }
+        "degraded_fallback" => MechanicalNextAction {
+            action_id: "continue_from_degraded_scaffold".into(),
+            recommended_next_step:
+                "continue from the degraded scaffold or substrate attempt without presenting it as equivalent to the original hard requirement"
+                    .into(),
+            rationale: vec![
+                format!("execution outcome for `{kind}` classified as `degraded_fallback`"),
+                "the host should preserve the artifact as a bounded fallback while surfacing that it is not a clean full success".into(),
+            ],
+        },
+        "requirement_not_met" => MechanicalNextAction {
+            action_id: "surface_requirement_gap_honestly".into(),
+            recommended_next_step:
+                "surface the unmet hard requirement explicitly and choose a new bounded attempt only if the requirement can be preserved honestly"
+                    .into(),
+            rationale: vec![
+                format!("execution outcome for `{kind}` classified as `requirement_not_met`"),
+                "the current artifact cannot be represented as satisfying the user’s hard requirement".into(),
+            ],
+        },
+        _ => MechanicalNextAction {
+            action_id: "inspect_execution_receipts".into(),
+            recommended_next_step:
+                "inspect the execution receipts and decide the next bounded move from the host-owned evidence"
+                    .into(),
+            rationale: vec![format!(
+                "execution outcome for `{kind}` did not match a narrower explicit posture"
+            )],
+        },
+    }
+}
+
+fn with_execution_outcome_posture(mut result: HostExecutionResult) -> HostExecutionResult {
+    if let Some(outcome_class) = result.outcome_class.as_deref() {
+        let next_action =
+            execution_outcome_next_action(&result.kind, outcome_class, result.acceptance_status.as_deref());
+        result.recommended_next_action = Some(next_action.action_id);
+        result.recommended_next_step = next_action.recommended_next_step;
+    }
+    result
 }
 
 fn derive_build_plan_artifact(
@@ -7472,12 +7862,17 @@ pub struct HostRuntimeRefreshResult {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HostExecutionResult {
+    // Execution/fallback results are the operator-facing surfaces that carry both:
+    // outcome class answers "what happened", while recommended_next_* answers
+    // "what should the host do next from this state".
     pub kind: String,
     pub request_id: String,
     pub project_name: String,
     pub build_intent_freeze_path: Option<String>,
     pub outcome_class: Option<String>,
     pub outcome_notes: Vec<String>,
+    pub recommended_next_action: Option<String>,
+    pub recommended_next_step: String,
     pub starter_override_id: Option<String>,
     pub starter_override_summary: Option<String>,
     pub recommended_starter_id: Option<String>,
@@ -7509,6 +7904,8 @@ pub struct HostExecutionResult {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HostFallbackResult {
+    // Fallback results also need both outcome and continuation posture because
+    // they explicitly surface a degraded/blocked route plus the next bounded move.
     pub request_id: String,
     pub mode: Option<String>,
     pub outcome_class: Option<String>,
@@ -7977,6 +8374,12 @@ pub struct PendingExtensionEntry {
     #[serde(default)]
     pub proof_drift_notes: Vec<String>,
     #[serde(default)]
+    pub proof_normalized_failure_class: Option<String>,
+    #[serde(default)]
+    pub proof_recommended_next_action: Option<String>,
+    #[serde(default)]
+    pub proof_recommended_next_step: Option<String>,
+    #[serde(default)]
     pub proof_change_since_last_pass_status: Option<String>,
     #[serde(default)]
     pub proof_change_since_last_pass_notes: Vec<String>,
@@ -7986,6 +8389,12 @@ pub struct PendingExtensionEntry {
     pub composition_drift_status: Option<String>,
     #[serde(default)]
     pub composition_drift_notes: Vec<String>,
+    #[serde(default)]
+    pub composition_normalized_failure_class: Option<String>,
+    #[serde(default)]
+    pub composition_recommended_next_action: Option<String>,
+    #[serde(default)]
+    pub composition_recommended_next_step: Option<String>,
     #[serde(default)]
     pub composition_change_since_last_live_status: Option<String>,
     #[serde(default)]
@@ -7997,6 +8406,12 @@ pub struct PendingExtensionEntry {
     #[serde(default)]
     pub patch_drift_notes: Vec<String>,
     #[serde(default)]
+    pub patch_normalized_failure_class: Option<String>,
+    #[serde(default)]
+    pub patch_recommended_next_action: Option<String>,
+    #[serde(default)]
+    pub patch_recommended_next_step: Option<String>,
+    #[serde(default)]
     pub patch_change_since_last_live_status: Option<String>,
     #[serde(default)]
     pub patch_change_since_last_live_notes: Vec<String>,
@@ -8007,6 +8422,12 @@ pub struct PendingExtensionEntry {
     #[serde(default)]
     pub helper_drift_notes: Vec<String>,
     #[serde(default)]
+    pub helper_normalized_failure_class: Option<String>,
+    #[serde(default)]
+    pub helper_recommended_next_action: Option<String>,
+    #[serde(default)]
+    pub helper_recommended_next_step: Option<String>,
+    #[serde(default)]
     pub helper_change_since_last_live_status: Option<String>,
     #[serde(default)]
     pub helper_change_since_last_live_notes: Vec<String>,
@@ -8016,6 +8437,12 @@ pub struct PendingExtensionEntry {
     pub bridge_drift_status: Option<String>,
     #[serde(default)]
     pub bridge_drift_notes: Vec<String>,
+    #[serde(default)]
+    pub bridge_normalized_failure_class: Option<String>,
+    #[serde(default)]
+    pub bridge_recommended_next_action: Option<String>,
+    #[serde(default)]
+    pub bridge_recommended_next_step: Option<String>,
     #[serde(default)]
     pub bridge_change_since_last_live_status: Option<String>,
     #[serde(default)]
@@ -8509,6 +8936,8 @@ impl HostBridge {
                 &right_project_name,
                 &comparison_bundle,
             )?;
+        let (normalized_failure_class, next_action) =
+            paired_proof_next_action(comparison_receipt.equivalent_capability_fulfillment);
 
         let paired_receipt = PrimitiveProofHarnessReceipt {
             receipt_id: chatty_factory_core::timestamp_id("cross-family-paired-proof"),
@@ -8544,18 +8973,30 @@ impl HostBridge {
             ),
             comparison_receipt_path: comparison_receipt_path.display().to_string(),
             equivalent_capability_fulfillment: comparison_receipt.equivalent_capability_fulfillment,
-            notes: vec![
-                format!("left build project={left_project_name}"),
-                format!("right build project={right_project_name}"),
-                format!(
-                    "shared capability classes: {}",
-                    comparison_receipt.shared_capability_classes.join(", ")
-                ),
-                format!(
-                    "comparison receipt persisted: {}",
-                    comparison_receipt_path.display()
-                ),
-            ],
+            normalized_failure_class: normalized_failure_class.clone(),
+            recommended_next_action: next_action.action_id.clone(),
+            recommended_next_step: next_action.recommended_next_step.clone(),
+            notes: {
+                let mut notes = vec![
+                    format!("left build project={left_project_name}"),
+                    format!("right build project={right_project_name}"),
+                    format!(
+                        "shared capability classes: {}",
+                        comparison_receipt.shared_capability_classes.join(", ")
+                    ),
+                    format!(
+                        "comparison receipt persisted: {}",
+                        comparison_receipt_path.display()
+                    ),
+                    format!("mechanical next action: {}", next_action.action_id),
+                    format!(
+                        "mechanical next step: {}",
+                        next_action.recommended_next_step
+                    ),
+                ];
+                notes.extend(next_action.rationale.clone());
+                notes
+            },
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
         let paired_receipt_path =
@@ -8573,6 +9014,14 @@ impl HostBridge {
                     "equivalent_capability_fulfillment={}",
                     paired_receipt.equivalent_capability_fulfillment
                 ),
+                format!(
+                    "recommended_next_action={}",
+                    paired_receipt.recommended_next_action
+                ),
+                format!(
+                    "recommended_next_step={}",
+                    paired_receipt.recommended_next_step
+                ),
                 format!("paired_proof_receipt={}", paired_receipt_path.display()),
                 format!("comparison_receipt={}", comparison_receipt_path.display()),
             ]
@@ -8581,7 +9030,7 @@ impl HostBridge {
             .collect(),
             browser_state: None,
             runtime_refresh: None,
-            execution_result: Some(HostExecutionResult {
+            execution_result: Some(with_execution_outcome_posture(HostExecutionResult {
                 kind: "proof_template_run".into(),
                 request_id: paired_receipt.receipt_id.clone(),
                 project_name: format!("{left_project_name},{right_project_name}"),
@@ -8591,7 +9040,18 @@ impl HostBridge {
                 } else {
                     "partial_success".into()
                 }),
-                outcome_notes: Vec::new(),
+                outcome_notes: vec![
+                    format!(
+                        "proof next action: {}",
+                        paired_receipt.recommended_next_action
+                    ),
+                    format!(
+                        "proof next step: {}",
+                        paired_receipt.recommended_next_step
+                    ),
+                ],
+                recommended_next_action: None,
+                recommended_next_step: String::new(),
                 starter_override_id: None,
                 starter_override_summary: None,
                 recommended_starter_id: None,
@@ -8638,6 +9098,14 @@ impl HostBridge {
                         "cross-family comparison receipt: {}",
                         comparison_receipt_path.display()
                     ),
+                    format!(
+                        "proof next action: {}",
+                        paired_receipt.recommended_next_action
+                    ),
+                    format!(
+                        "proof next step: {}",
+                        paired_receipt.recommended_next_step
+                    ),
                 ],
                 file_paths: vec![
                     paired_receipt_path.display().to_string(),
@@ -8665,7 +9133,7 @@ impl HostBridge {
                 chattycog_bridge_capabilities: None,
                 helper_services: Vec::new(),
                 helper_runtime_receipts: Vec::new(),
-            }),
+            })),
             fallback_result: None,
             followup_route: None,
             extension_registry: None,
@@ -9066,6 +9534,8 @@ impl HostBridge {
         shelf.updated_at = Some(chatty_factory_core::timestamp_id("updated"));
         persist_json_pretty(&shelf_path, &shelf)?;
 
+        let normalized_failure_class = normalized_failure_class_for_constraint_approval("approved");
+        let next_action = constraint_approval_next_action(&normalized_failure_class);
         let approval = ConstraintApprovalReceipt {
             approval_id: chatty_factory_core::timestamp_id("constraint-approval"),
             request_id: proposal.request_id.clone(),
@@ -9077,6 +9547,9 @@ impl HostBridge {
             shelf_path: shelf_path.display().to_string(),
             proposal_path: proposal_path.display().to_string(),
             rationale: proposal.rationale.clone(),
+            normalized_failure_class: normalized_failure_class.clone(),
+            recommended_next_action: next_action.action_id.clone(),
+            recommended_next_step: next_action.recommended_next_step.clone(),
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
         let approval_path = self
@@ -9085,6 +9558,12 @@ impl HostBridge {
             .join(format!("{}-constraint-approval.json", proposal.request_id));
         persist_json_pretty(&approval_path, &approval)?;
 
+        let mutation_normalized_failure_class =
+            normalized_failure_class_for_constraint_shelf_mutation("approve", "approved_into_shelf");
+        let mutation_next_action = constraint_shelf_mutation_next_action(
+            "approve",
+            &mutation_normalized_failure_class,
+        );
         let mutation = ConstraintShelfMutationReceipt {
             mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
             constraint_id: proposal.proposed_constraint.constraint_id.clone(),
@@ -9093,6 +9572,9 @@ impl HostBridge {
             proposal_source_id: Some(proposal_source_id.clone()),
             shelf_path: shelf_path.display().to_string(),
             status: "approved_into_shelf".into(),
+            normalized_failure_class: mutation_normalized_failure_class,
+            recommended_next_action: mutation_next_action.action_id,
+            recommended_next_step: mutation_next_action.recommended_next_step,
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
         let mutation_path = self
@@ -9150,6 +9632,9 @@ impl HostBridge {
         persist_json_pretty(&shelf_path, &shelf)?;
 
         let action = if active { "activate" } else { "deactivate" };
+        let normalized_failure_class =
+            normalized_failure_class_for_constraint_shelf_mutation(action, "applied");
+        let next_action = constraint_shelf_mutation_next_action(action, &normalized_failure_class);
         let mutation = ConstraintShelfMutationReceipt {
             mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
             constraint_id: constraint_id.to_string(),
@@ -9158,6 +9643,9 @@ impl HostBridge {
             proposal_source_id: None,
             shelf_path: shelf_path.display().to_string(),
             status: "applied".into(),
+            normalized_failure_class,
+            recommended_next_action: next_action.action_id,
+            recommended_next_step: next_action.recommended_next_step,
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
         let mutation_path = self
@@ -9251,6 +9739,10 @@ impl HostBridge {
 
         let mutation_root = self.runtime_root.join("constraint_shelf_mutations");
         for constraint_id in archived_constraint_ids.iter() {
+            let normalized_failure_class =
+                normalized_failure_class_for_constraint_shelf_mutation("archive", "removed_from_shelf");
+            let next_action =
+                constraint_shelf_mutation_next_action("archive", &normalized_failure_class);
             let mutation = ConstraintShelfMutationReceipt {
                 mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
                 constraint_id: constraint_id.clone(),
@@ -9259,6 +9751,9 @@ impl HostBridge {
                 proposal_source_id: None,
                 shelf_path: shelf_path.display().to_string(),
                 status: "removed_from_shelf".into(),
+                normalized_failure_class,
+                recommended_next_action: next_action.action_id,
+                recommended_next_step: next_action.recommended_next_step,
                 created_at: Some(chatty_factory_core::timestamp_id("created")),
             };
             let mutation_path = mutation_root.join(format!(
@@ -9331,6 +9826,14 @@ impl HostBridge {
 
         let mutation_root = self.runtime_root.join("constraint_shelf_mutations");
         for constraint_id in deactivated_constraint_ids.iter() {
+            let normalized_failure_class = normalized_failure_class_for_constraint_shelf_mutation(
+                "bulk_deactivate_low_value_active",
+                "deactivated",
+            );
+            let next_action = constraint_shelf_mutation_next_action(
+                "bulk_deactivate_low_value_active",
+                &normalized_failure_class,
+            );
             let mutation = ConstraintShelfMutationReceipt {
                 mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
                 constraint_id: constraint_id.clone(),
@@ -9339,6 +9842,9 @@ impl HostBridge {
                 proposal_source_id: None,
                 shelf_path: shelf_path.display().to_string(),
                 status: "deactivated".into(),
+                normalized_failure_class,
+                recommended_next_action: next_action.action_id,
+                recommended_next_step: next_action.recommended_next_step,
                 created_at: Some(chatty_factory_core::timestamp_id("created")),
             };
             let mutation_path = mutation_root.join(format!(
@@ -9400,6 +9906,9 @@ impl HostBridge {
         history.updated_at = Some(chatty_factory_core::timestamp_id("updated"));
         persist_json_pretty(&history_path, &history)?;
 
+        let normalized_failure_class =
+            normalized_failure_class_for_constraint_shelf_mutation("restore", "restored_from_history");
+        let next_action = constraint_shelf_mutation_next_action("restore", &normalized_failure_class);
         let mutation = ConstraintShelfMutationReceipt {
             mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
             constraint_id: constraint_id.to_string(),
@@ -9408,6 +9917,9 @@ impl HostBridge {
             proposal_source_id: None,
             shelf_path: shelf_path.display().to_string(),
             status: "restored_from_history".into(),
+            normalized_failure_class,
+            recommended_next_action: next_action.action_id,
+            recommended_next_step: next_action.recommended_next_step,
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
         let mutation_path = self
@@ -9468,13 +9980,15 @@ impl HostBridge {
                 .collect(),
             browser_state: None,
             runtime_refresh: None,
-            execution_result: Some(HostExecutionResult {
+            execution_result: Some(with_execution_outcome_posture(HostExecutionResult {
                 kind: "helper_run".into(),
                 request_id,
                 project_name: project_name.to_string(),
                 build_intent_freeze_path: None,
                 outcome_class: Some("full_success".into()),
                 outcome_notes: Vec::new(),
+                recommended_next_action: None,
+                recommended_next_step: String::new(),
                 starter_override_id: None,
                 starter_override_summary: None,
                 recommended_starter_id: None,
@@ -9505,7 +10019,7 @@ impl HostBridge {
                 chattycog_bridge_capabilities: spec.chattycog_bridge_capabilities.clone(),
                 helper_services: spec.helper_services.clone(),
                 helper_runtime_receipts,
-            }),
+            })),
             fallback_result: None,
             followup_route: None,
             extension_registry: None,
@@ -9575,13 +10089,15 @@ impl HostBridge {
             details,
             browser_state: None,
             runtime_refresh: None,
-            execution_result: Some(HostExecutionResult {
+            execution_result: Some(with_execution_outcome_posture(HostExecutionResult {
                 kind: "helper_status".into(),
                 request_id: "helper-status".into(),
                 project_name: project_name.to_string(),
                 build_intent_freeze_path: None,
                 outcome_class: Some("partial_success".into()),
                 outcome_notes: Vec::new(),
+                recommended_next_action: None,
+                recommended_next_step: String::new(),
                 starter_override_id: None,
                 starter_override_summary: None,
                 recommended_starter_id: None,
@@ -9609,7 +10125,7 @@ impl HostBridge {
                 chattycog_bridge_capabilities: spec.chattycog_bridge_capabilities.clone(),
                 helper_services: spec.helper_services.clone(),
                 helper_runtime_receipts: receipts,
-            }),
+            })),
             fallback_result: None,
             followup_route: None,
             extension_registry: None,
@@ -9667,7 +10183,7 @@ impl HostBridge {
             .collect(),
             browser_state: None,
             runtime_refresh: None,
-            execution_result: Some(HostExecutionResult {
+            execution_result: Some(with_execution_outcome_posture(HostExecutionResult {
                 kind: "cross_family_helper_monitoring_compare".into(),
                 request_id: receipt.receipt_id.clone(),
                 project_name: format!("{left_project_name},{right_project_name}"),
@@ -9678,6 +10194,8 @@ impl HostBridge {
                     "partial_success".into()
                 }),
                 outcome_notes: Vec::new(),
+                recommended_next_action: None,
+                recommended_next_step: String::new(),
                 starter_override_id: None,
                 starter_override_summary: None,
                 recommended_starter_id: None,
@@ -9709,7 +10227,7 @@ impl HostBridge {
                 chattycog_bridge_capabilities: None,
                 helper_services: Vec::new(),
                 helper_runtime_receipts: Vec::new(),
-            }),
+            })),
             fallback_result: None,
             followup_route: None,
             extension_registry: None,
@@ -10840,26 +11358,41 @@ impl HostBridge {
                 proof_lineage_receipt_path: None,
                 proof_drift_status: None,
                 proof_drift_notes: Vec::new(),
+                proof_normalized_failure_class: None,
+                proof_recommended_next_action: None,
+                proof_recommended_next_step: None,
                 proof_change_since_last_pass_status: None,
                 proof_change_since_last_pass_notes: Vec::new(),
                 composition_lineage_receipt_path: None,
                 composition_drift_status: None,
                 composition_drift_notes: Vec::new(),
+                composition_normalized_failure_class: None,
+                composition_recommended_next_action: None,
+                composition_recommended_next_step: None,
                 composition_change_since_last_live_status: None,
                 composition_change_since_last_live_notes: Vec::new(),
                 patch_lineage_receipt_path: None,
                 patch_drift_status: None,
                 patch_drift_notes: Vec::new(),
+                patch_normalized_failure_class: None,
+                patch_recommended_next_action: None,
+                patch_recommended_next_step: None,
                 patch_change_since_last_live_status: None,
                 patch_change_since_last_live_notes: Vec::new(),
                 helper_lineage_receipt_path: None,
                 helper_drift_status: None,
                 helper_drift_notes: Vec::new(),
+                helper_normalized_failure_class: None,
+                helper_recommended_next_action: None,
+                helper_recommended_next_step: None,
                 helper_change_since_last_live_status: None,
                 helper_change_since_last_live_notes: Vec::new(),
                 bridge_lineage_receipt_path: None,
                 bridge_drift_status: None,
                 bridge_drift_notes: Vec::new(),
+                bridge_normalized_failure_class: None,
+                bridge_recommended_next_action: None,
+                bridge_recommended_next_step: None,
                 bridge_change_since_last_live_status: None,
                 bridge_change_since_last_live_notes: Vec::new(),
                 archived_reason: None,
@@ -12053,26 +12586,41 @@ impl HostBridge {
                 proof_lineage_receipt_path: None,
                 proof_drift_status: None,
                 proof_drift_notes: Vec::new(),
+                proof_normalized_failure_class: None,
+                proof_recommended_next_action: None,
+                proof_recommended_next_step: None,
                 proof_change_since_last_pass_status: None,
                 proof_change_since_last_pass_notes: Vec::new(),
                 composition_lineage_receipt_path: None,
                 composition_drift_status: None,
                 composition_drift_notes: Vec::new(),
+                composition_normalized_failure_class: None,
+                composition_recommended_next_action: None,
+                composition_recommended_next_step: None,
                 composition_change_since_last_live_status: None,
                 composition_change_since_last_live_notes: Vec::new(),
                 patch_lineage_receipt_path: None,
                 patch_drift_status: None,
                 patch_drift_notes: Vec::new(),
+                patch_normalized_failure_class: None,
+                patch_recommended_next_action: None,
+                patch_recommended_next_step: None,
                 patch_change_since_last_live_status: None,
                 patch_change_since_last_live_notes: Vec::new(),
                 helper_lineage_receipt_path: None,
                 helper_drift_status: None,
                 helper_drift_notes: Vec::new(),
+                helper_normalized_failure_class: None,
+                helper_recommended_next_action: None,
+                helper_recommended_next_step: None,
                 helper_change_since_last_live_status: None,
                 helper_change_since_last_live_notes: Vec::new(),
                 bridge_lineage_receipt_path: None,
                 bridge_drift_status: None,
                 bridge_drift_notes: Vec::new(),
+                bridge_normalized_failure_class: None,
+                bridge_recommended_next_action: None,
+                bridge_recommended_next_step: None,
                 bridge_change_since_last_live_status: None,
                 bridge_change_since_last_live_notes: Vec::new(),
                 archived_reason: None,
@@ -13131,13 +13679,15 @@ impl HostBridge {
             },
             browser_state: Some(browser_state),
             runtime_refresh: None,
-            execution_result: Some(HostExecutionResult {
+            execution_result: Some(with_execution_outcome_posture(HostExecutionResult {
                 kind: "build".into(),
                 request_id: receipt.request_id,
                 project_name: receipt.project_name,
                 build_intent_freeze_path: Some(build_intent_freeze_path.display().to_string()),
                 outcome_class: Some(outcome_class),
                 outcome_notes,
+                recommended_next_action: None,
+                recommended_next_step: String::new(),
                 starter_override_id: starter_override
                     .as_ref()
                     .map(|value| value.family_id.as_str().to_string()),
@@ -13297,7 +13847,7 @@ impl HostBridge {
                 chattycog_bridge_capabilities: refreshed_spec.chattycog_bridge_capabilities,
                 helper_services: refreshed_spec.helper_services,
                 helper_runtime_receipts,
-            }),
+            })),
             fallback_result: None,
             followup_route: None,
             extension_registry: None,
@@ -13834,7 +14384,7 @@ impl HostBridge {
             ],
             browser_state: Some(browser_state),
             runtime_refresh: None,
-            execution_result: Some(HostExecutionResult {
+            execution_result: Some(with_execution_outcome_posture(HostExecutionResult {
                 kind: "patch".into(),
                 request_id: receipt.request_id,
                 project_name: receipt.project_name,
@@ -13850,6 +14400,8 @@ impl HostBridge {
                         patch_diagnosis_postcheck.recommended_next_step
                     ),
                 ],
+                recommended_next_action: None,
+                recommended_next_step: String::new(),
                 starter_override_id: None,
                 starter_override_summary: None,
                 recommended_starter_id: None,
@@ -13913,7 +14465,7 @@ impl HostBridge {
                 chattycog_bridge_capabilities: refreshed_spec.chattycog_bridge_capabilities,
                 helper_services: refreshed_spec.helper_services,
                 helper_runtime_receipts,
-            }),
+            })),
             fallback_result: None,
             followup_route: None,
             extension_registry: None,
@@ -16585,6 +17137,9 @@ fn review_patch_intent_freeze(
             .freeze_notes
             .push(format!("self-review blocked reason: {reason}"));
     }
+    let normalized_failure_class =
+        normalized_failure_class_for_patch_plan_review(decision, &blocked_reasons);
+    let next_action = patch_plan_review_next_action(decision, &normalized_failure_class);
 
     let review = PatchPlanReview {
         review_id: chatty_factory_core::timestamp_id("patch-plan-review"),
@@ -16614,7 +17169,19 @@ fn review_patch_intent_freeze(
         recommended_replacement_patch_kinds: freeze.superseded_by_patch_kinds.clone(),
         reviewed_replacement_bundle_patch_kinds,
         reviewed_replacement_bundle_status,
-        findings,
+        normalized_failure_class,
+        recommended_next_action: next_action.action_id.clone(),
+        recommended_next_step: next_action.recommended_next_step.clone(),
+        findings: {
+            let mut findings = findings;
+            findings.push(format!("mechanical next action: {}", next_action.action_id));
+            findings.push(format!(
+                "mechanical next step: {}",
+                next_action.recommended_next_step
+            ));
+            findings.extend(next_action.rationale.clone());
+            findings
+        },
         blocked_reasons,
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
@@ -16779,6 +17346,9 @@ fn review_patch_implementation_constraints(
         findings.push("constraint review found forbidden implementation methods and no surviving refined execution path".into());
         "block_execution"
     };
+    let normalized_failure_class =
+        normalized_failure_class_for_patch_constraint_review(decision, &violations);
+    let next_action = patch_constraint_review_next_action(decision, &normalized_failure_class);
 
     ConstraintReviewReceipt {
         review_id: chatty_factory_core::timestamp_id("constraint-review"),
@@ -16798,8 +17368,19 @@ fn review_patch_implementation_constraints(
         surviving_composition_patch_kinds,
         blocked_methods,
         recommended_replacements,
+        normalized_failure_class,
+        recommended_next_action: next_action.action_id.clone(),
+        recommended_next_step: next_action.recommended_next_step.clone(),
         decision: decision.into(),
-        findings,
+        findings: {
+            findings.push(format!("mechanical next action: {}", next_action.action_id));
+            findings.push(format!(
+                "mechanical next step: {}",
+                next_action.recommended_next_step
+            ));
+            findings.extend(next_action.rationale.clone());
+            findings
+        },
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     }
 }
@@ -17386,7 +17967,7 @@ fn emit_patch_freeze_skip_result(
         details,
         browser_state: Some(browser_state),
         runtime_refresh: None,
-        execution_result: Some(HostExecutionResult {
+        execution_result: Some(with_execution_outcome_posture(HostExecutionResult {
             kind: "patch_skip".into(),
             request_id: request.request_id.clone(),
             project_name: spec.project_name.clone(),
@@ -17405,6 +17986,8 @@ fn emit_patch_freeze_skip_result(
                 notes.extend(next_action.rationale.clone());
                 notes
             },
+            recommended_next_action: None,
+            recommended_next_step: String::new(),
             starter_override_id: None,
             starter_override_summary: None,
             recommended_starter_id: None,
@@ -17437,7 +18020,7 @@ fn emit_patch_freeze_skip_result(
             chattycog_bridge_capabilities: spec.chattycog_bridge_capabilities.clone(),
             helper_services: spec.helper_services.clone(),
             helper_runtime_receipts: Vec::new(),
-        }),
+        })),
         fallback_result: None,
         followup_route: None,
         extension_registry: None,
@@ -17766,7 +18349,7 @@ fn emit_patch_substrate_attempt_result(
         details,
         browser_state: Some(browser_state),
         runtime_refresh: None,
-        execution_result: Some(HostExecutionResult {
+        execution_result: Some(with_execution_outcome_posture(HostExecutionResult {
             kind: "patch_prepare".into(),
             request_id: request.request_id.clone(),
             project_name: spec.project_name.clone(),
@@ -17787,6 +18370,8 @@ fn emit_patch_substrate_attempt_result(
                 notes.extend(next_action.rationale.clone());
                 notes
             },
+            recommended_next_action: None,
+            recommended_next_step: String::new(),
             starter_override_id: None,
             starter_override_summary: None,
             recommended_starter_id: None,
@@ -17849,7 +18434,7 @@ fn emit_patch_substrate_attempt_result(
             chattycog_bridge_capabilities: spec.chattycog_bridge_capabilities.clone(),
             helper_services: spec.helper_services.clone(),
             helper_runtime_receipts: Vec::new(),
-        }),
+        })),
         fallback_result: None,
         followup_route: None,
         extension_registry: None,
@@ -20439,6 +21024,12 @@ fn merge_execution_artifacts(
     }
     if !updated.outcome_notes.is_empty() {
         base.outcome_notes.extend(updated.outcome_notes);
+    }
+    if let Some(next_action) = updated.recommended_next_action {
+        base.recommended_next_action = Some(next_action);
+    }
+    if !updated.recommended_next_step.is_empty() {
+        base.recommended_next_step = updated.recommended_next_step;
     }
     if let Some(path) = updated.composable_route_plan_path {
         base.composable_route_plan_path = Some(path);
@@ -24690,6 +25281,7 @@ fn refresh_composition_bundle_governance(
     runtime_root: &Path,
     entry: &mut PendingExtensionEntry,
 ) -> Result<()> {
+    let blockers = validate_composition_bundle_artifacts(entry)?;
     let artifact_hashes = composition_artifact_hashes(entry);
     let acceptance_recipe_paths = composition_acceptance_recipe_paths(entry);
     let drift = classify_composition_bundle_drift(entry, &artifact_hashes);
@@ -24699,6 +25291,12 @@ fn refresh_composition_bundle_governance(
         previous_receipt.as_ref(),
         &artifact_hashes,
         &entry.status,
+    );
+    let normalized_failure_class =
+        normalized_failure_class_for_governance_receipt(&drift.0, &baseline.0, &blockers);
+    let next_action = governance_next_action(
+        &normalized_failure_class,
+        "keep the current composition governance baseline and continue monitoring future drift",
     );
     let receipt = CompositionGovernanceReceipt {
         receipt_id: chatty_factory_core::timestamp_id("composition-governance"),
@@ -24725,6 +25323,9 @@ fn refresh_composition_bundle_governance(
         drift_notes: drift.1.clone(),
         change_since_last_live_status: baseline.0.clone(),
         change_since_last_live_notes: baseline.1.clone(),
+        normalized_failure_class: normalized_failure_class.clone(),
+        recommended_next_action: next_action.action_id.clone(),
+        recommended_next_step: next_action.recommended_next_step.clone(),
         baseline_artifact_hashes: baseline.2.clone(),
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
@@ -24732,6 +25333,13 @@ fn refresh_composition_bundle_governance(
     entry.composition_lineage_receipt_path = Some(receipt_path.display().to_string());
     entry.composition_drift_status = Some(drift.0);
     entry.composition_drift_notes = drift.1;
+    entry.composition_normalized_failure_class = if normalized_failure_class.is_empty() {
+        None
+    } else {
+        Some(normalized_failure_class)
+    };
+    entry.composition_recommended_next_action = Some(next_action.action_id);
+    entry.composition_recommended_next_step = Some(next_action.recommended_next_step);
     entry.composition_change_since_last_live_status = Some(baseline.0);
     entry.composition_change_since_last_live_notes = baseline.1;
     Ok(())
@@ -25186,6 +25794,7 @@ fn refresh_patch_recipe_governance(
     runtime_root: &Path,
     entry: &mut PendingExtensionEntry,
 ) -> Result<()> {
+    let blockers = validate_patch_recipe_governance_artifacts(entry)?;
     let (patch_recipe_path, acceptance_recipe_path) = patch_recipe_governance_artifacts(entry);
     let artifact_hashes = patch_artifact_hashes(entry);
     let drift = classify_patch_recipe_drift(
@@ -25199,6 +25808,12 @@ fn refresh_patch_recipe_governance(
         previous_receipt.as_ref(),
         &artifact_hashes,
         &entry.status,
+    );
+    let normalized_failure_class =
+        normalized_failure_class_for_governance_receipt(&drift.0, &baseline.0, &blockers);
+    let next_action = governance_next_action(
+        &normalized_failure_class,
+        "keep the current patch governance baseline and continue monitoring future drift",
     );
     let acceptance_contract_note =
         patch_acceptance_contract_note(acceptance_recipe_path.as_deref());
@@ -25227,6 +25842,9 @@ fn refresh_patch_recipe_governance(
         drift_notes: drift.1.clone(),
         change_since_last_live_status: baseline.0.clone(),
         change_since_last_live_notes: baseline.1.clone(),
+        normalized_failure_class: normalized_failure_class.clone(),
+        recommended_next_action: next_action.action_id.clone(),
+        recommended_next_step: next_action.recommended_next_step.clone(),
         baseline_artifact_hashes: baseline.2.clone(),
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
@@ -25234,6 +25852,13 @@ fn refresh_patch_recipe_governance(
     entry.patch_lineage_receipt_path = Some(receipt_path.display().to_string());
     entry.patch_drift_status = Some(drift.0);
     entry.patch_drift_notes = drift.1;
+    entry.patch_normalized_failure_class = if normalized_failure_class.is_empty() {
+        None
+    } else {
+        Some(normalized_failure_class)
+    };
+    entry.patch_recommended_next_action = Some(next_action.action_id);
+    entry.patch_recommended_next_step = Some(next_action.recommended_next_step);
     entry.patch_change_since_last_live_status = Some(baseline.0);
     entry.patch_change_since_last_live_notes = baseline.1;
     Ok(())
@@ -25329,6 +25954,7 @@ fn refresh_helper_lane_governance(
     runtime_root: &Path,
     entry: &mut PendingExtensionEntry,
 ) -> Result<()> {
+    let blockers = validate_helper_lane_governance_artifacts(entry)?;
     let helper_lane_path = helper_lane_governance_artifacts(entry);
     let artifact_hashes = helper_artifact_hashes(entry);
     let drift = classify_helper_lane_drift(entry, &artifact_hashes, helper_lane_path.as_deref());
@@ -25337,6 +25963,12 @@ fn refresh_helper_lane_governance(
         previous_receipt.as_ref(),
         &artifact_hashes,
         &entry.status,
+    );
+    let normalized_failure_class =
+        normalized_failure_class_for_governance_receipt(&drift.0, &baseline.0, &blockers);
+    let next_action = governance_next_action(
+        &normalized_failure_class,
+        "keep the current helper governance baseline and continue monitoring future drift",
     );
     let receipt = HelperGovernanceReceipt {
         receipt_id: chatty_factory_core::timestamp_id("helper-governance"),
@@ -25361,6 +25993,9 @@ fn refresh_helper_lane_governance(
         drift_notes: drift.1.clone(),
         change_since_last_live_status: baseline.0.clone(),
         change_since_last_live_notes: baseline.1.clone(),
+        normalized_failure_class: normalized_failure_class.clone(),
+        recommended_next_action: next_action.action_id.clone(),
+        recommended_next_step: next_action.recommended_next_step.clone(),
         baseline_artifact_hashes: baseline.2.clone(),
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
@@ -25368,6 +26003,13 @@ fn refresh_helper_lane_governance(
     entry.helper_lineage_receipt_path = Some(receipt_path.display().to_string());
     entry.helper_drift_status = Some(drift.0);
     entry.helper_drift_notes = drift.1;
+    entry.helper_normalized_failure_class = if normalized_failure_class.is_empty() {
+        None
+    } else {
+        Some(normalized_failure_class)
+    };
+    entry.helper_recommended_next_action = Some(next_action.action_id);
+    entry.helper_recommended_next_step = Some(next_action.recommended_next_step);
     entry.helper_change_since_last_live_status = Some(baseline.0);
     entry.helper_change_since_last_live_notes = baseline.1;
     Ok(())
@@ -25463,6 +26105,7 @@ fn refresh_bridge_lane_governance(
     runtime_root: &Path,
     entry: &mut PendingExtensionEntry,
 ) -> Result<()> {
+    let blockers = validate_bridge_lane_governance_artifacts(entry)?;
     let bridge_lane_path = bridge_lane_governance_artifacts(entry);
     let artifact_hashes = bridge_artifact_hashes(entry);
     let drift = classify_bridge_lane_drift(entry, &artifact_hashes, bridge_lane_path.as_deref());
@@ -25471,6 +26114,12 @@ fn refresh_bridge_lane_governance(
         previous_receipt.as_ref(),
         &artifact_hashes,
         &entry.status,
+    );
+    let normalized_failure_class =
+        normalized_failure_class_for_governance_receipt(&drift.0, &baseline.0, &blockers);
+    let next_action = governance_next_action(
+        &normalized_failure_class,
+        "keep the current bridge governance baseline and continue monitoring future drift",
     );
     let receipt = BridgeGovernanceReceipt {
         receipt_id: chatty_factory_core::timestamp_id("bridge-governance"),
@@ -25495,6 +26144,9 @@ fn refresh_bridge_lane_governance(
         drift_notes: drift.1.clone(),
         change_since_last_live_status: baseline.0.clone(),
         change_since_last_live_notes: baseline.1.clone(),
+        normalized_failure_class: normalized_failure_class.clone(),
+        recommended_next_action: next_action.action_id.clone(),
+        recommended_next_step: next_action.recommended_next_step.clone(),
         baseline_artifact_hashes: baseline.2.clone(),
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
@@ -25502,6 +26154,13 @@ fn refresh_bridge_lane_governance(
     entry.bridge_lineage_receipt_path = Some(receipt_path.display().to_string());
     entry.bridge_drift_status = Some(drift.0);
     entry.bridge_drift_notes = drift.1;
+    entry.bridge_normalized_failure_class = if normalized_failure_class.is_empty() {
+        None
+    } else {
+        Some(normalized_failure_class)
+    };
+    entry.bridge_recommended_next_action = Some(next_action.action_id);
+    entry.bridge_recommended_next_step = Some(next_action.recommended_next_step);
     entry.bridge_change_since_last_live_status = Some(baseline.0);
     entry.bridge_change_since_last_live_notes = baseline.1;
     Ok(())
@@ -25632,6 +26291,7 @@ fn refresh_proof_harness_lineage(
     );
     let latest_receipt =
         latest_proof_harness_receipt_for_template(workspace_root, &template.template_id);
+    let blockers = validate_proof_harness_bundle_artifacts(entry)?;
     let previous_receipt = load_existing_proof_lineage_receipt(runtime_root, &template.template_id);
     let template_content_hash = stable_json_content_hash(template);
     let bundle_content_hash = stable_json_content_hash(bundle);
@@ -25642,6 +26302,15 @@ fn refresh_proof_harness_lineage(
         latest_receipt
             .as_ref()
             .map(|receipt| receipt.equivalent_capability_fulfillment),
+    );
+    let normalized_failure_class = normalized_failure_class_for_governance_receipt(
+        &drift.0,
+        &change_since_last_pass.0,
+        &blockers,
+    );
+    let next_action = governance_next_action(
+        &normalized_failure_class,
+        "keep the current proof lineage baseline and continue monitoring future paired-proof drift",
     );
     let last_passing_receipt =
         latest_passing_proof_harness_receipt_for_template(workspace_root, &template.template_id);
@@ -25670,6 +26339,9 @@ fn refresh_proof_harness_lineage(
         bundle_content_hash: bundle_content_hash.clone(),
         drift_status: drift.0.clone(),
         drift_notes: drift.1.clone(),
+        normalized_failure_class: normalized_failure_class.clone(),
+        recommended_next_action: next_action.action_id.clone(),
+        recommended_next_step: next_action.recommended_next_step.clone(),
         latest_paired_proof_receipt_id: latest_receipt
             .as_ref()
             .map(|receipt| receipt.receipt_id.clone()),
@@ -25690,6 +26362,13 @@ fn refresh_proof_harness_lineage(
     entry.proof_lineage_receipt_path = Some(receipt_path.display().to_string());
     entry.proof_drift_status = Some(drift.0);
     entry.proof_drift_notes = drift.1;
+    entry.proof_normalized_failure_class = if normalized_failure_class.is_empty() {
+        None
+    } else {
+        Some(normalized_failure_class)
+    };
+    entry.proof_recommended_next_action = Some(next_action.action_id);
+    entry.proof_recommended_next_step = Some(next_action.recommended_next_step);
     entry.proof_change_since_last_pass_status = Some(change_since_last_pass.0);
     entry.proof_change_since_last_pass_notes = change_since_last_pass.1;
     Ok(())

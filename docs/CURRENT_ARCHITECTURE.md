@@ -58,10 +58,38 @@ hoc fallback wording.
 This is now present across:
 
 - build fallback and build verification flows
+- execution result summaries for build/patch/proof/helper surfaces
 - task-attempt vault and triangulation findings
 - patch preflight skip and substrate-attempt flows
 - patch postcheck receipts
 - retry-search ladder proof receipts
+
+There is now a clearer division of labor between outcome summary and
+continuation routing:
+
+- `outcome_class` belongs on operator-facing end-state surfaces
+  - execution results
+  - fallback results
+- `normalized_failure_class` belongs on governed evidence receipts where the
+  host is classifying why a bounded attempt or review posture failed
+- `recommended_next_action` and `recommended_next_step` belong wherever the
+  host must preserve a concrete continuation posture from trapped evidence
+
+In practice that means:
+
+- final execution/fallback surfaces carry both outcome summary and continuation
+  posture
+- review, verification, triangulation, proof, governance, and shelf-mutation
+  receipts usually carry continuation posture without also needing an
+  `outcome_class`
+- simple artifact receipts such as emitted build or patch receipts should carry
+  neither unless they become a real routing surface
+
+The frozen receipt-family audit for this rule lives in
+[Receipt Field Ownership Audit](./RECEIPT_FIELD_OWNERSHIP_AUDIT.md).
+
+The practical checklist for future receipt changes lives in
+[Receipt Design Gate](./RECEIPT_DESIGN_GATE.md).
 
 ## Workspace Map
 
@@ -249,6 +277,11 @@ The UI currently surfaces:
 - project patchability
 - extension/governance panels
 - negative shelf and triangulation summaries
+
+Extension governance is no longer only descriptive drift/status output.
+Proof/composition/patch/helper/bridge governance receipts now persist
+normalized failure class plus host-selected next action and next step, and the
+desktop governance panels surface that selector posture directly.
 
 ## Known Engineering Risks
 
