@@ -38,6 +38,10 @@ use governance_ui::{
     governance_stale_warning, render_governance_detail_block, render_governance_metric_strip,
     render_governance_refresh_state,
 };
+use image::ImageReader;
+
+const FMI_SPLASH_RELATIVE_PATH: &str = "assets/branding/fmi-splash-wordmark.png";
+const FMI_SPLASH_DURATION: Duration = Duration::from_millis(3000);
 
 fn main() -> eframe::Result<()> {
     let options = NativeOptions::default();
@@ -642,6 +646,12 @@ struct UiToast {
     created_at: Instant,
 }
 
+struct StartupSplashState {
+    started_at: Instant,
+    dismissed: bool,
+    texture: Option<egui::TextureHandle>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct ExtensionActivityItem {
     entry_id: Option<String>,
@@ -1129,6 +1139,7 @@ struct UiFallbackResult {
 
 struct ChattyFactoryUiApp {
     workspace_root: PathBuf,
+    startup_splash: StartupSplashState,
     selected_project_name: Option<String>,
     browser_state: Option<ProjectBrowserState>,
     selected_project_spec: Option<ProjectSpec>,
@@ -1218,6 +1229,11 @@ impl ChattyFactoryUiApp {
         let paired_proof_ui_preferences = load_paired_proof_ui_preferences(&workspace_root);
         let mut app = Self {
             workspace_root: workspace_root.clone(),
+            startup_splash: StartupSplashState {
+                started_at: Instant::now(),
+                dismissed: false,
+                texture: None,
+            },
             selected_project_name: None,
             browser_state: None,
             selected_project_spec: None,
@@ -1489,6 +1505,97 @@ impl ChattyFactoryUiApp {
         app.refresh_from_runtime_file();
         app.refresh_runtime_status();
         app
+    }
+
+    fn show_startup_splash(&mut self, ctx: &egui::Context) -> bool {
+        if self.startup_splash.dismissed {
+            return false;
+        }
+
+        let elapsed = self.startup_splash.started_at.elapsed();
+        if elapsed >= FMI_SPLASH_DURATION
+            || ctx.input(|input| {
+                input.pointer.any_click()
+                    || input.key_pressed(egui::Key::Escape)
+                    || input.key_pressed(egui::Key::Enter)
+                    || input.key_pressed(egui::Key::Space)
+            })
+        {
+            self.startup_splash.dismissed = true;
+            return false;
+        }
+
+        ctx.request_repaint_after(Duration::from_millis(16));
+
+        if self.startup_splash.texture.is_none() {
+            let path = self.workspace_root.join(FMI_SPLASH_RELATIVE_PATH);
+            self.startup_splash.texture =
+                load_local_png_texture(ctx, &path, "chatty_factory_fmi_splash");
+        }
+
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgb(10, 12, 14))
+                    .inner_margin(egui::Margin::same(24.0)),
+            )
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(30.0);
+                    ui.label(
+                        egui::RichText::new("Fractal Media Infrastructure")
+                            .size(30.0)
+                            .strong()
+                            .color(egui::Color32::from_rgb(240, 240, 236)),
+                    );
+                    ui.add_space(12.0);
+
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgb(18, 20, 22))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgb(68, 72, 78),
+                        ))
+                        .rounding(12.0)
+                        .inner_margin(egui::Margin::same(18.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width().min(780.0));
+                            if let Some(texture) = self.startup_splash.texture.as_ref() {
+                                let size = texture.size_vec2();
+                                let max_width = ui.available_width().min(720.0);
+                                let scale = (max_width / size.x).min(1.0);
+                                ui.add(
+                                    egui::Image::new(texture)
+                                        .fit_to_exact_size(size * scale)
+                                        .sense(egui::Sense::hover()),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new("FMI wordmark asset unavailable")
+                                        .strong()
+                                        .color(egui::Color32::from_rgb(220, 220, 220)),
+                                );
+                            }
+                        });
+
+                    ui.add_space(14.0);
+                    ui.small(
+                        "Independent R&D umbrella for open-source AI tooling, cognitive scaffolding experiments, and local-first research systems.",
+                    );
+                    ui.add_space(12.0);
+                    ui.add(
+                        egui::ProgressBar::new(
+                            (elapsed.as_secs_f32() / FMI_SPLASH_DURATION.as_secs_f32())
+                                .clamp(0.0, 1.0),
+                        )
+                        .desired_width(320.0),
+                    );
+                    ui.add_space(8.0);
+                    ui.small("Press Space, Enter, Esc, or click to continue");
+                });
+            });
+
+        true
     }
 
     fn runtime_state_path(&self) -> PathBuf {
@@ -3659,6 +3766,9 @@ fn lane_readiness_tone(
 
 impl App for ChattyFactoryUiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
+        if self.show_startup_splash(ctx) {
+            return;
+        }
         self.poll_task_results();
         self.prune_toasts();
 
@@ -4563,6 +4673,25 @@ impl App for ChattyFactoryUiApp {
                         });
 
                         columns[1].group(|ui| {
+                            ui.heading("Project Identity");
+                            ui.label("Publisher / steward: Fractal Media Infrastructure");
+                            ui.label("GitHub: instance001");
+                            ui.label("License: GNU Affero General Public License v3.0");
+                            ui.label("ChattyFactory is published under FMI, a small independent R&D umbrella for open-source AI tooling, cognitive scaffolding experiments, and local-first research systems.");
+                            egui::CollapsingHeader::new("About Fractal Media Infrastructure")
+                                .default_open(false)
+                                .show(ui, |ui| {
+                                    ui.label("Repository: instance001/chatty-factory");
+                                    ui.hyperlink_to(
+                                        "Open repository",
+                                        "https://github.com/instance001/chatty-factory",
+                                    );
+                                    ui.hyperlink_to(
+                                        "Open publisher GitHub",
+                                        "https://github.com/instance001",
+                                    );
+                                });
+                            ui.separator();
                             self.render_runtime_registry_dashboard(ui);
                         });
                     });
@@ -6869,6 +6998,28 @@ fn load_bridge_governance_refresh_status(
         }
     }
     Some(status)
+}
+
+fn load_local_png_texture(
+    ctx: &egui::Context,
+    path: &Path,
+    texture_name: &str,
+) -> Option<egui::TextureHandle> {
+    let bytes = fs::read(path).ok()?;
+    let image = ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?
+        .to_rgba8();
+    let size = [image.width() as usize, image.height() as usize];
+    let pixels = image.into_raw();
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+    Some(ctx.load_texture(
+        texture_name.to_owned(),
+        color_image,
+        egui::TextureOptions::LINEAR,
+    ))
 }
 
 fn load_family_governance_refresh_status(

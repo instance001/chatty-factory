@@ -563,7 +563,10 @@ impl ChattyFactoryUiApp {
                 ));
             }
             if !postcheck.recommended_next_action.is_empty() {
-                ui.label(format!("Next action: {}", postcheck.recommended_next_action));
+                ui.label(format!(
+                    "Next action: {}",
+                    postcheck.recommended_next_action
+                ));
             }
             if !postcheck.recommended_next_step.is_empty() {
                 ui.label(format!("Next step: {}", postcheck.recommended_next_step));

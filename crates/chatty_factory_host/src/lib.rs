@@ -24,25 +24,25 @@ use chatty_factory_core::{
     run_local_text_generation, run_runtime_smoke, should_route_followup_via_planner_text,
     supported_chattycog_bridge_capabilities, AcceptanceCheck, AcceptanceRecipeStatus,
     ApprovedConstraintShelf, AtomizationFloorDecision, BuildConstraintReviewReceipt,
-    BuildExecutionWorkOrder, BuildFeatureSlice, BuildPlanArtifact, BuildPlanReview,
-    BuildVerificationReceipt, CapabilityComparisonBundle, ChattyCogBridgeCapabilities,
-    BuildIntentFreeze, ClarificationRequest, ComposableRoutePlan, CompositionRouteClass,
+    BuildExecutionWorkOrder, BuildFeatureSlice, BuildIntentFreeze, BuildPlanArtifact,
+    BuildPlanReview, BuildVerificationReceipt, CapabilityComparisonBundle,
+    ChattyCogBridgeCapabilities, ClarificationRequest, ComposableRoutePlan, CompositionRouteClass,
     ConstraintApprovalReceipt, ConstraintPromotionCandidate, ConstraintReviewReceipt,
     ConstraintShelfHistory, ConstraintShelfHistoryEntry, ConstraintShelfMutationReceipt,
     ConstraintViolation, DesiredSurface, ExoskeletonTarget, FailureClass, FailureReport,
     FailureReportEvidence, FailureVaultEntry, FallbackBuildSpec, FallbackPlanReceipt, FamilyId,
     FamilyPrimitiveAdapter, HelperRuntimeReceipt, HelperServiceSpec, ImplementationConstraint,
     ModelTaskGenerationReceipt, OperatorBundleStatus, PatchIntentFreeze, PatchLaneStatus,
-    PatchPlanReview, PatchReceipt, PlanTask, PlanTaskExecutionLog, PlanTaskExecutionReceipt, PlanTaskList,
-    PlanTaskModelAttemptReceipt, PlanTaskVerificationLog, PlanTaskVerificationReceipt,
-    PlannedFileOperation, PlannerDispatchReceipt, PlannerHandoff, PlannerResponse,
-    PrimitiveExecutionPlan, PrimitiveExecutionStep, PrimitiveProofEnrichmentBinding,
-    PrimitiveProofFamilyRequestBinding, PrimitiveProofHarnessReceipt, PrimitiveProofTemplate,
-    ProjectBrowserState, ProjectPatchDiagnosis, ProjectSession, ProjectSpec,
-    ProposedConstraintReceipt, RequestMode, RequestPlan, RequestRecord, RetrySearchProofReceipt,
-    RuntimeConfig, RuntimeModelCatalogReceipt, RuntimeSmokeReceipt,
-    TaskDecompositionInferenceReceipt, TaskDecompositionProposal, TaskDecompositionReceipt,
-    TriangulationAttempt, TriangulationSession,
+    PatchPlanReview, PatchReceipt, PlanTask, PlanTaskExecutionLog, PlanTaskExecutionReceipt,
+    PlanTaskList, PlanTaskModelAttemptReceipt, PlanTaskVerificationLog,
+    PlanTaskVerificationReceipt, PlannedFileOperation, PlannerDispatchReceipt, PlannerHandoff,
+    PlannerResponse, PrimitiveExecutionPlan, PrimitiveExecutionStep,
+    PrimitiveProofEnrichmentBinding, PrimitiveProofFamilyRequestBinding,
+    PrimitiveProofHarnessReceipt, PrimitiveProofTemplate, ProjectBrowserState,
+    ProjectPatchDiagnosis, ProjectSession, ProjectSpec, ProposedConstraintReceipt, RequestMode,
+    RequestPlan, RequestRecord, RetrySearchProofReceipt, RuntimeConfig, RuntimeModelCatalogReceipt,
+    RuntimeSmokeReceipt, TaskDecompositionInferenceReceipt, TaskDecompositionProposal,
+    TaskDecompositionReceipt, TriangulationAttempt, TriangulationSession,
 };
 use chatty_factory_families::{
     apply_request_plan_enrichments, build_chattycog_chattyedu_native_window_module,
@@ -716,12 +716,8 @@ fn paired_proof_next_action(
         )
     } else {
         let normalized_failure_class = "verification_failure".to_string();
-        let next_action = select_mechanical_next_action(
-            &normalized_failure_class,
-            Some("bundle"),
-            0,
-            false,
-        );
+        let next_action =
+            select_mechanical_next_action(&normalized_failure_class, Some("bundle"), 0, false);
         (normalized_failure_class, next_action)
     }
 }
@@ -763,12 +759,7 @@ fn governance_next_action(
             ],
         }
     } else {
-        select_mechanical_next_action(
-            normalized_failure_class,
-            Some("bundle"),
-            0,
-            false,
-        )
+        select_mechanical_next_action(normalized_failure_class, Some("bundle"), 0, false)
     }
 }
 
@@ -792,12 +783,7 @@ fn constraint_approval_next_action(normalized_failure_class: &str) -> Mechanical
             ],
         }
     } else {
-        select_mechanical_next_action(
-            normalized_failure_class,
-            Some("bundle"),
-            0,
-            false,
-        )
+        select_mechanical_next_action(normalized_failure_class, Some("bundle"), 0, false)
     }
 }
 
@@ -818,12 +804,7 @@ fn constraint_shelf_mutation_next_action(
     normalized_failure_class: &str,
 ) -> MechanicalNextAction {
     if !normalized_failure_class.is_empty() {
-        return select_mechanical_next_action(
-            normalized_failure_class,
-            Some("bundle"),
-            0,
-            false,
-        );
+        return select_mechanical_next_action(normalized_failure_class, Some("bundle"), 0, false);
     }
 
     let (action_id, step, rationale) = match action {
@@ -1137,11 +1118,13 @@ fn classify_fallback_outcome(
 ) -> (String, Vec<String>) {
     let mut notes = Vec::new();
     if let Some(stack) = request.explicit_stack.as_deref() {
-        if !plan
-            .inferred_family_candidates
-            .iter()
-            .any(|family_id| explicit_stack_requirement_satisfied(stack, Some(family_id.as_str()), plan.inferred_tool_kind.as_deref()))
-        {
+        if !plan.inferred_family_candidates.iter().any(|family_id| {
+            explicit_stack_requirement_satisfied(
+                stack,
+                Some(family_id.as_str()),
+                plan.inferred_tool_kind.as_deref(),
+            )
+        }) {
             notes.push(format!(
                 "explicit stack requirement `{stack}` does not currently have an honest bounded result on this route"
             ));
@@ -1220,8 +1203,11 @@ fn execution_outcome_next_action(
 
 fn with_execution_outcome_posture(mut result: HostExecutionResult) -> HostExecutionResult {
     if let Some(outcome_class) = result.outcome_class.as_deref() {
-        let next_action =
-            execution_outcome_next_action(&result.kind, outcome_class, result.acceptance_status.as_deref());
+        let next_action = execution_outcome_next_action(
+            &result.kind,
+            outcome_class,
+            result.acceptance_status.as_deref(),
+        );
         result.recommended_next_action = Some(next_action.action_id);
         result.recommended_next_step = next_action.recommended_next_step;
     }
@@ -1280,10 +1266,15 @@ fn derive_build_intent_freeze(
     let mut freeze_notes = Vec::new();
 
     if let Some(stack) = request.explicit_stack.as_deref() {
-        hard_requirements.push(format!("preserve explicit stack/toolchain request: {stack}"));
+        hard_requirements.push(format!(
+            "preserve explicit stack/toolchain request: {stack}"
+        ));
     }
     if let Some(surface) = request.desired_surface.as_ref() {
-        hard_requirements.push(format!("preserve desired surface: {}", desired_surface_label(surface)));
+        hard_requirements.push(format!(
+            "preserve desired surface: {}",
+            desired_surface_label(surface)
+        ));
     }
     if let Some(target) = request.exoskeleton_target.as_ref() {
         hard_requirements.push(format!(
@@ -8797,10 +8788,9 @@ impl HostBridge {
         receipt.recommended_next_action = next_action.action_id.clone();
         receipt.recommended_next_step = next_action.recommended_next_step.clone();
         receipt.notes.extend(notes.clone());
-        receipt.notes.push(format!(
-            "mechanical next action: {}",
-            next_action.action_id
-        ));
+        receipt
+            .notes
+            .push(format!("mechanical next action: {}", next_action.action_id));
         receipt.notes.push(format!(
             "mechanical next step: {}",
             next_action.recommended_next_step
@@ -9045,10 +9035,7 @@ impl HostBridge {
                         "proof next action: {}",
                         paired_receipt.recommended_next_action
                     ),
-                    format!(
-                        "proof next step: {}",
-                        paired_receipt.recommended_next_step
-                    ),
+                    format!("proof next step: {}", paired_receipt.recommended_next_step),
                 ],
                 recommended_next_action: None,
                 recommended_next_step: String::new(),
@@ -9102,10 +9089,7 @@ impl HostBridge {
                         "proof next action: {}",
                         paired_receipt.recommended_next_action
                     ),
-                    format!(
-                        "proof next step: {}",
-                        paired_receipt.recommended_next_step
-                    ),
+                    format!("proof next step: {}", paired_receipt.recommended_next_step),
                 ],
                 file_paths: vec![
                     paired_receipt_path.display().to_string(),
@@ -9559,11 +9543,12 @@ impl HostBridge {
         persist_json_pretty(&approval_path, &approval)?;
 
         let mutation_normalized_failure_class =
-            normalized_failure_class_for_constraint_shelf_mutation("approve", "approved_into_shelf");
-        let mutation_next_action = constraint_shelf_mutation_next_action(
-            "approve",
-            &mutation_normalized_failure_class,
-        );
+            normalized_failure_class_for_constraint_shelf_mutation(
+                "approve",
+                "approved_into_shelf",
+            );
+        let mutation_next_action =
+            constraint_shelf_mutation_next_action("approve", &mutation_normalized_failure_class);
         let mutation = ConstraintShelfMutationReceipt {
             mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
             constraint_id: proposal.proposed_constraint.constraint_id.clone(),
@@ -9739,8 +9724,10 @@ impl HostBridge {
 
         let mutation_root = self.runtime_root.join("constraint_shelf_mutations");
         for constraint_id in archived_constraint_ids.iter() {
-            let normalized_failure_class =
-                normalized_failure_class_for_constraint_shelf_mutation("archive", "removed_from_shelf");
+            let normalized_failure_class = normalized_failure_class_for_constraint_shelf_mutation(
+                "archive",
+                "removed_from_shelf",
+            );
             let next_action =
                 constraint_shelf_mutation_next_action("archive", &normalized_failure_class);
             let mutation = ConstraintShelfMutationReceipt {
@@ -9906,9 +9893,12 @@ impl HostBridge {
         history.updated_at = Some(chatty_factory_core::timestamp_id("updated"));
         persist_json_pretty(&history_path, &history)?;
 
-        let normalized_failure_class =
-            normalized_failure_class_for_constraint_shelf_mutation("restore", "restored_from_history");
-        let next_action = constraint_shelf_mutation_next_action("restore", &normalized_failure_class);
+        let normalized_failure_class = normalized_failure_class_for_constraint_shelf_mutation(
+            "restore",
+            "restored_from_history",
+        );
+        let next_action =
+            constraint_shelf_mutation_next_action("restore", &normalized_failure_class);
         let mutation = ConstraintShelfMutationReceipt {
             mutation_id: chatty_factory_core::timestamp_id("constraint-shelf-mutation"),
             constraint_id: constraint_id.to_string(),
@@ -18328,12 +18318,8 @@ fn emit_patch_substrate_attempt_result(
     ];
     route_notes.extend(soft_review_patch_notes.iter().cloned());
     route_notes.extend(substrate_bundle.notes.iter().cloned());
-    let next_action = select_mechanical_next_action(
-        "route_selection_mismatch",
-        Some("bundle"),
-        0,
-        false,
-    );
+    let next_action =
+        select_mechanical_next_action("route_selection_mismatch", Some("bundle"), 0, false);
     details.push(format!("recommended_next_action={}", next_action.action_id));
     details.push(format!(
         "recommended_next_step={}",
@@ -18354,7 +18340,10 @@ fn emit_patch_substrate_attempt_result(
             request_id: request.request_id.clone(),
             project_name: spec.project_name.clone(),
             build_intent_freeze_path: Some(
-                substrate_bundle.build_intent_freeze_path.display().to_string(),
+                substrate_bundle
+                    .build_intent_freeze_path
+                    .display()
+                    .to_string(),
             ),
             outcome_class: Some("partial_success".into()),
             outcome_notes: {
@@ -18395,7 +18384,10 @@ fn emit_patch_substrate_attempt_result(
             route_notes,
             file_paths: {
                 let mut files = vec![
-                    substrate_bundle.build_intent_freeze_path.display().to_string(),
+                    substrate_bundle
+                        .build_intent_freeze_path
+                        .display()
+                        .to_string(),
                     patch_diagnosis_path.display().to_string(),
                     patch_plan_review_path.display().to_string(),
                     patch_constraint_review_path.display().to_string(),
@@ -18593,10 +18585,8 @@ fn run_patch_diagnosis_postcheck(
         warnings.is_empty(),
         !out_of_contract_modified_files.is_empty(),
     );
-    let normalized_failure_class = normalized_failure_class_for_patch_postcheck(
-        &warnings,
-        &out_of_contract_modified_files,
-    );
+    let normalized_failure_class =
+        normalized_failure_class_for_patch_postcheck(&warnings, &out_of_contract_modified_files);
     let next_action = if normalized_failure_class.is_empty() {
         MechanicalNextAction {
             action_id: "none_patch_verified".into(),
@@ -21302,12 +21292,7 @@ fn derive_build_fallback_failure_mode(
     summary: &str,
     request: &RequestRecord,
     plan: &RequestPlan,
-) -> (
-    &'static str,
-    &'static str,
-    FailureClass,
-    &'static str,
-) {
+) -> (&'static str, &'static str, FailureClass, &'static str) {
     if plan.inferred_family_candidates.is_empty() {
         (
             "no_deterministic_family_match",
@@ -21353,8 +21338,12 @@ fn derive_build_verification_receipt(
         derive_build_fallback_failure_mode(summary, request, plan);
     let normalized_failure_class =
         normalized_failure_class_for_build_failure(&failure_class, failure_mode, summary);
-    let next_action =
-        select_mechanical_next_action(&normalized_failure_class, Some("build_failure_signature"), 0, false);
+    let next_action = select_mechanical_next_action(
+        &normalized_failure_class,
+        Some("build_failure_signature"),
+        0,
+        false,
+    );
     let approved_constraints = matching_approved_build_constraints(
         runtime_root,
         review_subject,
@@ -21387,10 +21376,7 @@ fn derive_build_verification_receipt(
             build_spec.recommended_next_step
         ));
     }
-    findings.push(format!(
-        "mechanical next action: {}",
-        next_action.action_id
-    ));
+    findings.push(format!("mechanical next action: {}", next_action.action_id));
     findings.push(format!(
         "replacement guidance: {}",
         next_action.recommended_next_step
@@ -21580,8 +21566,7 @@ fn should_continue_build_with_soft_review(plan: &RequestPlan) -> bool {
 
 fn is_soft_patch_review_reason(reason: &str) -> bool {
     reason == "follow-up request did not match a known patch lane"
-        || reason
-            == "follow-up request asks for improvement without matching a concrete patch lane"
+        || reason == "follow-up request asks for improvement without matching a concrete patch lane"
 }
 
 fn should_continue_patch_with_soft_review(plan: &RequestPlan, spec: &ProjectSpec) -> bool {
@@ -22239,11 +22224,8 @@ fn persist_post_build_failure_learning(
     let failure_class = classify_failure(summary);
     let (review_subject, specific_failure_mode, specific_blocked_method) =
         derive_post_build_failure_details(failure_mode, blocked_method, summary);
-    let normalized_failure_class = normalized_failure_class_for_build_failure(
-        &failure_class,
-        &specific_failure_mode,
-        summary,
-    );
+    let normalized_failure_class =
+        normalized_failure_class_for_build_failure(&failure_class, &specific_failure_mode, summary);
     let next_action = select_mechanical_next_action(
         &normalized_failure_class,
         Some("build_failure_signature"),
@@ -23231,19 +23213,20 @@ fn fallback_recommended_next_action(
     plan: &chatty_factory_core::RequestPlan,
     chattycog_shape: &ChattyCogFallbackShape,
 ) -> MechanicalNextAction {
-    let normalized_failure_class = if matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch)) {
-        "route_selection_mismatch"
-    } else if plan.inferred_family_candidates.is_empty() {
-        "unsupported_family_capability"
-    } else if plan.needs_llm_review || chattycog_shape.requested_hosting_mode.is_none() {
-        "route_selection_mismatch"
-    } else if chattycog_shape.has_hosting_conflict || chattycog_shape.exceeds_current_contract {
-        "task_too_broad"
-    } else if !chattycog_shape.unsupported_bridge_capabilities.is_empty() {
-        "unsupported_family_capability"
-    } else {
-        "verification_failure"
-    };
+    let normalized_failure_class =
+        if matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch)) {
+            "route_selection_mismatch"
+        } else if plan.inferred_family_candidates.is_empty() {
+            "unsupported_family_capability"
+        } else if plan.needs_llm_review || chattycog_shape.requested_hosting_mode.is_none() {
+            "route_selection_mismatch"
+        } else if chattycog_shape.has_hosting_conflict || chattycog_shape.exceeds_current_contract {
+            "task_too_broad"
+        } else if !chattycog_shape.unsupported_bridge_capabilities.is_empty() {
+            "unsupported_family_capability"
+        } else {
+            "verification_failure"
+        };
     let mut next_action =
         select_mechanical_next_action(normalized_failure_class, Some("bundle"), 0, false);
     next_action.recommended_next_step = fallback_recommended_next_step(request, chattycog_shape);
@@ -27274,8 +27257,7 @@ mod tests {
         let mut plan = sample_review_plan();
         plan.mode = Some(RequestMode::Patch);
         plan.available_patch_kinds = vec!["progress_banner".into()];
-        plan.escalation_reasons =
-            vec!["follow-up request did not match a known patch lane".into()];
+        plan.escalation_reasons = vec!["follow-up request did not match a known patch lane".into()];
 
         assert!(should_continue_patch_with_soft_review(&plan, &spec));
     }
@@ -27293,8 +27275,7 @@ mod tests {
         plan.mode = Some(RequestMode::Patch);
         plan.available_patch_kinds = vec!["progress_banner".into()];
         plan.constraints = vec!["surface is not explicit in the request".into()];
-        plan.escalation_reasons =
-            vec!["follow-up request did not match a known patch lane".into()];
+        plan.escalation_reasons = vec!["follow-up request did not match a known patch lane".into()];
 
         assert!(!should_continue_patch_with_soft_review(&plan, &spec));
     }
