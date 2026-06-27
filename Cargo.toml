@@ -4,7 +4,6 @@ members = [
     "crates/chatty_factory_control",
     "crates/chatty_factory_host",
     "crates/chatty_factory_families",
-    "crates/chatty_factory_templates",
     "crates/chatty_factory_verify",
     "crates/chatty_factory_cli",
     "crates/chatty_factory_ui",

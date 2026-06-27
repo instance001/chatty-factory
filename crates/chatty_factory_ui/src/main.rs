@@ -8,7 +8,6 @@ use std::{
     fs,
 };
 
-mod catalog_governance_panels;
 mod extension_governance_panel;
 mod extension_workbench_panel;
 mod governance_ui;
@@ -19,7 +18,7 @@ mod request_action_panel;
 mod runtime_registry_dashboard;
 
 use chatty_factory_core::{
-    build_starter_label, built_in_proof_templates, capability_comparison_bundle_manifest_path,
+    built_in_proof_templates, capability_comparison_bundle_manifest_path,
     capability_comparison_bundles_from_root, proof_template_manifest_path,
     proof_templates_from_root, AcceptanceRecipeStatus, CapabilityComparisonBundle,
     ChattyCogBridgeCapabilities, OperatorBundleStatus, PatchLaneStatus, PrimitiveProofTemplate,
@@ -62,8 +61,6 @@ enum UiTask {
     RefreshPatchGovernance,
     RefreshHelperGovernance,
     RefreshBridgeGovernance,
-    RefreshFamilyGovernance,
-    RefreshTemplateGovernance,
     ApproveProposedConstraint {
         request_id_or_path: String,
     },
@@ -116,7 +113,6 @@ enum UiTask {
     },
     BuildRequest {
         request: String,
-        starter_override_id: Option<String>,
         auto_planner: bool,
         port: String,
         model: String,
@@ -138,7 +134,7 @@ struct UiTaskResult {
     browser_state: Option<ProjectBrowserState>,
     action_summary: Option<ActionSummary>,
     execution_result: Option<UiExecutionResult>,
-    fallback_result: Option<UiFallbackResult>,
+    next_attempt_result: Option<UiNextAttemptResult>,
     extension_registry: Option<HostExtensionRegistryView>,
 }
 
@@ -219,58 +215,6 @@ struct BridgeGovernanceRefreshStatusView {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
-struct FamilyGovernanceRefreshStatusView {
-    status_id: String,
-    refreshed_entries: usize,
-    skipped_entries: usize,
-    updated_at: String,
-    #[serde(skip)]
-    refreshed_at_label: Option<String>,
-    #[serde(skip)]
-    age_minutes: Option<u64>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct FamilyUsageEntryView {
-    family_id: String,
-    family_display_name: String,
-    family_ecosystem: Option<String>,
-    project_count: usize,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct FamilyUsageSummaryView {
-    summary_id: String,
-    total_projects: usize,
-    #[serde(default)]
-    ecosystem_project_counts: BTreeMap<String, usize>,
-    #[serde(default)]
-    families: Vec<FamilyUsageEntryView>,
-    updated_at: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct StarterUsageEntryView {
-    starter_id: String,
-    starter_label: String,
-    starter_lifecycle: String,
-    build_count: usize,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct StarterUsageSummaryView {
-    summary_id: String,
-    total_build_receipts: usize,
-    explicit_override_builds: usize,
-    auto_routed_builds: usize,
-    matched_recommendation_builds: usize,
-    overridden_recommendation_builds: usize,
-    #[serde(default)]
-    starters: Vec<StarterUsageEntryView>,
-    updated_at: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
 struct TriangulationLoopSummaryView {
     summary_id: String,
     open_provisional_vault_entries: usize,
@@ -339,50 +283,6 @@ struct RetrySearchProofReceiptView {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
-struct BuildReceiptView {
-    starter_override_id: Option<String>,
-    starter_override_summary: Option<String>,
-    recommended_starter_id: Option<String>,
-    recommended_starter_summary: Option<String>,
-    starter_recommendation_comparison: Option<String>,
-    project_name: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct FamilyGovernanceReceiptView {
-    family_id: String,
-    #[serde(default)]
-    family_display_name: Option<String>,
-    #[serde(default)]
-    family_ecosystem: Option<String>,
-    manifest_path: String,
-    primary_substrate: String,
-    #[serde(default)]
-    lifecycle_status: String,
-    #[serde(default)]
-    lifecycle_notes: Vec<String>,
-    supported_tool_kinds: Vec<String>,
-    provided_build_primitive_classes: Vec<String>,
-    primitive_adapter_ids: Vec<String>,
-    drift_status: String,
-    drift_notes: Vec<String>,
-    change_since_last_live_status: String,
-    change_since_last_live_notes: Vec<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct TemplateGovernanceRefreshStatusView {
-    status_id: String,
-    refreshed_entries: usize,
-    skipped_entries: usize,
-    updated_at: String,
-    #[serde(skip)]
-    refreshed_at_label: Option<String>,
-    #[serde(skip)]
-    age_minutes: Option<u64>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
 struct ProjectPatchReadinessRefreshStatusView {
     status_id: String,
     refreshed_entries: usize,
@@ -392,18 +292,6 @@ struct ProjectPatchReadinessRefreshStatusView {
     refreshed_at_label: Option<String>,
     #[serde(skip)]
     age_minutes: Option<u64>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct TemplateGovernanceReceiptView {
-    template_bundle_id: String,
-    template_category: String,
-    template_root: String,
-    artifact_paths: Vec<String>,
-    drift_status: String,
-    drift_notes: Vec<String>,
-    change_since_last_live_status: String,
-    change_since_last_live_notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -417,9 +305,7 @@ struct ProjectHistoricalBlockerBundleView {
 #[derive(Debug, Clone, serde::Deserialize)]
 struct ProjectPatchReadinessReceiptView {
     #[serde(default)]
-    family_display_name: Option<String>,
-    #[serde(default)]
-    family_ecosystem: Option<String>,
+    substrate_kind: Option<String>,
     blocked_lane_reasons: BTreeMap<String, String>,
     superseded_blocked_lane_replacements: BTreeMap<String, Vec<String>>,
     #[serde(default)]
@@ -439,7 +325,7 @@ struct BuildVerificationReceiptView {
     #[serde(default)]
     normalized_failure_class: String,
     failure_mode: String,
-    suggested_family_id: Option<String>,
+    suggested_substrate_kind: Option<String>,
     suggested_tool_kind: Option<String>,
     #[serde(default)]
     matched_approved_constraint_ids: Vec<String>,
@@ -629,7 +515,7 @@ struct ApprovedConstraintView {
     replacement_guidance: Option<String>,
     severity: String,
     active: bool,
-    family_id: Option<String>,
+    substrate_kind: Option<String>,
     tool_kind: Option<String>,
 }
 
@@ -944,12 +830,7 @@ struct UiExecutionResult {
     outcome_notes: Vec<String>,
     recommended_next_action: Option<String>,
     recommended_next_step: String,
-    starter_override_id: Option<String>,
-    starter_override_summary: Option<String>,
-    recommended_starter_id: Option<String>,
-    recommended_starter_summary: Option<String>,
-    starter_recommendation_comparison: Option<String>,
-    family_id: Option<String>,
+    substrate_kind: Option<String>,
     tool_kind: Option<String>,
     patch_kind: Option<String>,
     followup_request_mode: Option<String>,
@@ -974,7 +855,7 @@ struct UiExecutionResult {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
-struct CrossFamilyPairedProofReceiptSummary {
+struct LegacyComparisonPairedProofReceiptSummary {
     receipt_id: String,
     #[serde(default)]
     proof_template_id: Option<String>,
@@ -1059,19 +940,9 @@ struct PairedProofUiPreferences {
     auto_refresh_stale_bridge_governance: bool,
     #[serde(default)]
     last_auto_bridge_governance_refresh_unix_secs: Option<i64>,
-    #[serde(default = "default_true")]
-    auto_refresh_stale_family_governance: bool,
-    #[serde(default)]
-    last_auto_family_governance_refresh_unix_secs: Option<i64>,
-    #[serde(default = "default_true")]
-    auto_refresh_stale_template_governance: bool,
-    #[serde(default)]
-    last_auto_template_governance_refresh_unix_secs: Option<i64>,
     auto_planner: bool,
     planner_port: String,
     planner_model: String,
-    #[serde(default = "default_build_starter_override_id")]
-    build_starter_override_id: String,
     #[serde(default)]
     active_profile_name: Option<String>,
     #[serde(default)]
@@ -1093,12 +964,8 @@ fn default_true() -> bool {
     true
 }
 
-fn default_build_starter_override_id() -> String {
-    "auto".to_string()
-}
-
 #[derive(Debug, Clone, Default)]
-struct UiFallbackResult {
+struct UiNextAttemptResult {
     request_id: String,
     mode: Option<String>,
     outcome_class: Option<String>,
@@ -1106,11 +973,13 @@ struct UiFallbackResult {
     question: String,
     interpreted_goal: String,
     reasons: Vec<String>,
-    candidate_family_ids: Vec<String>,
+    funnel_stage: String,
+    next_attempt_mechanics: Vec<String>,
+    evidence_receipt_paths: Vec<String>,
+    host_shape_substitution_forbidden: bool,
+    candidate_substrate_kinds: Vec<String>,
     requested_capabilities: Vec<String>,
     constraints: Vec<String>,
-    suggested_extension_kind: String,
-    suggested_family_id: Option<String>,
     suggested_tool_kind: Option<String>,
     suggested_patch_kind: Option<String>,
     suggested_bridge_capabilities: Vec<String>,
@@ -1120,13 +989,13 @@ struct UiFallbackResult {
     implementation_notes: Vec<String>,
     recommended_next_action: Option<String>,
     recommended_next_step: String,
-    pending_extension_ids: Vec<String>,
-    pending_extension_scaffold_roots: Vec<String>,
+    pending_attempt_ids: Vec<String>,
+    pending_attempt_bundle_roots: Vec<String>,
     chattycog_requested_hosting_mode: Option<String>,
     chattycog_valid_hosting_modes: Vec<String>,
     chattycog_requested_bridge_capabilities: Vec<String>,
     chattycog_supported_bridge_capabilities: Vec<String>,
-    stub_bundle_path: Option<String>,
+    attempt_bundle_path: Option<String>,
     build_failure_class: Option<String>,
     build_failure_mode: Option<String>,
     matched_approved_constraint_ids: Vec<String>,
@@ -1150,10 +1019,6 @@ struct ChattyFactoryUiApp {
     project_patch_readiness_refresh_status: Option<ProjectPatchReadinessRefreshStatusView>,
     helper_governance_refresh_status: Option<HelperGovernanceRefreshStatusView>,
     bridge_governance_refresh_status: Option<BridgeGovernanceRefreshStatusView>,
-    family_governance_refresh_status: Option<FamilyGovernanceRefreshStatusView>,
-    selected_family_governance_id: Option<String>,
-    template_governance_refresh_status: Option<TemplateGovernanceRefreshStatusView>,
-    selected_template_governance_id: Option<String>,
     extension_registry: Option<HostExtensionRegistryView>,
     selected_extension_entry_id: Option<String>,
     favorite_extension_entry_ids: BTreeSet<String>,
@@ -1194,12 +1059,7 @@ struct ChattyFactoryUiApp {
     last_auto_helper_governance_refresh_unix_secs: Option<i64>,
     auto_refresh_stale_bridge_governance: bool,
     last_auto_bridge_governance_refresh_unix_secs: Option<i64>,
-    auto_refresh_stale_family_governance: bool,
-    last_auto_family_governance_refresh_unix_secs: Option<i64>,
-    auto_refresh_stale_template_governance: bool,
-    last_auto_template_governance_refresh_unix_secs: Option<i64>,
     request_input: String,
-    build_starter_override_id: String,
     paired_proof_request_input: String,
     selected_proof_template_id: String,
     proof_history_template_filter: String,
@@ -1213,7 +1073,7 @@ struct ChattyFactoryUiApp {
     command_log: String,
     last_action_summary: ActionSummary,
     last_execution_result: Option<UiExecutionResult>,
-    last_fallback_result: Option<UiFallbackResult>,
+    last_next_attempt_result: Option<UiNextAttemptResult>,
     extension_activity: Vec<ExtensionActivityItem>,
     status_line: String,
     task_sender: Sender<UiTaskResult>,
@@ -1252,18 +1112,6 @@ impl ChattyFactoryUiApp {
             bridge_governance_refresh_status: load_bridge_governance_refresh_status(
                 &workspace_root,
             ),
-            family_governance_refresh_status: load_family_governance_refresh_status(
-                &workspace_root,
-            ),
-            selected_family_governance_id: load_family_governance_receipts(&workspace_root)
-                .first()
-                .map(|receipt| receipt.family_id.clone()),
-            template_governance_refresh_status: load_template_governance_refresh_status(
-                &workspace_root,
-            ),
-            selected_template_governance_id: load_template_governance_receipts(&workspace_root)
-                .first()
-                .map(|receipt| receipt.template_bundle_id.clone()),
             extension_registry: load_extension_registry(&workspace_root),
             selected_extension_entry_id: None,
             favorite_extension_entry_ids: load_extension_favorites(&workspace_root),
@@ -1363,25 +1211,7 @@ impl ChattyFactoryUiApp {
             last_auto_bridge_governance_refresh_unix_secs: paired_proof_ui_preferences
                 .as_ref()
                 .and_then(|prefs| prefs.last_auto_bridge_governance_refresh_unix_secs),
-            auto_refresh_stale_family_governance: paired_proof_ui_preferences
-                .as_ref()
-                .map(|prefs| prefs.auto_refresh_stale_family_governance)
-                .unwrap_or(true),
-            last_auto_family_governance_refresh_unix_secs: paired_proof_ui_preferences
-                .as_ref()
-                .and_then(|prefs| prefs.last_auto_family_governance_refresh_unix_secs),
-            auto_refresh_stale_template_governance: paired_proof_ui_preferences
-                .as_ref()
-                .map(|prefs| prefs.auto_refresh_stale_template_governance)
-                .unwrap_or(true),
-            last_auto_template_governance_refresh_unix_secs: paired_proof_ui_preferences
-                .as_ref()
-                .and_then(|prefs| prefs.last_auto_template_governance_refresh_unix_secs),
             request_input: String::new(),
-            build_starter_override_id: paired_proof_ui_preferences
-                .as_ref()
-                .map(|prefs| prefs.build_starter_override_id.clone())
-                .unwrap_or_else(default_build_starter_override_id),
             paired_proof_request_input: String::new(),
             selected_proof_template_id: paired_proof_ui_preferences
                 .as_ref()
@@ -1422,7 +1252,7 @@ impl ChattyFactoryUiApp {
             command_log: String::new(),
             last_action_summary: ActionSummary::default(),
             last_execution_result: None,
-            last_fallback_result: None,
+            last_next_attempt_result: None,
             status_line: "Ready".to_string(),
             task_sender,
             task_receiver,
@@ -1481,26 +1311,6 @@ impl ChattyFactoryUiApp {
             app.last_auto_bridge_governance_refresh_unix_secs = Some(Utc::now().timestamp());
             app.save_paired_proof_ui_preferences();
             app.spawn_task(UiTask::RefreshBridgeGovernance);
-        }
-        if family_governance_should_auto_refresh(
-            app.family_governance_refresh_status.as_ref(),
-            app.auto_refresh_stale_family_governance,
-            app.last_auto_family_governance_refresh_unix_secs,
-        ) {
-            app.status_line = "Family governance is stale. Auto-refreshing.".to_string();
-            app.last_auto_family_governance_refresh_unix_secs = Some(Utc::now().timestamp());
-            app.save_paired_proof_ui_preferences();
-            app.spawn_task(UiTask::RefreshFamilyGovernance);
-        }
-        if template_governance_should_auto_refresh(
-            app.template_governance_refresh_status.as_ref(),
-            app.auto_refresh_stale_template_governance,
-            app.last_auto_template_governance_refresh_unix_secs,
-        ) {
-            app.status_line = "Template governance is stale. Auto-refreshing.".to_string();
-            app.last_auto_template_governance_refresh_unix_secs = Some(Utc::now().timestamp());
-            app.save_paired_proof_ui_preferences();
-            app.spawn_task(UiTask::RefreshTemplateGovernance);
         }
         app.refresh_from_runtime_file();
         app.refresh_runtime_status();
@@ -1824,16 +1634,9 @@ impl ChattyFactoryUiApp {
             auto_refresh_stale_bridge_governance: self.auto_refresh_stale_bridge_governance,
             last_auto_bridge_governance_refresh_unix_secs: self
                 .last_auto_bridge_governance_refresh_unix_secs,
-            auto_refresh_stale_family_governance: self.auto_refresh_stale_family_governance,
-            last_auto_family_governance_refresh_unix_secs: self
-                .last_auto_family_governance_refresh_unix_secs,
-            auto_refresh_stale_template_governance: self.auto_refresh_stale_template_governance,
-            last_auto_template_governance_refresh_unix_secs: self
-                .last_auto_template_governance_refresh_unix_secs,
             auto_planner: self.auto_planner,
             planner_port: self.planner_port.clone(),
             planner_model: self.planner_model.clone(),
-            build_starter_override_id: self.build_starter_override_id.clone(),
             active_profile_name: if self.selected_proof_profile_name == "custom" {
                 None
             } else {
@@ -2060,7 +1863,7 @@ impl ChattyFactoryUiApp {
 
     fn export_paired_proof_summary(
         &mut self,
-        receipt: &CrossFamilyPairedProofReceiptSummary,
+        receipt: &LegacyComparisonPairedProofReceiptSummary,
         receipt_path: &Path,
     ) {
         let export_dir = self.paired_proof_exports_dir();
@@ -2104,7 +1907,7 @@ impl ChattyFactoryUiApp {
 
     fn copy_paired_proof_summary(
         &mut self,
-        receipt: &CrossFamilyPairedProofReceiptSummary,
+        receipt: &LegacyComparisonPairedProofReceiptSummary,
         receipt_path: &Path,
         ctx: &egui::Context,
     ) {
@@ -2274,10 +2077,6 @@ impl ChattyFactoryUiApp {
             UiTask::RefreshPatchGovernance => "Refreshing patch governance registry".to_string(),
             UiTask::RefreshHelperGovernance => "Refreshing helper governance registry".to_string(),
             UiTask::RefreshBridgeGovernance => "Refreshing bridge governance registry".to_string(),
-            UiTask::RefreshFamilyGovernance => "Refreshing family governance registry".to_string(),
-            UiTask::RefreshTemplateGovernance => {
-                "Refreshing template governance registry".to_string()
-            }
             UiTask::ApproveProposedConstraint { .. } => "Approving proposed constraint".to_string(),
             UiTask::SetApprovedConstraintActive { active, .. } => {
                 if *active {
@@ -2344,7 +2143,7 @@ impl ChattyFactoryUiApp {
                         lines: vec![error.to_string()],
                     }),
                     execution_result: None,
-                    fallback_result: None,
+                    next_attempt_result: None,
                     extension_registry: load_extension_registry(&workspace_root),
                 },
             };
@@ -2369,7 +2168,7 @@ impl ChattyFactoryUiApp {
                         self.last_action_summary = action_summary;
                     }
                     self.last_execution_result = result.execution_result;
-                    self.last_fallback_result = result.fallback_result;
+                    self.last_next_attempt_result = result.next_attempt_result;
                     self.extension_registry = result
                         .extension_registry
                         .or_else(|| load_extension_registry(&self.workspace_root));
@@ -2385,22 +2184,6 @@ impl ChattyFactoryUiApp {
                         load_helper_governance_refresh_status(&self.workspace_root);
                     self.bridge_governance_refresh_status =
                         load_bridge_governance_refresh_status(&self.workspace_root);
-                    self.family_governance_refresh_status =
-                        load_family_governance_refresh_status(&self.workspace_root);
-                    self.template_governance_refresh_status =
-                        load_template_governance_refresh_status(&self.workspace_root);
-                    if self.selected_family_governance_id.is_none() {
-                        self.selected_family_governance_id =
-                            load_family_governance_receipts(&self.workspace_root)
-                                .first()
-                                .map(|receipt| receipt.family_id.clone());
-                    }
-                    if self.selected_template_governance_id.is_none() {
-                        self.selected_template_governance_id =
-                            load_template_governance_receipts(&self.workspace_root)
-                                .first()
-                                .map(|receipt| receipt.template_bundle_id.clone());
-                    }
                     if let Some(state) = result.browser_state {
                         self.sync_browser_state(state);
                     } else {
@@ -2432,7 +2215,7 @@ fn extension_entry_matches_query(entry: &PendingExtensionEntry, query: &str) -> 
         entry.entry_id.as_str(),
         entry.status.as_str(),
         entry.extension_kind.as_str(),
-        entry.family_id.as_deref().unwrap_or(""),
+        entry.substrate_kind.as_deref().unwrap_or(""),
         entry.tool_kind.as_deref().unwrap_or(""),
         entry.patch_kind.as_deref().unwrap_or(""),
         entry.archived_reason.as_deref().unwrap_or(""),
@@ -2443,7 +2226,7 @@ fn extension_entry_matches_query(entry: &PendingExtensionEntry, query: &str) -> 
     for layer in &entry.unresolved_layers {
         fields.push(layer.as_str());
     }
-    for class in &entry.missing_family_build_primitive_classes {
+    for class in &entry.missing_base_build_primitive_classes {
         fields.push(class.as_str());
     }
     for class in &entry.missing_patch_primitive_classes {
@@ -2864,24 +2647,6 @@ fn bridge_baseline_badge(entry: &PendingExtensionEntry) -> Option<String> {
     )
 }
 
-fn family_governed_artifact_set_summary(receipt: &FamilyGovernanceReceiptView) -> String {
-    let manifest_count = if receipt.manifest_path.trim().is_empty() {
-        0
-    } else {
-        1
-    };
-    format!(
-        "Governed artifact set: {manifest_count} family manifest plus declared primitive adapter surface"
-    )
-}
-
-fn template_governed_artifact_set_summary(receipt: &TemplateGovernanceReceiptView) -> String {
-    format!(
-        "Governed artifact set: {} template artifact(s) under the selected bundle root",
-        receipt.artifact_paths.len()
-    )
-}
-
 fn extension_governed_artifact_set_summary(entry: &PendingExtensionEntry) -> Option<String> {
     match entry.extension_kind.as_str() {
         "composition_bundle" => Some(format!(
@@ -2913,90 +2678,34 @@ fn extension_governed_artifact_set_summary(entry: &PendingExtensionEntry) -> Opt
     }
 }
 
-fn family_display_name(family_id: &str) -> &'static str {
-    match family_id {
-        "chattycog_native_window_module" => "Chatty-Cog Rust Native Dashboard",
-        "chattyedu_native_window_module" => "Chatty-EDU Rust Native Dashboard",
-        "chattycog_chattyedu_native_window_module" => {
-            "Chatty-Cog + Chatty-EDU Rust Native Dashboard"
-        }
-        "chattycog_webview_module" => "Chatty-Cog Webview Module",
-        "chattycog_workspace_module" => "Chatty-Cog Workspace Module",
-        "static_web_dashboard" => "Static Web Dashboard",
-        "rust_cli_tool" => "Rust CLI Tool",
-        "python_cli_tool" => "Python CLI Tool",
-        _ => "Unknown Family",
+fn surface_display_label(surface_or_family: &str) -> &'static str {
+    match surface_or_family {
+        "static_web" | "static_web_dashboard" => "Static Web",
+        "cli" => "CLI",
+        "rust_cli" | "rust_cli_tool" => "Rust CLI",
+        "python_cli" | "python_cli_tool" => "Python CLI",
+        "webview" | "chattycog_webview_module" => "Webview",
+        "native_window"
+        | "chattycog_native_window_module"
+        | "chattyedu_native_window_module"
+        | "chattycog_chattyedu_native_window_module" => "Native Window",
+        "workspace" | "chattycog_workspace_module" => "Workspace",
+        _ => "Unknown Surface",
     }
 }
 
-fn family_ecosystem_badge(family_id: &str) -> Option<&'static str> {
-    match family_id {
-        "chattycog_native_window_module"
-        | "chattycog_webview_module"
-        | "chattycog_workspace_module" => Some("[ecosystem: Chatty-Cog]"),
-        "chattyedu_native_window_module" => Some("[ecosystem: Chatty-EDU]"),
-        "chattycog_chattyedu_native_window_module" => Some("[ecosystem: Chatty-Cog + Chatty-EDU]"),
-        _ => None,
-    }
-}
-
-fn family_summary_label(family_id: &str) -> String {
-    if let Some(badge) = family_ecosystem_badge(family_id) {
-        format!("{} {}", family_display_name(family_id), badge)
-    } else {
-        family_display_name(family_id).to_string()
-    }
-}
-
-fn family_governance_picker_label(receipt: &FamilyGovernanceReceiptView) -> String {
-    format!(
-        "{} [{}]",
-        family_summary_label_from_receipt(receipt),
-        receipt.lifecycle_status
-    )
-}
-
-fn family_summary_label_from_receipt(receipt: &FamilyGovernanceReceiptView) -> String {
-    match (
-        receipt.family_display_name.as_deref(),
-        receipt.family_ecosystem.as_deref(),
-    ) {
-        (Some(display_name), Some(ecosystem)) if !display_name.trim().is_empty() => {
-            format!("{display_name} [ecosystem: {ecosystem}]")
-        }
-        (Some(display_name), _) if !display_name.trim().is_empty() => display_name.to_string(),
-        _ => family_summary_label(&receipt.family_id),
-    }
-}
-
-fn family_summary_label_from_patchability_receipt(
-    family_id: &str,
+fn surface_label_from_patchability_receipt(
+    fallback_surface: &str,
     receipt: Option<&ProjectPatchReadinessReceiptView>,
 ) -> String {
     if let Some(receipt) = receipt {
-        match (
-            receipt.family_display_name.as_deref(),
-            receipt.family_ecosystem.as_deref(),
-        ) {
-            (Some(display_name), Some(ecosystem)) if !display_name.trim().is_empty() => {
-                return format!("{display_name} [ecosystem: {ecosystem}]");
+        if let Some(substrate_kind) = receipt.substrate_kind.as_deref() {
+            if !substrate_kind.trim().is_empty() {
+                return surface_display_label(substrate_kind).to_string();
             }
-            (Some(display_name), _) if !display_name.trim().is_empty() => {
-                return display_name.to_string();
-            }
-            _ => {}
         }
     }
-    family_summary_label(family_id)
-}
-
-fn is_canonical_ecosystem_shell_family(family_id: &str) -> bool {
-    matches!(
-        family_id,
-        "chattycog_native_window_module"
-            | "chattyedu_native_window_module"
-            | "chattycog_chattyedu_native_window_module"
-    )
+    surface_display_label(fallback_surface).to_string()
 }
 
 fn count_proof_baseline_status(
@@ -3091,12 +2800,12 @@ fn proof_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs: Option
     now.saturating_sub(last) < 15 * 60
 }
 
-fn latest_cross_family_proof_receipt_modified(
+fn latest_legacy_comparison_proof_receipt_modified(
     workspace_root: &Path,
 ) -> Option<(std::time::SystemTime, String)> {
     let root = workspace_root
         .join("runtime")
-        .join("cross_family_paired_proof_receipts");
+        .join("legacy_comparison_paired_proof_receipts");
     let entries = fs::read_dir(root).ok()?;
     entries
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -3132,7 +2841,7 @@ fn proof_governance_should_auto_refresh(
     {
         return false;
     }
-    let latest_receipt = latest_cross_family_proof_receipt_modified(workspace_root);
+    let latest_receipt = latest_legacy_comparison_proof_receipt_modified(workspace_root);
     match (status, latest_receipt) {
         (None, Some(_)) => true,
         (Some(status), Some(_)) => {
@@ -3286,76 +2995,6 @@ fn bridge_governance_should_auto_refresh(
     }
 }
 
-fn family_governance_refresh_is_stale(status: &FamilyGovernanceRefreshStatusView) -> bool {
-    status.age_minutes.unwrap_or(0) >= 60
-}
-
-fn family_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs: Option<i64>) -> bool {
-    let Some(last_auto_refresh_unix_secs) = last_auto_refresh_unix_secs else {
-        return false;
-    };
-    let Some(last_auto_refresh) =
-        chrono::DateTime::<Utc>::from_timestamp(last_auto_refresh_unix_secs, 0)
-    else {
-        return false;
-    };
-    Utc::now()
-        .signed_duration_since(last_auto_refresh)
-        .num_minutes()
-        < 15
-}
-
-fn family_governance_should_auto_refresh(
-    status: Option<&FamilyGovernanceRefreshStatusView>,
-    auto_refresh_enabled: bool,
-    last_auto_refresh_unix_secs: Option<i64>,
-) -> bool {
-    if !auto_refresh_enabled
-        || family_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
-    {
-        return false;
-    }
-    match status {
-        Some(status) => family_governance_refresh_is_stale(status),
-        None => true,
-    }
-}
-
-fn template_governance_refresh_is_stale(status: &TemplateGovernanceRefreshStatusView) -> bool {
-    status.age_minutes.unwrap_or(0) >= 60
-}
-
-fn template_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs: Option<i64>) -> bool {
-    let Some(last_auto_refresh_unix_secs) = last_auto_refresh_unix_secs else {
-        return false;
-    };
-    let Some(last_auto_refresh) =
-        chrono::DateTime::<Utc>::from_timestamp(last_auto_refresh_unix_secs, 0)
-    else {
-        return false;
-    };
-    Utc::now()
-        .signed_duration_since(last_auto_refresh)
-        .num_minutes()
-        < 15
-}
-
-fn template_governance_should_auto_refresh(
-    status: Option<&TemplateGovernanceRefreshStatusView>,
-    auto_refresh_enabled: bool,
-    last_auto_refresh_unix_secs: Option<i64>,
-) -> bool {
-    if !auto_refresh_enabled
-        || template_governance_auto_refresh_in_cooldown(last_auto_refresh_unix_secs)
-    {
-        return false;
-    }
-    match status {
-        Some(status) => template_governance_refresh_is_stale(status),
-        None => true,
-    }
-}
-
 fn proof_lineage_status(entry: &PendingExtensionEntry) -> Option<String> {
     if entry.extension_kind != "proof_harness_bundle" {
         return None;
@@ -3379,8 +3018,8 @@ fn proof_lineage_status(entry: &PendingExtensionEntry) -> Option<String> {
 fn latest_proof_receipt_for_template(
     workspace_root: &Path,
     template_id: &str,
-) -> Option<(CrossFamilyPairedProofReceiptSummary, PathBuf)> {
-    load_cross_family_paired_proof_receipts(workspace_root)
+) -> Option<(LegacyComparisonPairedProofReceiptSummary, PathBuf)> {
+    load_legacy_comparison_paired_proof_receipts(workspace_root)
         .into_iter()
         .find(|(receipt, _)| receipt.proof_template_id.as_deref() == Some(template_id))
 }
@@ -3453,10 +3092,10 @@ fn sort_extension_entries(entries: &mut Vec<&PendingExtensionEntry>, sort: Exten
         }
         ExtensionRegistrySort::FamilyToolPatch => {
             entries.sort_by(|a, b| {
-                a.family_id
+                a.substrate_kind
                     .as_deref()
                     .unwrap_or("")
-                    .cmp(b.family_id.as_deref().unwrap_or(""))
+                    .cmp(b.substrate_kind.as_deref().unwrap_or(""))
                     .then_with(|| {
                         a.tool_kind
                             .as_deref()
@@ -3669,12 +3308,12 @@ fn extension_status_blockers(entry: &PendingExtensionEntry) -> Vec<String> {
         "pending_implementation" => vec![
             "Implementation stub exists, but the lane logic is not marked implemented yet."
                 .to_string(),
-            "Next step: implement the lane scaffold before validation.".to_string(),
+            "Next step: implement the attempt bundle before validation.".to_string(),
         ],
         "implemented" => vec![
-            "Implementation is marked in progress, but scaffold files have not been validated."
+            "Implementation is marked in progress, but attempt bundle files have not been validated."
                 .to_string(),
-            "Next step: validate the scaffold and integrated files.".to_string(),
+            "Next step: validate the attempt bundle and integrated files.".to_string(),
         ],
         "validated_ready" => vec![
             "Lane files are validated, but promotion artifacts have not been prepared."
@@ -3700,7 +3339,7 @@ fn extension_status_blockers(entry: &PendingExtensionEntry) -> Vec<String> {
             "This lane is archived and no longer considered active work.".to_string(),
         ],
         "fully_live" => vec!["No blockers. This lane is shipped.".to_string()],
-        other => vec![format!("Unknown lane status `{other}`. Inspect scaffold and notes.")],
+        other => vec![format!("Unknown lane status `{other}`. Inspect the attempt bundle and notes.")],
     }
 }
 
@@ -3894,8 +3533,6 @@ impl App for ChattyFactoryUiApp {
                         .active_project_session
                         .as_ref()
                         .map(|session| session.project_name.clone());
-                    let recent_override_counts =
-                        load_recent_project_starter_override_counts(&self.workspace_root);
                     let all_projects = state
                         .projects
                         .iter()
@@ -3968,16 +3605,6 @@ impl App for ChattyFactoryUiApp {
                                 .unwrap_or(false)
                         })
                         .count();
-                    let override_heavy_projects = all_projects
-                        .iter()
-                        .filter(|(project, _, _)| {
-                            recent_override_counts
-                                .get(&project.project_name)
-                                .copied()
-                                .unwrap_or(0)
-                                > 0
-                        })
-                        .count();
                     let mut projects = all_projects
                         .into_iter()
                         .filter(|(_, readiness, receipt)| {
@@ -4047,7 +3674,6 @@ impl App for ChattyFactoryUiApp {
                             format!("Risky blockers: {risky_blocker_projects}"),
                             format!("Historical blockers: {historical_blocker_projects}"),
                             format!("Decomposable historical: {decomposable_historical_projects}"),
-                            format!("Override-heavy projects: {override_heavy_projects}"),
                         ],
                         "Refresh browser now",
                     );
@@ -4059,18 +3685,6 @@ impl App for ChattyFactoryUiApp {
                         projects.sort_by(|left, right| {
                             project_patchability_risk_rank(right.2.as_ref(), &right.1)
                                 .cmp(&project_patchability_risk_rank(left.2.as_ref(), &left.1))
-                                .then(
-                                    recent_override_counts
-                                        .get(&right.0.project_name)
-                                        .copied()
-                                        .unwrap_or(0)
-                                        .cmp(
-                                            &recent_override_counts
-                                                .get(&left.0.project_name)
-                                                .copied()
-                                                .unwrap_or(0),
-                                        ),
-                                )
                                 .then(
                                     right
                                         .1
@@ -4094,13 +3708,13 @@ impl App for ChattyFactoryUiApp {
                                 .as_deref()
                                 .map(|name| name == project.project_name)
                                 .unwrap_or(false);
-                            let family = project
-                                .family_id
-                                .as_ref()
-                                .map(|id: &chatty_factory_core::FamilyId| id.as_str().to_string())
-                                .unwrap_or_else(|| "unknown_family".to_string());
-                            let family_label = family_summary_label_from_patchability_receipt(
-                                &family,
+                            let fallback_surface = if project.substrate.trim().is_empty() {
+                                "unknown_surface"
+                            } else {
+                                project.substrate.as_str()
+                            };
+                            let surface_label = surface_label_from_patchability_receipt(
+                                fallback_surface,
                                 patchability_receipt.as_ref(),
                             );
                             let tool = project.tool_kind.as_deref().unwrap_or("none");
@@ -4124,7 +3738,7 @@ impl App for ChattyFactoryUiApp {
                                 project_patchability_badge(patchability_receipt.as_ref(), readiness);
                             let label = format!(
                                 "{}{}\n{} | {} | {}",
-                                project.project_name, badge_text, family_label, tool, project.recency_hint
+                                project.project_name, badge_text, surface_label, tool, project.recency_hint
                             );
                             if ui.selectable_label(is_selected, label).clicked() {
                                 self.selected_project_name = Some(project.project_name.clone());
@@ -4146,18 +3760,6 @@ impl App for ChattyFactoryUiApp {
                                     )
                                 {
                                     ui.label(decomposable_badge);
-                                }
-                                if let Some(count) =
-                                    recent_override_counts.get(&project.project_name)
-                                {
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "[starter-override x{count}]"
-                                        ))
-                                        .small()
-                                        .color(egui::Color32::from_rgb(204, 134, 92))
-                                        .strong(),
-                                    );
                                 }
                             });
                             ui.label(egui::RichText::new(summary).small().weak());
@@ -4240,28 +3842,6 @@ impl App for ChattyFactoryUiApp {
                                         .weak(),
                                     );
                                 }
-                            }
-                            if let Some(override_receipt) = latest_project_starter_override_receipt(
-                                &self.workspace_root,
-                                &project.project_name,
-                            ) {
-                                let chosen = override_receipt
-                                    .starter_override_id
-                                    .as_deref()
-                                    .map(build_starter_label)
-                                    .unwrap_or("Auto");
-                                let recommended = override_receipt
-                                    .recommended_starter_id
-                                    .as_deref()
-                                    .map(build_starter_label)
-                                    .unwrap_or("none");
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "Starter override: chose {chosen} instead of {recommended}"
-                                    ))
-                                    .small()
-                                    .color(egui::Color32::from_rgb(204, 134, 92)),
-                                );
                             }
                             if let Some(reason) = &readiness.first_blocked_reason {
                                 ui.label(egui::RichText::new(format!("Why: {reason}")).small().weak());
@@ -4399,11 +3979,8 @@ impl App for ChattyFactoryUiApp {
                     }
                     if let Some(spec) = &self.selected_project_spec {
                         ui.label(format!(
-                            "Family: {}",
-                            spec.family_id
-                                .as_ref()
-                                .map(|id| family_summary_label(id.as_str()))
-                                .unwrap_or_else(|| family_summary_label("unknown_family"))
+                            "Surface: {}",
+                            surface_display_label(spec.substrate.as_str())
                         ));
                         ui.label(format!(
                             "Tool: {}",
@@ -4431,12 +4008,9 @@ impl App for ChattyFactoryUiApp {
                                         Some(&receipt),
                                         &summarize_project_patch_readiness(spec),
                                     );
-                                let patchability_family_label =
-                                    family_summary_label_from_patchability_receipt(
-                                        spec.family_id
-                                            .as_ref()
-                                            .map(|id| id.as_str())
-                                            .unwrap_or("unknown_family"),
+                                let patchability_surface_label =
+                                    surface_label_from_patchability_receipt(
+                                        spec.substrate.as_str(),
                                         Some(&receipt),
                                     );
                                 ui.label(
@@ -4446,7 +4020,7 @@ impl App for ChattyFactoryUiApp {
                                     ))
                                     .color(patchability_color),
                                 );
-                                ui.label(format!("Governed family: {patchability_family_label}"));
+                                ui.label(format!("Governed surface: {patchability_surface_label}"));
                                 ui.label(format!(
                                     "Blocked lanes: {} risky, {} historical, {} decomposable",
                                     receipt.risky_blocked_lane_count,
@@ -4709,25 +4283,13 @@ impl App for ChattyFactoryUiApp {
                     ui.separator();
                     ui.label(format!("Kind: {}", result.kind));
                     ui.label(format!("Project: {}", result.project_name));
-                    if let Some(starter_id) = &result.starter_override_id {
-                        ui.label(format!("Starter override: {starter_id}"));
-                    }
-                    if let Some(summary) = &result.starter_override_summary {
-                        ui.label(format!("Starter note: {summary}"));
-                    }
-                    if let Some(starter_id) = &result.recommended_starter_id {
-                        ui.label(format!("Normal routing starter: {starter_id}"));
-                    }
-                    if let Some(summary) = &result.recommended_starter_summary {
-                        ui.label(format!("Starter recommendation: {summary}"));
-                    }
-                    if let Some(comparison) = &result.starter_recommendation_comparison {
-                        ui.label(format!("Starter comparison: {comparison}"));
-                    }
                     ui.label(format!(
-                        "Family: {}",
-                        family_summary_label(
-                            result.family_id.as_deref().unwrap_or("unknown_family")
+                        "Surface: {}",
+                        surface_display_label(
+                            result
+                                .substrate_kind
+                                .as_deref()
+                                .unwrap_or("unknown_surface")
                         )
                     ));
                     if let Some(tool_kind) = &result.tool_kind {
@@ -4868,9 +4430,9 @@ impl App for ChattyFactoryUiApp {
                                 ui.label(format!("- {path}"));
                             }
                         });
-                } else if let Some(fallback) = &self.last_fallback_result {
+                } else if let Some(fallback) = &self.last_next_attempt_result {
                     ui.separator();
-                    ui.label("Fallback required");
+                    ui.label("Next attempt required");
                     ui.label(format!("Request id: {}", fallback.request_id));
                     if let Some(mode) = &fallback.mode {
                         ui.label(format!("Mode: {mode}"));
@@ -4880,10 +4442,10 @@ impl App for ChattyFactoryUiApp {
                     }
                     ui.label(format!("Goal: {}", fallback.interpreted_goal));
                     ui.label(format!("Question: {}", fallback.question));
-                    ui.label(format!(
-                        "Extension target: {}",
-                        fallback.suggested_extension_kind
-                    ));
+                    ui.label(format!("Funnel stage: {}", fallback.funnel_stage));
+                    if fallback.host_shape_substitution_forbidden {
+                        ui.label("Host shape substitution: forbidden");
+                    }
                     if let Some(next_action) = &fallback.recommended_next_action {
                         ui.label(format!("Next action: {next_action}"));
                     }
@@ -4891,17 +4453,15 @@ impl App for ChattyFactoryUiApp {
                         "Next step: {}",
                         fallback.recommended_next_step
                     ));
+                    ui.label(format!(
+                        "Next attempt mechanic count: {}",
+                        fallback.next_attempt_mechanics.len()
+                    ));
                     if let Some(failure_class) = &fallback.build_failure_class {
                         ui.label(format!("Build failure class: {failure_class}"));
                     }
                     if let Some(failure_mode) = &fallback.build_failure_mode {
                         ui.label(format!("Build failure mode: {failure_mode}"));
-                    }
-                    if let Some(family_id) = &fallback.suggested_family_id {
-                        ui.label(format!(
-                            "Suggested family: {}",
-                            family_summary_label(family_id)
-                        ));
                     }
                     if let Some(tool_kind) = &fallback.suggested_tool_kind {
                         ui.label(format!("Suggested tool kind: {tool_kind}"));
@@ -4914,8 +4474,8 @@ impl App for ChattyFactoryUiApp {
                     }
                     ui.label(format!("Reason count: {}", fallback.reasons.len()));
                     ui.label(format!(
-                        "Candidate family count: {}",
-                        fallback.candidate_family_ids.len()
+                        "Candidate substrate count: {}",
+                        fallback.candidate_substrate_kinds.len()
                     ));
                     ui.label(format!(
                         "Requested capability count: {}",
@@ -4933,7 +4493,7 @@ impl App for ChattyFactoryUiApp {
                         "Approved shelf match count: {}",
                         fallback.matched_approved_constraint_ids.len()
                     ));
-                    egui::CollapsingHeader::new("Fallback Deep View")
+                    egui::CollapsingHeader::new("Next Attempt Deep View")
                         .default_open(false)
                         .show(ui, |ui| {
                             if !fallback.reasons.is_empty() {
@@ -4948,10 +4508,16 @@ impl App for ChattyFactoryUiApp {
                                     ui.label(format!("- {note}"));
                                 }
                             }
-                            if !fallback.candidate_family_ids.is_empty() {
-                                ui.label("Candidate families");
-                                for family_id in fallback.candidate_family_ids.iter().take(5) {
-                                    ui.label(format!("- {}", family_summary_label(family_id)));
+                            if !fallback.next_attempt_mechanics.is_empty() {
+                                ui.label("Next attempt mechanics");
+                                for mechanic in fallback.next_attempt_mechanics.iter().take(8) {
+                                    ui.label(format!("- {mechanic}"));
+                                }
+                            }
+                            if !fallback.candidate_substrate_kinds.is_empty() {
+                                ui.label("Candidate substrates");
+                                for substrate in fallback.candidate_substrate_kinds.iter().take(5) {
+                                    ui.label(format!("- {substrate}"));
                                 }
                             }
                             if !fallback.requested_capabilities.is_empty() {
@@ -4988,20 +4554,26 @@ impl App for ChattyFactoryUiApp {
                                     ui.label(format!("- {note}"));
                                 }
                             }
-                            if !fallback.pending_extension_ids.is_empty() {
+                            if !fallback.pending_attempt_ids.is_empty() {
                                 ui.label("Pending matching lanes");
-                                for entry_id in fallback.pending_extension_ids.iter().take(6) {
+                                for entry_id in fallback.pending_attempt_ids.iter().take(6) {
                                     ui.label(format!("- {entry_id}"));
                                 }
                             }
-                            if !fallback.pending_extension_scaffold_roots.is_empty() {
-                                ui.label("Pending scaffold roots");
+                            if !fallback.pending_attempt_bundle_roots.is_empty() {
+                                ui.label("Pending attempt bundle roots");
                                 for root in fallback
-                                    .pending_extension_scaffold_roots
+                                    .pending_attempt_bundle_roots
                                     .iter()
                                     .take(4)
                                 {
                                     ui.label(format!("- {}", short_path(root)));
+                                }
+                            }
+                            if !fallback.evidence_receipt_paths.is_empty() {
+                                ui.label("Evidence receipts");
+                                for path in fallback.evidence_receipt_paths.iter().take(8) {
+                                    ui.label(format!("- {}", short_path(path)));
                                 }
                             }
                             if let Some(mode) = &fallback.chattycog_requested_hosting_mode {
@@ -5122,8 +4694,8 @@ impl App for ChattyFactoryUiApp {
                             }
                         }
                     }
-                    if let Some(path) = &fallback.stub_bundle_path {
-                        ui.label(format!("Stub bundle: {}", short_path(path)));
+                    if let Some(path) = &fallback.attempt_bundle_path {
+                        ui.label(format!("Attempt bundle: {}", short_path(path)));
                     }
                     if let Some(guidance) =
                         fallback.proposed_constraint_replacement_guidance.as_deref()
@@ -5201,7 +4773,7 @@ impl App for ChattyFactoryUiApp {
                         previous_follow_filter,
                     );
                     let paired_receipts =
-                        load_cross_family_paired_proof_receipts(&self.workspace_root);
+                        load_legacy_comparison_paired_proof_receipts(&self.workspace_root);
                     let filtered_paired_receipts = paired_receipts
                         .iter()
                         .filter(|(receipt, _)| {
@@ -5544,14 +5116,14 @@ impl App for ChattyFactoryUiApp {
                                 .join(", ");
                             ui.label(format!("Failure modes: {failure_modes}"));
                         }
-                        if !breakdown.by_family_id.is_empty() {
-                            let families = breakdown
-                                .by_family_id
+                        if !breakdown.by_substrate_kind.is_empty() {
+                            let substrates = breakdown
+                                .by_substrate_kind
                                 .iter()
-                                .map(|(family, count)| format!("{family}={count}"))
+                                .map(|(substrate, count)| format!("{substrate}={count}"))
                                 .collect::<Vec<_>>()
                                 .join(", ");
-                            ui.label(format!("Families: {families}"));
+                            ui.label(format!("Substrates: {substrates}"));
                         }
                         if !breakdown.by_tool_kind.is_empty() {
                             let tools = breakdown
@@ -5563,8 +5135,8 @@ impl App for ChattyFactoryUiApp {
                             ui.label(format!("Tools: {tools}"));
                         }
                     }
-                    if let Some(family_id) = &constraint.family_id {
-                        ui.label(format!("Family: {family_id}"));
+                    if let Some(substrate_kind) = &constraint.substrate_kind {
+                        ui.label(format!("Surface: {substrate_kind}"));
                     }
                     if let Some(tool_kind) = &constraint.tool_kind {
                         ui.label(format!("Tool: {tool_kind}"));
@@ -6257,12 +5829,6 @@ fn run_ui_task(workspace_root: &Path, task: UiTask) -> anyhow::Result<UiTaskResu
         UiTask::RefreshBridgeGovernance => {
             map_host_action_result(bridge.refresh_bridge_governance_registry()?)
         }
-        UiTask::RefreshFamilyGovernance => {
-            map_host_action_result(bridge.refresh_family_governance_registry()?)
-        }
-        UiTask::RefreshTemplateGovernance => {
-            map_host_action_result(bridge.refresh_template_governance_registry()?)
-        }
         UiTask::ApproveProposedConstraint { request_id_or_path } => {
             map_host_action_result(bridge.approve_proposed_constraint(&request_id_or_path)?)
         }
@@ -6328,13 +5894,11 @@ fn run_ui_task(workspace_root: &Path, task: UiTask) -> anyhow::Result<UiTaskResu
         )?),
         UiTask::BuildRequest {
             request,
-            starter_override_id,
             auto_planner,
             port,
             model,
-        } => map_host_action_result(bridge.build_request_with_starter_override(
+        } => map_host_action_result(bridge.build_request(
             &request,
-            starter_override_id.as_deref(),
             &planner_options(auto_planner, &port, &model),
         )?),
         UiTask::PatchRequest {
@@ -6418,12 +5982,7 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
                 outcome_notes: execution.outcome_notes,
                 recommended_next_action: execution.recommended_next_action,
                 recommended_next_step: execution.recommended_next_step,
-                starter_override_id: execution.starter_override_id,
-                starter_override_summary: execution.starter_override_summary,
-                recommended_starter_id: execution.recommended_starter_id,
-                recommended_starter_summary: execution.recommended_starter_summary,
-                starter_recommendation_comparison: execution.starter_recommendation_comparison,
-                family_id: execution.family_id,
+                substrate_kind: execution.substrate_kind,
                 tool_kind: execution.tool_kind,
                 patch_kind: execution.patch_kind,
                 followup_request_mode: execution.followup_request_mode,
@@ -6447,7 +6006,7 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
                 patch_postcheck_path,
             }
         }),
-        fallback_result: result.fallback_result.map(|fallback| UiFallbackResult {
+        next_attempt_result: result.next_attempt_result.map(|fallback| UiNextAttemptResult {
             request_id: fallback.request_id,
             mode: fallback.mode,
             outcome_class: fallback.outcome_class,
@@ -6455,11 +6014,13 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
             question: fallback.question,
             interpreted_goal: fallback.interpreted_goal,
             reasons: fallback.reasons,
-            candidate_family_ids: fallback.candidate_family_ids,
+            funnel_stage: fallback.funnel_stage,
+            next_attempt_mechanics: fallback.next_attempt_mechanics,
+            evidence_receipt_paths: fallback.evidence_receipt_paths,
+            host_shape_substitution_forbidden: fallback.host_shape_substitution_forbidden,
+            candidate_substrate_kinds: fallback.candidate_substrate_kinds,
             requested_capabilities: fallback.requested_capabilities,
             constraints: fallback.constraints,
-            suggested_extension_kind: fallback.suggested_extension_kind,
-            suggested_family_id: fallback.suggested_family_id,
             suggested_tool_kind: fallback.suggested_tool_kind,
             suggested_patch_kind: fallback.suggested_patch_kind,
             suggested_bridge_capabilities: fallback.suggested_bridge_capabilities,
@@ -6469,15 +6030,15 @@ fn map_host_action_result(result: HostActionResult) -> anyhow::Result<UiTaskResu
             implementation_notes: fallback.implementation_notes,
             recommended_next_action: fallback.recommended_next_action,
             recommended_next_step: fallback.recommended_next_step,
-            pending_extension_ids: fallback.pending_extension_ids,
-            pending_extension_scaffold_roots: fallback.pending_extension_scaffold_roots,
+            pending_attempt_ids: fallback.pending_attempt_ids,
+            pending_attempt_bundle_roots: fallback.pending_attempt_bundle_roots,
             chattycog_requested_hosting_mode: fallback.chattycog_requested_hosting_mode,
             chattycog_valid_hosting_modes: fallback.chattycog_valid_hosting_modes,
             chattycog_requested_bridge_capabilities: fallback
                 .chattycog_requested_bridge_capabilities,
             chattycog_supported_bridge_capabilities: fallback
                 .chattycog_supported_bridge_capabilities,
-            stub_bundle_path: fallback.stub_bundle_path,
+            attempt_bundle_path: fallback.attempt_bundle_path,
             build_failure_class: fallback.build_failure_class,
             build_failure_mode: fallback.build_failure_mode,
             matched_approved_constraint_ids: fallback.matched_approved_constraint_ids,
@@ -6814,7 +6375,7 @@ fn approved_constraint_match_counts(
 struct ApprovedConstraintMatchBreakdown {
     total_matches: usize,
     by_failure_mode: BTreeMap<String, usize>,
-    by_family_id: BTreeMap<String, usize>,
+    by_substrate_kind: BTreeMap<String, usize>,
     by_tool_kind: BTreeMap<String, usize>,
 }
 
@@ -6830,11 +6391,14 @@ fn approved_constraint_match_breakdowns(
                 .by_failure_mode
                 .entry(receipt.failure_mode.clone())
                 .or_insert(0) += 1;
-            let family_id = receipt
-                .suggested_family_id
+            let substrate_kind = receipt
+                .suggested_substrate_kind
                 .clone()
-                .unwrap_or_else(|| "unknown_family".to_string());
-            *breakdown.by_family_id.entry(family_id).or_insert(0) += 1;
+                .unwrap_or_else(|| "unknown_substrate".to_string());
+            *breakdown
+                .by_substrate_kind
+                .entry(substrate_kind)
+                .or_insert(0) += 1;
             let tool_kind = receipt
                 .suggested_tool_kind
                 .clone()
@@ -6878,7 +6442,7 @@ fn load_proof_governance_refresh_status(
         }
     }
     if let Some((latest_receipt_modified, latest_receipt_label)) =
-        latest_cross_family_proof_receipt_modified(workspace_root)
+        latest_legacy_comparison_proof_receipt_modified(workspace_root)
     {
         status.latest_proof_receipt_label = Some(latest_receipt_label);
         status.newer_proof_receipts_exist = refresh_modified
@@ -7022,167 +6586,12 @@ fn load_local_png_texture(
     ))
 }
 
-fn load_family_governance_refresh_status(
-    workspace_root: &Path,
-) -> Option<FamilyGovernanceRefreshStatusView> {
-    let path = workspace_root
-        .join("runtime")
-        .join("family_governance_refresh_status.json");
-    let contents = std::fs::read_to_string(&path).ok()?;
-    let mut status = serde_json::from_str::<FamilyGovernanceRefreshStatusView>(&contents).ok()?;
-    if let Ok(metadata) = std::fs::metadata(&path) {
-        if let Ok(modified) = metadata.modified() {
-            let modified_utc: chrono::DateTime<Utc> = modified.into();
-            let modified_local = modified_utc.with_timezone(&Local);
-            status.refreshed_at_label =
-                Some(modified_local.format("%Y-%m-%d %H:%M:%S").to_string());
-            if let Ok(elapsed) = modified.elapsed() {
-                status.age_minutes = Some(elapsed.as_secs() / 60);
-            }
-        }
-    }
-    Some(status)
-}
-
-fn load_family_usage_summary(workspace_root: &Path) -> Option<FamilyUsageSummaryView> {
-    let path = workspace_root
-        .join("runtime")
-        .join("family_usage_summary.json");
-    let contents = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<FamilyUsageSummaryView>(&contents).ok()
-}
-
-fn load_starter_usage_summary(workspace_root: &Path) -> Option<StarterUsageSummaryView> {
-    let path = workspace_root
-        .join("runtime")
-        .join("starter_usage_summary.json");
-    let contents = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<StarterUsageSummaryView>(&contents).ok()
-}
-
 fn load_triangulation_loop_summary(workspace_root: &Path) -> Option<TriangulationLoopSummaryView> {
     let path = workspace_root
         .join("runtime")
         .join("triangulation_loop_summary.json");
     let contents = fs::read_to_string(path).ok()?;
     serde_json::from_str::<TriangulationLoopSummaryView>(&contents).ok()
-}
-
-fn load_recent_build_receipts(workspace_root: &Path) -> Vec<BuildReceiptView> {
-    let receipts_dir = workspace_root.join("runtime").join("build_receipts");
-    let Ok(entries) = fs::read_dir(receipts_dir) else {
-        return Vec::new();
-    };
-    let mut receipts = entries
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let modified = entry.metadata().ok()?.modified().ok()?;
-            let contents = fs::read_to_string(entry.path()).ok()?;
-            let receipt = serde_json::from_str::<BuildReceiptView>(&contents).ok()?;
-            Some((modified, receipt))
-        })
-        .collect::<Vec<_>>();
-    receipts.sort_by(|left, right| right.0.cmp(&left.0));
-    receipts.into_iter().map(|(_, receipt)| receipt).collect()
-}
-
-fn load_recent_project_starter_override_counts(workspace_root: &Path) -> BTreeMap<String, usize> {
-    let mut counts = BTreeMap::new();
-    for receipt in load_recent_build_receipts(workspace_root)
-        .into_iter()
-        .take(20)
-        .filter(|receipt| {
-            receipt.starter_recommendation_comparison.as_deref() == Some("overrode_normal_routing")
-        })
-    {
-        *counts.entry(receipt.project_name).or_insert(0) += 1;
-    }
-    counts
-}
-
-fn latest_project_starter_override_receipt(
-    workspace_root: &Path,
-    project_name: &str,
-) -> Option<BuildReceiptView> {
-    load_recent_build_receipts(workspace_root)
-        .into_iter()
-        .find(|receipt| {
-            receipt.project_name == project_name
-                && receipt.starter_recommendation_comparison.as_deref()
-                    == Some("overrode_normal_routing")
-        })
-}
-
-fn load_family_governance_receipts(workspace_root: &Path) -> Vec<FamilyGovernanceReceiptView> {
-    let receipts_dir = workspace_root
-        .join("runtime")
-        .join("family_governance_receipts");
-    let Ok(entries) = std::fs::read_dir(receipts_dir) else {
-        return Vec::new();
-    };
-    let mut receipts = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("json") {
-            continue;
-        }
-        let Ok(contents) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(receipt) = serde_json::from_str::<FamilyGovernanceReceiptView>(&contents) else {
-            continue;
-        };
-        receipts.push(receipt);
-    }
-    receipts.sort_by(|left, right| left.family_id.cmp(&right.family_id));
-    receipts
-}
-
-fn load_template_governance_refresh_status(
-    workspace_root: &Path,
-) -> Option<TemplateGovernanceRefreshStatusView> {
-    let path = workspace_root
-        .join("runtime")
-        .join("template_governance_refresh_status.json");
-    let contents = std::fs::read_to_string(&path).ok()?;
-    let mut status = serde_json::from_str::<TemplateGovernanceRefreshStatusView>(&contents).ok()?;
-    if let Ok(metadata) = std::fs::metadata(&path) {
-        if let Ok(modified) = metadata.modified() {
-            let modified_utc: chrono::DateTime<Utc> = modified.into();
-            let modified_local = modified_utc.with_timezone(&Local);
-            status.refreshed_at_label =
-                Some(modified_local.format("%Y-%m-%d %H:%M:%S").to_string());
-            if let Ok(elapsed) = modified.elapsed() {
-                status.age_minutes = Some(elapsed.as_secs() / 60);
-            }
-        }
-    }
-    Some(status)
-}
-
-fn load_template_governance_receipts(workspace_root: &Path) -> Vec<TemplateGovernanceReceiptView> {
-    let receipts_dir = workspace_root
-        .join("runtime")
-        .join("template_governance_receipts");
-    let Ok(entries) = std::fs::read_dir(receipts_dir) else {
-        return Vec::new();
-    };
-    let mut receipts = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("json") {
-            continue;
-        }
-        let Ok(contents) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(receipt) = serde_json::from_str::<TemplateGovernanceReceiptView>(&contents) else {
-            continue;
-        };
-        receipts.push(receipt);
-    }
-    receipts.sort_by(|left, right| left.template_bundle_id.cmp(&right.template_bundle_id));
-    receipts
 }
 
 fn load_extension_registry(workspace_root: &Path) -> Option<HostExtensionRegistryView> {
@@ -7253,12 +6662,12 @@ fn load_extension_registry(workspace_root: &Path) -> Option<HostExtensionRegistr
     })
 }
 
-fn load_cross_family_paired_proof_receipts(
+fn load_legacy_comparison_paired_proof_receipts(
     workspace_root: &Path,
-) -> Vec<(CrossFamilyPairedProofReceiptSummary, PathBuf)> {
+) -> Vec<(LegacyComparisonPairedProofReceiptSummary, PathBuf)> {
     let dir = workspace_root
         .join("runtime")
-        .join("cross_family_paired_proof_receipts");
+        .join("legacy_comparison_paired_proof_receipts");
     let mut paths = fs::read_dir(dir)
         .ok()
         .into_iter()
@@ -7277,7 +6686,7 @@ fn load_cross_family_paired_proof_receipts(
         .filter_map(|path| {
             let contents = fs::read_to_string(&path).ok()?;
             let receipt =
-                serde_json::from_str::<CrossFamilyPairedProofReceiptSummary>(&contents).ok()?;
+                serde_json::from_str::<LegacyComparisonPairedProofReceiptSummary>(&contents).ok()?;
             Some((receipt, path))
         })
         .collect()
@@ -7341,7 +6750,7 @@ fn proof_profile_label(profile_name: &str) -> String {
 
 fn proof_template_description(template: &PrimitiveProofTemplate) -> &str {
     if template.description.trim().is_empty() {
-        "Runs a generalized primitive proof across the template's declared family pair."
+        "Runs a generalized primitive proof across the template's declared comparison surfaces."
     } else {
         template.description.as_str()
     }
@@ -7358,7 +6767,7 @@ fn comparison_bundle_for_template(
 }
 
 fn proof_receipt_comparison_bundle(
-    receipt: &CrossFamilyPairedProofReceiptSummary,
+    receipt: &LegacyComparisonPairedProofReceiptSummary,
     bundles: &[CapabilityComparisonBundle],
 ) -> Option<CapabilityComparisonBundle> {
     let bundle_id = if let Some(bundle_id) = receipt.capability_comparison_bundle_id.as_deref() {
@@ -7420,7 +6829,7 @@ fn compact_required_bundle_summary(
     }
 }
 
-fn proof_receipt_template_label(receipt: &CrossFamilyPairedProofReceiptSummary) -> Option<String> {
+fn proof_receipt_template_label(receipt: &LegacyComparisonPairedProofReceiptSummary) -> Option<String> {
     if let Some(label) = receipt.proof_template_display_label.as_ref() {
         if !label.trim().is_empty() {
             return Some(label.clone());
@@ -7449,14 +6858,14 @@ fn proof_receipt_template_label(receipt: &CrossFamilyPairedProofReceiptSummary) 
 }
 
 fn proof_receipt_matches_filter(
-    receipt: &CrossFamilyPairedProofReceiptSummary,
+    receipt: &LegacyComparisonPairedProofReceiptSummary,
     filter: &str,
 ) -> bool {
     filter == "all" || receipt.proof_template_id.as_deref() == Some(filter)
 }
 
 fn paired_proof_artifact_count(
-    receipt: &CrossFamilyPairedProofReceiptSummary,
+    receipt: &LegacyComparisonPairedProofReceiptSummary,
     receipt_path: &Path,
 ) -> usize {
     [
@@ -7473,9 +6882,9 @@ fn paired_proof_artifact_count(
 }
 
 fn build_paired_proof_diff_summary(
-    latest: &CrossFamilyPairedProofReceiptSummary,
+    latest: &LegacyComparisonPairedProofReceiptSummary,
     latest_path: &Path,
-    previous: &CrossFamilyPairedProofReceiptSummary,
+    previous: &LegacyComparisonPairedProofReceiptSummary,
     previous_path: &Path,
 ) -> Vec<String> {
     let mut lines = Vec::new();
@@ -7792,13 +7201,13 @@ fn build_extension_summary_markdown(
             }
         ),
         format!(
-            "- Family: {}",
-            entry.family_id.as_deref().unwrap_or("unknown_family")
+            "- Surface: {}",
+            entry.substrate_kind.as_deref().unwrap_or("unknown_surface")
         ),
         format!("- Tool: {}", entry.tool_kind.as_deref().unwrap_or("none")),
         format!("- Patch: {}", entry.patch_kind.as_deref().unwrap_or("none")),
         format!("- Compare hints: {}", mismatch_hint_count),
-        format!("- Scaffold root: {}", entry.scaffold_root),
+        format!("- Attempt bundle root: {}", entry.attempt_bundle_root),
         format!("- Source spec: {}", entry.source_stub_path),
     ];
 
@@ -7806,10 +7215,10 @@ fn build_extension_summary_markdown(
         lines.push(format!("- Archive reason: {}", reason));
     }
 
-    if !entry.missing_family_build_primitive_classes.is_empty() {
+    if !entry.missing_base_build_primitive_classes.is_empty() {
         lines.push(format!(
-            "- Missing family build classes: {}",
-            entry.missing_family_build_primitive_classes.join(", ")
+            "- Missing base build classes: {}",
+            entry.missing_base_build_primitive_classes.join(", ")
         ));
     }
     if !entry.missing_patch_primitive_classes.is_empty() {
@@ -7867,7 +7276,7 @@ fn build_extension_summary_markdown(
 }
 
 fn build_paired_proof_summary_markdown(
-    receipt: &CrossFamilyPairedProofReceiptSummary,
+    receipt: &LegacyComparisonPairedProofReceiptSummary,
     receipt_path: &Path,
     note: Option<String>,
 ) -> String {

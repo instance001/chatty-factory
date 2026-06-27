@@ -1,6 +1,9 @@
 # Templates
 
-This folder will hold versioned family and wrapper templates for the rebuild.
+This folder is reserved for template assets that are still genuinely required by
+the runtime.
 
-The runtime template loader should treat these as product assets, not incidental string blobs.
+It is not meant to become a hidden positive-lane catalog.
 
+If a template survives here, it should exist because a current bounded build or
+verification path still requires it mechanically.

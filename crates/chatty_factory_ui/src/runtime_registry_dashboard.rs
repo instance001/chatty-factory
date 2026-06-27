@@ -140,200 +140,6 @@ impl ChattyFactoryUiApp {
             ui.label("No retry-search proof receipt found yet.");
         }
         ui.separator();
-        ui.heading("Family Usage");
-        if let Some(summary) = load_family_usage_summary(&self.workspace_root) {
-            let canonical_shell_entries = summary
-                .families
-                .iter()
-                .filter(|entry| is_canonical_ecosystem_shell_family(&entry.family_id))
-                .collect::<Vec<_>>();
-            let canonical_shell_project_count = canonical_shell_entries
-                .iter()
-                .map(|entry| entry.project_count)
-                .sum::<usize>();
-            ui.label(format!(
-                "Built projects tracked: {}",
-                summary.total_projects
-            ));
-            ui.label(format!(
-                "Canonical ecosystem shell projects: {} across {} family surface(s)",
-                canonical_shell_project_count,
-                canonical_shell_entries.len()
-            ));
-            if summary.ecosystem_project_counts.is_empty() {
-                ui.label("No ecosystem-native family usage recorded yet.");
-            } else {
-                for (ecosystem, count) in &summary.ecosystem_project_counts {
-                    ui.label(format!("{ecosystem}: {count} project(s)"));
-                }
-            }
-            if !canonical_shell_entries.is_empty() {
-                ui.label("Canonical ecosystem shell set");
-                for entry in canonical_shell_entries.iter().take(3) {
-                    let label = match entry.family_ecosystem.as_deref() {
-                        Some(ecosystem) => format!(
-                            "- {} [ecosystem: {}] -> {} project(s)",
-                            entry.family_display_name, ecosystem, entry.project_count
-                        ),
-                        None => format!(
-                            "- {} -> {} project(s)",
-                            entry.family_display_name, entry.project_count
-                        ),
-                    };
-                    ui.label(label);
-                }
-            }
-            if !summary.families.is_empty() {
-                ui.label("Top family usage");
-                for entry in summary.families.iter().take(5) {
-                    let label = match entry.family_ecosystem.as_deref() {
-                        Some(ecosystem) => format!(
-                            "- {} [ecosystem: {}] -> {} project(s)",
-                            entry.family_display_name, ecosystem, entry.project_count
-                        ),
-                        None => format!(
-                            "- {} -> {} project(s)",
-                            entry.family_display_name, entry.project_count
-                        ),
-                    };
-                    ui.label(label);
-                }
-            }
-            ui.horizontal_wrapped(|ui| {
-                if ui.small_button("Refresh family governance now").clicked() {
-                    self.spawn_task(UiTask::RefreshFamilyGovernance);
-                }
-                ui.separator();
-                ui.label(format!("Usage updated: {}", summary.updated_at));
-            });
-        } else {
-            ui.label("No family usage summary found yet.");
-            if ui.small_button("Refresh family governance now").clicked() {
-                self.spawn_task(UiTask::RefreshFamilyGovernance);
-            }
-        }
-        ui.separator();
-        ui.heading("Starter Usage");
-        if let Some(summary) = load_starter_usage_summary(&self.workspace_root) {
-            let recent_builds = load_recent_build_receipts(&self.workspace_root);
-            let recent_overrides = recent_builds
-                .iter()
-                .filter(|receipt| {
-                    receipt.starter_recommendation_comparison.as_deref()
-                        == Some("overrode_normal_routing")
-                })
-                .collect::<Vec<_>>();
-            ui.label(format!(
-                "Build receipts tracked: {}",
-                summary.total_build_receipts
-            ));
-            ui.label(format!(
-                "Explicit mechanical starter builds: {}",
-                summary.explicit_override_builds
-            ));
-            ui.label(format!(
-                "Auto-routed builds: {}",
-                summary.auto_routed_builds
-            ));
-            ui.label(format!(
-                "Matched normal recommendation: {}",
-                summary.matched_recommendation_builds
-            ));
-            ui.label(format!(
-                "Overrode normal recommendation: {}",
-                summary.overridden_recommendation_builds
-            ));
-            ui.label(format!(
-                "Recent override events in view: {}",
-                recent_overrides.len()
-            ));
-            if !summary.starters.is_empty() {
-                ui.label("Top starter usage");
-                for entry in summary.starters.iter().take(5) {
-                    ui.label(format!(
-                        "- {} [{} | {}] -> {} build(s)",
-                        entry.starter_label,
-                        entry.starter_id,
-                        entry.starter_lifecycle,
-                        entry.build_count
-                    ));
-                }
-            }
-            egui::CollapsingHeader::new("Starter Usage Details")
-                .default_open(false)
-                .show(ui, |ui| {
-                    if !recent_builds.is_empty() {
-                        ui.label("Recent starter decisions");
-                        for receipt in recent_builds.iter().take(5) {
-                            let chosen_starter_id =
-                                receipt.starter_override_id.as_deref().unwrap_or("auto");
-                            let chosen_label = build_starter_label(chosen_starter_id);
-                            let comparison = receipt
-                                .starter_recommendation_comparison
-                                .as_deref()
-                                .unwrap_or("unknown");
-                            let recommended_label = receipt
-                                .recommended_starter_id
-                                .as_deref()
-                                .map(build_starter_label)
-                                .unwrap_or("none");
-                            ui.label(format!(
-                                "- {} -> chosen: {} [{}] | recommended: {} | comparison: {}",
-                                receipt.project_name,
-                                chosen_label,
-                                chosen_starter_id,
-                                recommended_label,
-                                comparison
-                            ));
-                            if let Some(summary) = receipt.starter_override_summary.as_deref() {
-                                ui.label(format!("  override: {summary}"));
-                            }
-                            if let Some(summary) = receipt.recommended_starter_summary.as_deref() {
-                                ui.label(format!("  recommendation: {summary}"));
-                            }
-                        }
-                    }
-                    if !recent_overrides.is_empty() {
-                        ui.separator();
-                        ui.label("Recent overrides only");
-                        for receipt in recent_overrides.into_iter().take(5) {
-                            let chosen_starter_id =
-                                receipt.starter_override_id.as_deref().unwrap_or("auto");
-                            let chosen_label = build_starter_label(chosen_starter_id);
-                            let recommended_label = receipt
-                                .recommended_starter_id
-                                .as_deref()
-                                .map(build_starter_label)
-                                .unwrap_or("none");
-                            ui.label(format!(
-                                "- {} -> override: {} [{}] instead of {}",
-                                receipt.project_name,
-                                chosen_label,
-                                chosen_starter_id,
-                                recommended_label
-                            ));
-                            if let Some(summary) = receipt.starter_override_summary.as_deref() {
-                                ui.label(format!("  override: {summary}"));
-                            }
-                        }
-                    }
-                });
-            ui.horizontal_wrapped(|ui| {
-                if ui.small_button("Refresh family governance now").clicked() {
-                    self.spawn_task(UiTask::RefreshFamilyGovernance);
-                }
-                ui.separator();
-                ui.label(format!("Starter usage id: {}", summary.summary_id));
-                ui.separator();
-                ui.label(format!("Starter usage updated: {}", summary.updated_at));
-            });
-        } else {
-            ui.label("No starter usage summary found yet.");
-            if ui.small_button("Refresh family governance now").clicked() {
-                self.spawn_task(UiTask::RefreshFamilyGovernance);
-            }
-        }
-        ui.separator();
         ui.heading("Triangulation Loop");
         if let Some(summary) = load_triangulation_loop_summary(&self.workspace_root) {
             ui.label(format!(
@@ -420,10 +226,6 @@ impl ChattyFactoryUiApp {
                 }
             }
             ui.horizontal_wrapped(|ui| {
-                if ui.small_button("Refresh family governance now").clicked() {
-                    self.spawn_task(UiTask::RefreshFamilyGovernance);
-                }
-                ui.separator();
                 ui.label(format!("Triangulation summary id: {}", summary.summary_id));
                 ui.separator();
                 ui.label(format!("Triangulation updated: {}", summary.updated_at));
@@ -438,10 +240,6 @@ impl ChattyFactoryUiApp {
         } else {
             ui.label("No triangulation summary found yet.");
             ui.horizontal_wrapped(|ui| {
-                if ui.small_button("Refresh family governance now").clicked() {
-                    self.spawn_task(UiTask::RefreshFamilyGovernance);
-                }
-                ui.separator();
                 if ui.small_button("Jump to negative shelf panel").clicked() {
                     self.push_toast(
                         "Negative shelf details are in the main workspace panel.",
@@ -592,24 +390,6 @@ impl ChattyFactoryUiApp {
                 .checkbox(
                     &mut self.auto_refresh_stale_bridge_governance,
                     "Auto refresh stale bridge governance on launch",
-                )
-                .changed()
-            {
-                self.save_paired_proof_ui_preferences();
-            }
-            if ui
-                .checkbox(
-                    &mut self.auto_refresh_stale_family_governance,
-                    "Auto refresh stale family governance on launch",
-                )
-                .changed()
-            {
-                self.save_paired_proof_ui_preferences();
-            }
-            if ui
-                .checkbox(
-                    &mut self.auto_refresh_stale_template_governance,
-                    "Auto refresh stale template governance on launch",
                 )
                 .changed()
             {
@@ -841,17 +621,6 @@ impl ChattyFactoryUiApp {
                     )),
                 );
             }
-            egui::CollapsingHeader::new("Family Governance Details")
-                .default_open(false)
-                .show(ui, |ui| {
-                    self.render_family_governance_panel(ui);
-                });
-            egui::CollapsingHeader::new("Template Governance Details")
-                .default_open(false)
-                .show(ui, |ui| {
-                    self.render_template_governance_panel(ui);
-                });
-            ui.separator();
             egui::CollapsingHeader::new("Extension Registry Details")
                 .default_open(false)
                 .show(ui, |ui| {
@@ -1214,7 +983,10 @@ impl ChattyFactoryUiApp {
                     ui.horizontal(|ui| {
                         let mut label = format!(
                             "{} | {} | {} | {}",
-                            entry.family_id.as_deref().unwrap_or("unknown_family"),
+                            entry
+                                .substrate_kind
+                                .as_deref()
+                                .unwrap_or("unknown_surface"),
                             entry.tool_kind.as_deref().unwrap_or("none"),
                             entry.patch_kind.as_deref().unwrap_or("none"),
                             extension_layers_summary(entry)
@@ -1268,7 +1040,10 @@ impl ChattyFactoryUiApp {
                     ui.horizontal(|ui| {
                         let mut label = format!(
                             "{} | {} | {} | {}",
-                            entry.family_id.as_deref().unwrap_or("unknown_family"),
+                            entry
+                                .substrate_kind
+                                .as_deref()
+                                .unwrap_or("unknown_surface"),
                             entry.tool_kind.as_deref().unwrap_or("none"),
                             entry.patch_kind.as_deref().unwrap_or("none"),
                             extension_layers_summary(entry)
@@ -1333,7 +1108,10 @@ impl ChattyFactoryUiApp {
                 for entry in filtered_shipped.into_iter().take(8) {
                     let mut label = format!(
                         "{} | {} | {}",
-                        entry.family_id.as_deref().unwrap_or("unknown_family"),
+                        entry
+                            .substrate_kind
+                            .as_deref()
+                            .unwrap_or("unknown_surface"),
                         entry.tool_kind.as_deref().unwrap_or("none"),
                         entry.patch_kind.as_deref().unwrap_or("none")
                     );
@@ -1390,7 +1168,10 @@ impl ChattyFactoryUiApp {
                             "{} [{}] {}",
                             entry.patch_kind.as_deref().unwrap_or("none"),
                             entry.status,
-                            entry.family_id.as_deref().unwrap_or("unknown_family")
+                            entry
+                                .substrate_kind
+                                .as_deref()
+                                .unwrap_or("unknown_surface")
                         );
                         if let Some(badge) = proof_quality_badge(entry) {
                             label.push_str(&format!(" | {badge}"));
@@ -1500,9 +1281,11 @@ impl ChattyFactoryUiApp {
                     .get(&entry.entry_id)
                     .cloned()
                     .unwrap_or_default();
-                let scaffold_root = PathBuf::from(&entry.scaffold_root);
-                let implementation_notes_path = scaffold_root.join("IMPLEMENTATION_NOTES.md");
-                let acceptance_targets_path = scaffold_root.join("acceptance_targets.json");
+                let attempt_bundle_root = PathBuf::from(&entry.attempt_bundle_root);
+                let implementation_notes_path =
+                    attempt_bundle_root.join("IMPLEMENTATION_NOTES.md");
+                let acceptance_targets_path =
+                    attempt_bundle_root.join("acceptance_targets.json");
                 let source_stub_path = PathBuf::from(&entry.source_stub_path);
                 let latest_proof_receipt = entry.patch_kind.as_deref().and_then(|template_id| {
                     latest_proof_receipt_for_template(&self.workspace_root, template_id)
@@ -1544,8 +1327,11 @@ impl ChattyFactoryUiApp {
                 ui.label(format!("Entry: {}", entry.entry_id));
                 ui.label(format!("Status: {}", entry.status));
                 ui.label(format!(
-                    "Family: {}",
-                    entry.family_id.as_deref().unwrap_or("unknown_family")
+                    "Surface: {}",
+                    entry
+                        .substrate_kind
+                        .as_deref()
+                        .unwrap_or("unknown_surface")
                 ));
                 ui.label(format!(
                     "Tool: {}",

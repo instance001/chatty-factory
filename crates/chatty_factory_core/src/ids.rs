@@ -2,31 +2,22 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum FamilyId {
-    StaticWebDashboard,
-    #[serde(alias = "chattycog_basic_dashboard")]
-    ChattycogWebviewModule,
-    ChattycogNativeWindowModule,
-    ChattyeduNativeWindowModule,
-    ChattycogChattyeduNativeWindowModule,
-    ChattycogWorkspaceModule,
-    PythonCliTool,
-    RustCliTool,
+pub enum SubstrateKind {
+    StaticWeb,
+    Webview,
+    NativeWindow,
+    Workspace,
+    Cli,
 }
 
-impl FamilyId {
+impl SubstrateKind {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::StaticWebDashboard => "static_web_dashboard",
-            Self::ChattycogWebviewModule => "chattycog_webview_module",
-            Self::ChattycogNativeWindowModule => "chattycog_native_window_module",
-            Self::ChattyeduNativeWindowModule => "chattyedu_native_window_module",
-            Self::ChattycogChattyeduNativeWindowModule => {
-                "chattycog_chattyedu_native_window_module"
-            }
-            Self::ChattycogWorkspaceModule => "chattycog_workspace_module",
-            Self::PythonCliTool => "python_cli_tool",
-            Self::RustCliTool => "rust_cli_tool",
+            Self::StaticWeb => "static_web",
+            Self::Webview => "webview",
+            Self::NativeWindow => "native_window",
+            Self::Workspace => "workspace",
+            Self::Cli => "cli",
         }
     }
 }

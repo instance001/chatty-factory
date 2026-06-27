@@ -2,147 +2,107 @@
 
 This document preserves the actual shape ChattyFactory is working toward.
 
-Use it as a decision filter before adding new routing rules, starter behavior,
-planner logic, fallback behavior, or safety checks.
+Use it as a decision filter before adding routing rules, planner logic, retry
+behavior, or safety checks.
 
 ## What We Are Not Building
 
 ChattyFactory is not:
 
 - a template picker
-- an agentic vibe coder
-- a "pick supported family and fill blanks" generator
-- an LLM-owned planner/executor where the model owns truth, execution, and excuse-making
+- a nearest-family selector
+- a "pick supported shape and fill blanks" generator
+- an unconstrained agent where the model owns truth, execution, and excuses
 
 ## What We Are Building
 
 ChattyFactory is:
 
-> a host-scaffolded, model-swappable, receipt-owned, failure-metabolizing,
-> substrate-agnostic factory where the LLM provides bounded project shape and
-> the host governs truth without imprisoning the attempt in positive lanes
+> a receipt-owned, evidence-driven, host-governed factory where the model
+> provides bounded method and the host preserves truth
 
-## Positive Lanes Are Tools, Not Laws
+The working equation is:
 
-Supported lanes are not allowed reality.
-
-They are:
-
-- graceful fallback scaffolds
-- accelerators
-- recovery paths
-
-They are not the outer limit of what the factory may honestly attempt.
-
-The model already carries many positive lanes through:
-
-- training data
-- reasoning ability
-- toolchain knowledge
-
-The factory should focus that capability through host-owned scaffolding,
-receipts, verification, retry search, decomposition, triangulation, and honest
-fallback reporting.
+- the user carries the intent
+- the LLM carries the method
+- the host carries the funnel
+- the output carries the artifact
 
 ## Host-Owned Truth
 
 The host must own:
 
 - frozen intent
-- bounded task shape
-- file execution
+- bounded execution posture
+- file and tool boundaries
 - verification
 - receipts
-- classification
-- fallback surfacing
-- failure evidence
+- failure classification
+- next-attempt posture
 - patch truth
 
 The model may propose:
 
-- project shape
 - implementation strategy
-- file plan
-- patch approach
-- likely toolchain
-- bounded code or content changes
+- task decomposition ideas
+- code or content changes
+- likely toolchain usage inside a bounded lane
 
 The model does not own truth.
 
-The host owns truth.
+## Gauntlet Rule
 
-## Routing Rule
+Fallback is not host selection.
 
-Unknown supported lane must not mean automatic stop.
+Fallback is the gauntlet:
 
-Unknown supported lane must not mean silently coerce to the nearest known family.
+1. attempt under frozen intent
+2. fail honestly
+3. classify the failure
+4. change the next attempt in a specific evidence-driven way
+5. decompose or triangulate when needed
+6. alter toolchain or model only when justified
 
-If the request is concrete, the factory should freeze a bounded scaffold or
-substrate attempt and record whether any fallback or substitution happened.
+The host should never smuggle product-shape authority back in by saying:
 
-## Honest Fallback Rule
-
-Fallback must be surfaced, not disguised.
-
-A fallback artifact is not full success when it violates a hard user
-requirement.
-
-If the user asked for a specific stack as a hard requirement, such as:
-
-- Go
-- Flutter
-- Electron
-- Rust
-- Python
-
-or another explicit toolchain,
-
-then substituting a supported dashboard or starter family must be marked as:
-
-- substituted
-- degraded
-- requirement-not-met
-
-and not reported as clean success.
+- this looks close to family X
+- this template is near enough
+- this easier scaffold counts as success
 
 ## Safety Rule
 
-Safety does not come from forcing every request back into the nearest familiar
-starter family.
+Safety does not come from forcing every request back into a familiar positive
+shape.
 
 Safety comes from:
 
-- host-owned truth
-- receipts
 - bounded attempts
+- receipts
+- permission boundaries
 - verification
-- honest classification
+- honest requirement checks
+- evidence-driven next-attempt changes
 
 ## Failure Rule
 
 Failure is fuel, not shame.
 
-The host traps evidence.
-
-The model provides bounded shape.
-
-The factory spends failure and keeps the change.
+The host traps evidence so the next attempt can differ for concrete reasons.
 
 That means failures should become:
 
 - decomposition evidence
-- retry-search evidence
 - triangulation evidence
-- provisional shelf evidence
-- honest fallback reporting
+- retry evidence
+- constraint-promotion evidence
+- explicit next-attempt posture
 
-and not just excuses for reintroducing positive-lane prison bars.
+They should not become excuses for reintroducing host-owned positive-lane truth.
 
 ## Short Mantra
 
-- supported lanes are tools, not laws
-- fallback is surfaced, not disguised
-- failure is fuel, not shame
-- the host traps evidence
-- the model provides bounded shape
-- the factory spends failure and keeps the change
+- the host preserves truth
+- the model provides method
+- fallback is a gauntlet, not a substitution
+- failure becomes evidence
+- receipts matter more than optimism

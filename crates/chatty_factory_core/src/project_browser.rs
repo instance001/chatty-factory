@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::contracts::{ProjectBrowserState, ProjectCatalogEntry, ProjectSession, ProjectSpec};
-use crate::{persist_json_pretty, timestamp_id, FamilyId};
+use crate::{persist_json_pretty, timestamp_id};
 
 pub fn discover_projects(
     output_root: &Path,
@@ -40,7 +40,7 @@ pub fn discover_projects(
 
             projects.push(ProjectCatalogEntry {
                 project_name: entry.file_name().to_string_lossy().to_string(),
-                family_id: spec.family_id,
+                substrate: spec.substrate,
                 tool_kind: spec.tool_kind,
                 request_summary: spec.request_summary,
                 recency_hint,
@@ -63,19 +63,19 @@ pub fn discover_projects(
 }
 
 pub fn active_project_summary_line(project: &ProjectCatalogEntry) -> String {
-    let family = project
-        .family_id
-        .as_ref()
-        .map(FamilyId::as_str)
-        .unwrap_or("unknown_family");
+    let surface = if project.substrate.trim().is_empty() {
+        "unknown_surface"
+    } else {
+        project.substrate.as_str()
+    };
     let tool = project.tool_kind.as_deref().unwrap_or("none");
     let summary = project
         .request_summary
         .as_deref()
         .unwrap_or("no summary recorded");
     format!(
-        "{} | family={} | tool={} | recency={} | summary={}",
-        project.project_name, family, tool, project.recency_hint, summary
+        "{} | surface={} | tool={} | recency={} | summary={}",
+        project.project_name, surface, tool, project.recency_hint, summary
     )
 }
 

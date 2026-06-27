@@ -11,7 +11,7 @@ impl ChattyFactoryUiApp {
         previous_selected_template_id: &str,
         previous_follow_filter: bool,
     ) {
-        ui.label("Run a generalized proof template across its declared family pair.");
+        ui.label("Run a generalized proof template across its declared comparison surfaces.");
         self.render_proof_profile_controls(ui, previous_selected_profile_name);
         self.render_proof_template_controls(
             ui,
@@ -130,11 +130,11 @@ impl ChattyFactoryUiApp {
 
         if let Some(template) = selected_proof_template {
             ui.label(format!(
-                "Families: {}",
+                "Substrates: {}",
                 template
-                    .target_family_ids
+                    .target_substrate_kinds
                     .iter()
-                    .map(|family| family.as_str())
+                    .map(|substrate| substrate.as_str())
                     .collect::<Vec<_>>()
                     .join(" -> ")
             ));

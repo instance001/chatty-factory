@@ -10,7 +10,6 @@ pub mod proof_harness;
 pub mod registries;
 pub mod runtime;
 pub mod snapshot;
-pub mod starters;
 
 pub use contracts::{
     AcceptanceCheck, AcceptancePlan, AcceptanceRecipeStatus, ApprovedConstraintShelf,
@@ -24,28 +23,29 @@ pub use contracts::{
     ConstraintShelfHistoryEntry, ConstraintShelfMutationReceipt, ConstraintViolation,
     ContextBundle, DesiredSurface, DiscoveredModel, ExecutionPolicy, ExecutionReceipt,
     ExecutionSmokeCheck, ExoskeletonTarget, FailureClass, FailureReport, FailureReportEvidence,
-    FailureVaultEntry, FallbackBuildSpec, FallbackPlanReceipt, FamilyCapabilityManifest,
-    FamilyPrimitiveAdapter, HelperAcceptancePlan, HelperLaunchPolicy, HelperPrimitiveSpec,
+    FailureVaultEntry, HelperAcceptancePlan,
+    HelperLaunchPolicy, HelperPrimitiveSpec,
     HelperRuntimeReceipt, HelperServiceSpec, HelperStatusSnapshot, ImplementationConstraint,
+    NextAttemptBuildSpec, NextAttemptReceipt,
     ModelTaskGenerationReceipt, OperatorBundleStatus, PatchIntentFreeze, PatchLaneStatus,
     PatchPlanReview, PatchReceipt, PlanTask, PlanTaskExecutionLog, PlanTaskExecutionReceipt,
     PlanTaskList, PlanTaskModelAttemptReceipt, PlanTaskVerificationLog,
     PlanTaskVerificationReceipt, PlannedFileOperation, PlannerDispatchReceipt,
     PlannerExecutionReceipt, PlannerHandoff, PlannerResponse, PrimitiveExecutionPlan,
     PrimitiveExecutionStep, PrimitiveProofEnrichmentBinding, PrimitiveProofExecutionRecipe,
-    PrimitiveProofFamilyRequestBinding, PrimitiveProofHarnessReceipt, PrimitiveProofTemplate,
+    PrimitiveProofHarnessReceipt, PrimitiveProofSubstrateRequestBinding, PrimitiveProofTemplate,
     ProjectBrowserState, ProjectCatalogEntry, ProjectPatchDiagnosis, ProjectSession,
     ProjectSnapshot, ProjectSpec, ProposedConstraintReceipt, RequestMode, RequestPlan,
     RequestRecord, RetrySearchProofReceipt, RouteDecision, RuntimeCapabilityRecord, RuntimeConfig,
     RuntimeDiscoveryReceipt, RuntimeModelAssessment, RuntimeModelCatalogReceipt,
-    RuntimeSmokeReceipt, ScaffoldInputs, SnapshotGateResult, TaskDecompositionInferenceReceipt,
+    BuildSeedInputs, RuntimeSmokeReceipt, SnapshotGateResult, TaskDecompositionInferenceReceipt,
     TaskDecompositionProposal, TaskDecompositionReceipt, TriangulationAttempt,
     TriangulationSession,
 };
 pub use execution::{build_execution_policy, run_execution_policy};
 pub use foreman::{
     apply_planner_response, default_request_text, derive_planner_handoff, derive_request_plan,
-    derive_scaffold_inputs, infer_route_hints, normalize_patch_request, normalize_request,
+    derive_build_seed_inputs, infer_route_hints, normalize_patch_request, normalize_request,
     persist_json_pretty, timestamp_id,
 };
 pub use heuristics::{
@@ -59,12 +59,8 @@ pub use heuristics::{
     request_mentions_rust, should_route_followup_via_planner_text,
     supported_chattycog_bridge_capabilities,
 };
-pub use ids::{FamilyId, OperatorId, WrapperId};
-pub use manifests::{
-    build_primitive_classes_for_family, built_in_family_manifests, is_supported_explicit_stack,
-    manifest_for_family, primitive_adapter_names_for_family_layer, primitive_adapters_for_family,
-    rank_family_candidates,
-};
+pub use ids::{OperatorId, SubstrateKind, WrapperId};
+pub use manifests::is_supported_explicit_stack;
 pub use primitive_catalog::{
     helper_primitive_kind_catalog, patch_primitive_class, patch_primitive_classes_for_kinds,
     HELPER_PRIMITIVE_KINDS, PATCH_PRIMITIVE_CLASSES,
@@ -82,15 +78,11 @@ pub use proof_harness::{
     repo_capability_comparison_bundles, repo_proof_template_manifest_root, repo_proof_templates,
 };
 pub use registries::{
-    candidate_operator_bundle_ids_for, expand_operator_bundle_ids, operator_bundle_registry,
-    OperatorBundleSpec,
+    candidate_operator_bundle_ids_for_context, expand_operator_bundle_ids,
+    operator_bundle_registry, OperatorBundleSpec,
 };
 pub use runtime::{
     build_runtime_model_catalog, default_runtime_config, discover_runtime, resolve_model_choice,
     run_local_planner, run_local_text_generation, run_runtime_smoke,
 };
 pub use snapshot::{build_context_bundle, build_project_snapshot, gate_patch_project_snapshot};
-pub use starters::{
-    build_starter_best_for, build_starter_choices, build_starter_label, build_starter_lifecycle,
-    build_starter_picker_label, is_known_build_starter_id, BuildStarterChoice,
-};

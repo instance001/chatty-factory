@@ -3,223 +3,110 @@
 Start here for the current technical system shape:
 - [Current Architecture](./docs/CURRENT_ARCHITECTURE.md)
 
-ChattyFactory is a deterministic build-and-patch factory for plain-language
+ChattyFactory is a governed local build-and-patch factory for plain-language
 software requests.
 
-Its current product shape is:
+The current doctrine is strict:
 
-- plain-language request in
-- real generated project out
-- plain-language follow-up patching against existing projects
-- host-owned diagnosis and governance around patch surgery
+- the user carries the intent
+- the LLM carries the method
+- the host carries the funnel
+- the output carries the artifact
 
-The architectural stance is deliberate:
+The host is not supposed to own a positive-lane catalog of "correct app
+families." Its job is to freeze bounded attempts, preserve receipts, classify
+failure honestly, choose the next attempt mechanically from evidence, and hold
+verification and permission boundaries.
 
-- the LLM should choose, triage, and review
-- the host should own exact machinery wherever practical
+## Current Shape
 
-## Current State
+At this checkpoint, the workspace supports:
 
-At the current checkpoint, ChattyFactory is a working bounded factory rather
-than only a rebuild sketch.
+- plain-language build requests
+- follow-up patch requests against generated projects
+- host-owned diagnosis, intent freeze, verification, and receipt trails
+- bounded task execution across host-mechanical and model-authored steps
+- adaptive task decomposition when a task is still too broad
+- triangulation and constraint-promotion machinery for repeated failures
+- CLI and desktop UI surfaces over the same runtime evidence
 
-It now has:
+The intended behavior is:
 
-- 8 built-in deterministic families
-- deterministic build and patch flows
-- starter-plus-plan execution artifacts
-- atomized microtask execution with host-sync, host-mechanical, and model-authored task kinds
-- adaptive task decomposition that can replace a failed broad microtask with smaller child tasks on the next run
-- diagnosis-aware patch surgery:
-  - diagnosis
-  - intent freeze
-  - postcheck
-- project-level patchability governance
-- a desktop UI for project, patch, extension, proof, and governance surfaces
-- a scrollable summary-first workspace with expandable deep-detail sections
+- produce a real artifact when the host can freeze and verify a bounded attempt
+- fail honestly when the substrate, capability, or constraints are underspecified
+- carry next-attempt evidence forward without inventing a "nearest family"
 
-The product promise is intentionally bounded:
+## Negative-Lane Posture
 
-- plain-language requests should land on an honest starter substrate, even when
-  there is no exact deterministic family for the requested stack yet
-- vague requests may trigger clarification or planner guidance instead of fake certainty
-- but if the host can still honestly freeze a starter substrate or grounded patch substrate, it should prefer that bounded attempt over an immediate paperwork-only stop
-- existing-project patching is strongest on generated projects that still match declared family and patch contracts
+Fallback is not host selection.
 
-But the capability boundary is no longer supposed to be the old positive-lane catalog alone.
-The active direction is:
+Fallback is the gauntlet:
 
-- starters as stable substrates
-- model-planned feature work on top
-- host-owned freezing, review, and verification
-- adaptive decomposition when a task is still too broad for the current model/runtime pair
-- automatic decomposition inference from task failure evidence so the factory can learn how to shrink work from its own receipts instead of depending on us to hand-teach each next split
-- a future triangulation-first negative architecture where failures enter a provisional vault, retries narrow the true blocker, and only high-confidence converged evidence can promote into the real constraint library
+1. attempt under frozen intent
+2. fail honestly
+3. classify the failure
+4. decompose differently or retry under tighter constraints
+5. compare against prior receipts and failure evidence
+6. alter toolchain or model only when the evidence justifies it
 
-The intended architecture distinction is now explicit:
+That means the host carries:
 
-- constraint principles are generic and stable
-- failure classes are generic classifications selected from evidence
-- decomposition grammars are reusable split patterns
-- next actions are selected mechanically by the host from normalized failure
-  class and retry posture evidence
-- the factory should infer mappings between task shape, failure class, and grammar
-  instead of accumulating bespoke negative rules for each new task class
-- and negative constraints should be promoted from triangulated provisional evidence,
-  not written directly from one-off failures
+- receipts
+- failure classes
+- constraint memory
+- retry rules
+- permission boundaries
+- verification gates
 
-That means the host now owns not just "did this fail," but also:
+It does not carry:
 
-- `normalized_failure_class`
-- `recommended_next_action`
-- `recommended_next_step`
+- positive template fallback authority
+- family rescue paths
+- scaffold substitution masquerading as routing truth
 
-for fallback and build-verification flows, and now also for patch postcheck and
-retry-search ladder proof receipts.
+## Workspace Map
 
-## What It Does Well
+The main crates are:
 
-ChattyFactory is strongest today at:
+- `crates/chatty_factory_core`
+  - shared contracts and core runtime primitives
+- `crates/chatty_factory_control`
+  - control-plane and route machinery
+- `crates/chatty_factory_host`
+  - orchestration and execution engine
+- `crates/chatty_factory_verify`
+  - verification helpers
+- `crates/chatty_factory_cli`
+  - CLI entrypoint
+- `crates/chatty_factory_ui`
+  - egui desktop control surface
 
-- building supported projects from plain-language requests
-- patching generated projects through declared deterministic lanes
-- explaining patch safety through:
-  - diagnosis
-  - intent freeze
-  - postcheck
-- surfacing project patchability risk and drift over time
+Legacy or transitional crates may still exist while the architecture surgery
+continues, but they are not meant to restore host-owned positive-lane authority.
 
-It is not claiming universal safe surgery across arbitrary unknown codebases.
+## Runtime Surfaces
 
-## Key Docs
+When you run the factory, it creates:
 
-- [Factory Shape](./docs/FACTORY_SHAPE.md)
-- [Negative Constraints Engine Parts List](./docs/NEGATIVE_CONSTRAINTS_ENGINE_PARTS_LIST.md)
-- [Negative Constraints Engine Gap Audit](./docs/NEGATIVE_CONSTRAINTS_ENGINE_GAP_AUDIT.md)
-- [Negative Constraints Engine Implementation Sequence](./docs/NEGATIVE_CONSTRAINTS_ENGINE_IMPLEMENTATION_SEQUENCE.md)
-- [User Manual](./USER_MANUAL.md)
-- [Bounded Soft-Review Continuation](./docs/BOUNDED_SOFT_REVIEW_CONTINUATION.md)
-- [Current Architecture](./docs/CURRENT_ARCHITECTURE.md)
-- [Qwen3-8B Retry-Search Hostile Proof](./docs/QWEN3_8B_RETRY_SEARCH_HOSTILE_PROOF.md)
-- [Build Docs Archive](./build-docs/README.md)
-- [REBUILD_PLAN.md](./build-docs/plans/REBUILD_PLAN.md)
-- [Initial GitHub Release Plan](./build-docs/plans/INITIAL_GITHUB_RELEASE_PLAN.md)
-- [GitHub Upload Metadata](./build-docs/plans/GITHUB_UPLOAD_METADATA.md)
-- [Release Notes v0.1.0](./build-docs/plans/RELEASE_NOTES_v0.1.0.md)
-- [Architecture Checkpoint 2](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_2.md)
-- [Architecture Checkpoint 3](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_3.md)
-- [Architecture Checkpoint 4](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_4.md)
-- [Architecture Checkpoint 5](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_5.md)
-- [Architecture Checkpoint 6](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_6.md)
-- [Architecture Checkpoint 7](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_7.md)
-- [Architecture Checkpoint 8](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_8.md)
-- [Architecture Checkpoint 9](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_9.md)
-- [Architecture Checkpoint 10](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_10.md)
-- [Architecture Checkpoint 11](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_11.md)
-- [Architecture Checkpoint 12](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_12.md)
-- [Architecture Checkpoint 13](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_13.md)
-- [Architecture Checkpoint 14](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_14.md)
-- [Architecture Checkpoint 15](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_15.md)
-- [Architecture Checkpoint 16](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_16.md)
-- [Architecture Checkpoint 17](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_17.md)
-- [Architecture Checkpoint 18](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_18.md)
-- [Architecture Checkpoint 19](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_19.md)
-- [Architecture Checkpoint 20](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_20.md)
-- [Architecture Checkpoint 21](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_21.md)
-- [Architecture Checkpoint 22](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_22.md)
-- [Architecture Checkpoint 23](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_23.md)
-- [Architecture Checkpoint 24](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_24.md)
-- [Architecture Checkpoint 25](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_25.md)
-- [Architecture Checkpoint 26](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_26.md)
-- [Architecture Checkpoint 27](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_27.md)
-- [Architecture Checkpoint 28](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_28.md)
-- [Architecture Checkpoint 29](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_29.md)
-- [Architecture Checkpoint 30](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_30.md)
-- [Architecture Checkpoint 31](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_31.md)
-- [Architecture Checkpoint 32](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_32.md)
-- [Architecture Checkpoint 33](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_33.md)
-- [Architecture Checkpoint 34](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_34.md)
-- [Architecture Checkpoint 35](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_35.md)
-- [Architecture Checkpoint 36](./build-docs/checkpoints/ARCHITECTURE_CHECKPOINT_36.md)
-- [Design Intent Review](./build-docs/reviews/DESIGN_INTENT_REVIEW.md)
-- [Generalized Primitive Proof Harness Milestone](./build-docs/milestones/GENERALIZED_PRIMITIVE_PROOF_HARNESS_MILESTONE.md)
-- [Bounded Adaptive Composition Milestone](./build-docs/milestones/BOUNDED_ADAPTIVE_COMPOSITION_MILESTONE.md)
-- [Composed Patch Milestone](./build-docs/milestones/COMPOSED_PATCH_MILESTONE.md)
-- [Helper Primitive Catalog Milestone](./build-docs/milestones/HELPER_PRIMITIVE_CATALOG_MILESTONE.md)
-- [Primitive-Native Execution Milestone](./build-docs/milestones/PRIMITIVE_NATIVE_EXECUTION_MILESTONE.md)
-- [Cross-Family Helper Monitoring Milestone](./build-docs/milestones/CROSS_FAMILY_HELPER_MONITORING_MILESTONE.md)
-- [Cross-Family Paired Proof Milestone](./build-docs/milestones/CROSS_FAMILY_PAIRED_PROOF_MILESTONE.md)
-- [Composition Governance Milestone](./build-docs/milestones/COMPOSITION_GOVERNANCE_MILESTONE.md)
-- [Patch Governance Milestone](./build-docs/milestones/PATCH_GOVERNANCE_MILESTONE.md)
-- [Helper Governance Milestone](./build-docs/milestones/HELPER_GOVERNANCE_MILESTONE.md)
-- [Bridge Governance Milestone](./build-docs/milestones/BRIDGE_GOVERNANCE_MILESTONE.md)
-- [Family Governance Milestone](./build-docs/milestones/FAMILY_GOVERNANCE_MILESTONE.md)
-- [Template Governance Milestone](./build-docs/milestones/TEMPLATE_GOVERNANCE_MILESTONE.md)
-- [Patch Diagnosis X-Ray Milestone](./build-docs/milestones/PATCH_DIAGNOSIS_XRAY_MILESTONE.md)
-- [Patch Plan Self-Review Milestone](./build-docs/milestones/PATCH_PLAN_SELF_REVIEW_MILESTONE.md)
-- [Project Patch Readiness Governance Milestone](./build-docs/milestones/PROJECT_PATCH_READINESS_GOVERNANCE_MILESTONE.md)
-- [Negative Constraint Shelf Milestone](./build-docs/milestones/NEGATIVE_CONSTRAINT_SHELF_MILESTONE.md)
-- [ChattyCog Module Skeleton Integration Milestone](./build-docs/milestones/CHATTYCOG_MODULE_SKELETON_INTEGRATION_MILESTONE.md)
-- [Chatty-EDU Native Starter Integration Milestone](./build-docs/milestones/CHATTYEDU_NATIVE_STARTER_INTEGRATION_MILESTONE.md)
-- [MILESTONE_CHECKPOINT.md](./build-docs/checkpoints/MILESTONE_CHECKPOINT.md)
-- [NEXT_WAVE_OPTIONS.md](./build-docs/plans/NEXT_WAVE_OPTIONS.md)
-- [Negative Constraint Shelf Implementation Plan](./build-docs/plans/NEGATIVE_CONSTRAINT_SHELF_IMPLEMENTATION_PLAN.md)
-- [Starter Plus Plan Execution Pivot](./build-docs/plans/STARTER_PLUS_PLAN_EXECUTION_PIVOT.md)
-- [Atomized Microtask Execution Milestone](./build-docs/plans/ATOMIZED_MICROTASK_EXECUTION_MILESTONE.md)
-- [Adaptive Task Decomposition Milestone](./build-docs/plans/ADAPTIVE_TASK_DECOMPOSITION_MILESTONE.md)
-- [Automatic Decomposition Inference Milestone](./build-docs/plans/AUTOMATIC_DECOMPOSITION_INFERENCE_MILESTONE.md)
-- [Triangulation And Atomization Floor Plan](./build-docs/plans/TRIANGULATION_AND_ATOMIZATION_FLOOR_PLAN.md)
-- [Over The Line Execution Plan](./build-docs/plans/OVER_THE_LINE_EXECUTION_PLAN.md)
-- [Positive Lane Deprecation Plan](./build-docs/plans/POSITIVE_LANE_DEPRECATION_PLAN.md)
-- [HELPER_SERVICE_MILESTONE.md](./build-docs/milestones/HELPER_SERVICE_MILESTONE.md)
-- [Repository Layout](./docs/REPOSITORY_LAYOUT.md)
-- [Contract Inventory](./docs/CONTRACT_INVENTORY.md)
-- [Primitive Catalog](./docs/PRIMITIVE_CATALOG.md)
-- [Proof Harness Manifests](./proof_harness/README.md)
-- [Milestone One Route Sketch](./docs/MILESTONE_ONE_ROUTE_SKETCH.md)
-- [Family Spec Template](./docs/FAMILY_SPEC_TEMPLATE.md)
-- [Tooling Policy](./docs/TOOLING_POLICY.md)
-- [Artifact Policy](./docs/ARTIFACT_POLICY.md)
-- [Governance Model](./build-docs/plans/GOVERNANCE_MODEL.md)
-- [UI Module Structure](./docs/UI_MODULE_STRUCTURE.md)
-- [UI Remaining Boundaries Review](./docs/UI_REMAINING_BOUNDARIES_REVIEW.md)
-- [Next Pivot Recommendation](./docs/NEXT_PIVOT_RECOMMENDATION.md)
-- [Remaining Governed Surfaces Review](./build-docs/reviews/REMAINING_GOVERNED_SURFACES_REVIEW.md)
-- [Acceptance Governance Decision Review](./build-docs/reviews/ACCEPTANCE_GOVERNANCE_DECISION_REVIEW.md)
-- [Remaining Legacy-Sensitive Patch Lanes Review](./build-docs/reviews/REMAINING_LEGACY_SENSITIVE_PATCH_LANES_REVIEW.md)
+- `output/`
+  - generated project artifacts
+- `runtime/`
+  - receipts, governance artifacts, planner handoffs, and next-attempt evidence
 
-## License
-
-ChattyFactory is licensed under the GNU Affero General Public License v3.0
-only (`AGPL-3.0-only`).
-
-- Full license text: [LICENSE](./LICENSE)
-- Workspace declaration: [Cargo.toml](./Cargo.toml)
-
-This repo is intended to ship with that license clearly attached in both the
-source tree and the public-facing documentation.
+Those runtime artifacts are part of the product. They are how the host proves
+what happened, what failed, and why the next attempt changed.
 
 ## Quick Start
 
 From `chatty-factory/`:
 
-Build a project:
+Build:
 
 ```powershell
 cargo run -p chatty_factory_cli -- build me a python csv report utility
 ```
 
-Build with a mechanically selected starter:
-
-```powershell
-cargo run -p chatty_factory_cli -- build --starter chattycog_native_window_module a shared context handoff dashboard module
-```
-
-```powershell
-cargo run -p chatty_factory_cli -- build --starter chattycog_chattyedu_native_window_module a dual-host native dashboard module
-```
-
-Patch an existing generated project:
+Patch:
 
 ```powershell
 cargo run -p chatty_factory_cli -- patch build_me_a_python_csv_report add email delivery
@@ -231,208 +118,21 @@ Launch the desktop UI:
 cargo run -p chatty_factory_ui
 ```
 
-The UI now defaults to a summary-first layout:
+## Key Docs
 
-- the main workspace scrolls cleanly
-- dense governance and diagnostic sections are collapsible
-- project, result, and fallback views keep the most important signal visible first
-- runtime status now surfaces:
-  - the configured shell timeout buffer
-  - the latest retry-search ladder proof status and outer budget
-- the proof controls now surface:
-  - proof runtime posture guidance
-  - the latest ladder-proof receipt status
-  - a dedicated `Run Retry-Search Ladder Proof` action
+- [Current Architecture](./docs/CURRENT_ARCHITECTURE.md)
+- [User Manual](./USER_MANUAL.md)
+- [Factory Shape](./docs/FACTORY_SHAPE.md)
+- [Negative Lane Runtime Pivot](./docs/NEGATIVE_LANE_RUNTIME_PIVOT.md)
+- [Negative Constraints Engine Parts List](./docs/NEGATIVE_CONSTRAINTS_ENGINE_PARTS_LIST.md)
+- [Negative Constraints Engine Gap Audit](./docs/NEGATIVE_CONSTRAINTS_ENGINE_GAP_AUDIT.md)
+- [Negative Constraints Engine Implementation Sequence](./docs/NEGATIVE_CONSTRAINTS_ENGINE_IMPLEMENTATION_SEQUENCE.md)
+- [Bounded Soft-Review Continuation](./docs/BOUNDED_SOFT_REVIEW_CONTINUATION.md)
 
-The build side now also persists reviewed task artifacts under `runtime/`, including:
+## License
 
-- build plans
-- build plan reviews
-- build constraint reviews
-- build execution work orders
-- frozen task lists
-- task execution and verification logs
-- model-authored task receipts
-- adaptive task decomposition receipts
-- decomposition inference should increasingly become generic and self-improving rather than hand-authored task by task
+ChattyFactory is licensed under the GNU Affero General Public License v3.0
+only (`AGPL-3.0-only`).
 
-Runtime receipts now also capture phase timing and timeout posture so we can tell
-the difference between:
-
-- model server launch timeout
-- planner request timeout
-- model-task request timeout
-- normal completion followed by host cleanup
-
-The current default local runtime budgets are:
-
-- model server launch wait: 90 seconds
-- planner HTTP request window: 420 seconds
-- model-authored task HTTP request window: 300 seconds
-- shell timeout buffer recommendation: 60 seconds
-
-The triangulation loop summary now also distinguishes between:
-
-- current-model-only exhaustion:
-  - the retry posture for one model was spent and the factory had to climb to the next model candidate
-- full model-ladder exhaustion:
-  - the factory spent the available retry methods across the available model/runtime candidates and the failure should stay provisional until triangulation converges narrowly enough
-
-The retry-search model proof now persists an explicit outer budget based on:
-
-- retry posture count
-- model candidate count
-- per-attempt launch timeout
-- per-attempt request timeout
-- cleanup overhead
-
-The recommended operator shell timeout is now also factory-owned:
-
-- `expected_outer_timeout_secs + shell_timeout_buffer_secs`
-- default shell timeout buffer recommendation: `60s`
-
-That means a shell-side timeout during a long ladder proof should not be read as
-factory failure by itself. The deciding evidence is the proof receipt:
-
-- `final_outcome=passed`
-- `final_outcome=full_model_ladder_exhausted`
-- `final_outcome=internal_timeout_observed`
-- or an unfinished `status=running` receipt if an outer shell killed the command first
-
-The UI now reflects that same rule directly:
-
-- `Runtime Status` shows the configured shell timeout buffer
-- `Retry-Search Proof` shows the latest proof status, outcome, and ceiling
-- `Proof Runtime Posture` shows the current runtime budgets, recommended shell timeout, and a direct ladder-proof launch button
-
-If a request is too vague, ChattyFactory may emit clarification or planner
-handoff artifacts instead of guessing. But when the host can still honestly
-freeze a starter substrate or substrate-first patch attempt, it may continue
-and record that soft-review decision in runtime receipts and route notes.
-
-## Initial Family Specs
-
-- [static_web_dashboard](./families/static_web_dashboard.md)
-- [chattycog_basic_dashboard](./families/chattycog_basic_dashboard.md)
-- [python_cli_tool](./families/python_cli_tool.md)
-- [rust_cli_tool](./families/rust_cli_tool.md)
-
-## Supported Families
-
-The current built-in families are:
-
-- `static_web_dashboard`
-- `chattycog_webview_module` (frozen legacy starter)
-- `chattycog_native_window_module` (primary forward skeleton)
-- `chattyedu_native_window_module` (primary forward skeleton for school-facing native modules)
-- `chattycog_chattyedu_native_window_module` (primary forward skeleton for dual-host native modules)
-- `chattycog_workspace_module` (frozen legacy starter)
-- `python_cli_tool`
-- `rust_cli_tool`
-
-## Current Direction
-
-Web remains the strongest early lane because it is the fastest place to prove host-owned machinery.
-
-But the rebuild is not philosophically web-only.
-The architecture is being designed so honest non-web families can return as soon as templates, contracts, checks, and repair lanes are strong enough to support them.
-
-Current architectural posture:
-
-- older positive families proved the build/patch/x-ray/governance stack
-- they are now considered transitional rather than sacred
-- template-first skeletons plus the negative bookshelf are the preferred route
-  for future reliability gains
-- starter families are being reframed as stable substrates, not the total
-  capability boundary
-- the long-term limiter should be what the current LLM can plan and what the
-  host can execute safely, not the size of the positive family catalog
-- the next execution pivot is toward atomized microtasks, so unsupported work
-  becomes small reviewed tasks instead of giant all-or-nothing generations
-- the shared selector now reaches extension governance too:
-  - proof/composition/patch/helper/bridge refresh receipts now persist
-    normalized failure class plus host-chosen next action and next step
-- adaptive decomposition is now real for at least one proven task family:
-  - broad `toolbar_ui_block`
-  - to `toolbar_label_sentence`
-  - to clause-level child tasks
-  - with the host composing the final toolbar sentence and Rust block
-- one full build-side semantic proof now exists where:
-  - the model supplies only tiny clause-level semantic drafts
-  - the host composes the final sentence
-  - the host renders the final Rust UI block
-- ecosystem-native starters now exist as explicit mechanical choices:
-  - `chattycog_native_window_module`
-  - `chattyedu_native_window_module`
-  - `chattycog_chattyedu_native_window_module`
-
-## Local Folders
-
-- `models/`: future local GGUFs and related model files
-- `runtime/`: local receipts, logs, and other rebuild runtime state
-- `output/`: generated rebuild outputs
-- `templates/`: versioned family and wrapper template assets
-- `extensions/`: scaffolded implementation work bundles for new deterministic families, patch lanes, and bridge lanes
-
-Artifact handling is now explicit:
-- durable generated project files belong in `output/`
-- factory supervision state belongs in `runtime/`
-- local compile caches and similar byproducts are not treated as canonical product output
-
-## Project Session Commands
-
-- `cargo run -p chatty_factory_cli -- select-project <project_name>`: mark a project as explicitly selected by the user
-- `cargo run -p chatty_factory_cli -- selected-project`: show the current explicit selection and last touched project
-- `cargo run -p chatty_factory_cli -- clear-selected-project`: clear the explicit selection
-- `cargo run -p chatty_factory_cli -- project-browser`: refresh and show the host-owned project browser state
-- `cargo run -p chatty_factory_cli -- refresh-project-patch-readiness`: refresh host-owned per-project patchability receipts and browser-facing patchability baselines
-
-Each of those commands also supports `--json` to emit machine-friendly state for a future UI or wrapper process.
-
-## Extension Scaffolds
-
-- `cargo run -p chatty_factory_cli -- scaffold-extension <stub_dir_or_extension_spec_json>`: turn a fallback stub bundle into a repo-side implementation work bundle under `extensions/`
-- `cargo run -p chatty_factory_cli -- scaffold-extension --integrate <stub_dir_or_extension_spec_json>`: also emit live starter files into repo manifest/template/registry-adjacent paths
-- `cargo run -p chatty_factory_cli -- scaffold-extension --integrate --promote <stub_dir_or_extension_spec_json>`: also register the starter as a pending deterministic lane in `operator_registry/pending_lanes.json`
-- `cargo run -p chatty_factory_cli -- register-proof-harness-bundle <template_manifest_json> <comparison_bundle_manifest_json>`: register a repo-defined proof template and comparison bundle as a pending `proof_harness_bundle`
-- `cargo run -p chatty_factory_cli -- pending-extensions`: show the current pending deterministic lane registry summary
-- `cargo run -p chatty_factory_cli -- implement-extension <entry_id>`: mark a pending deterministic lane entry as implemented
-- `cargo run -p chatty_factory_cli -- archive-extension <entry_id> [reason]`: retire a superseded or bad lane entry without deleting its history
-- `cargo run -p chatty_factory_cli -- validate-extension <entry_id>`: verify the expected scaffold and integrated files exist, then mark the lane `validated_ready`
-- `cargo run -p chatty_factory_cli -- prepare-extension-promotion <entry_id>`: generate Rust-side promotion stubs and notes for a `validated_ready` lane, then mark it `promotion_prepared`
-- `cargo run -p chatty_factory_cli -- prepare-extension-apply-patch <entry_id>`: generate `apply_patch`-ready wiring templates for `registry.rs` and `lib.rs`, then mark the lane `apply_patch_ready`
-- `cargo run -p chatty_factory_cli -- consume-extension-apply-patch <entry_id>`: apply the prepared wiring into the live Rust family crate, run `cargo check`, roll back on failure, and mark the lane `host_wired` on success
-- `cargo run -p chatty_factory_cli -- validate-live-extension <entry_id>`: verify that a `host_wired` lane no longer contains placeholder recipe markers or stub handler logic, rerun `cargo check`, and mark it `fully_live`
-
-This is the bridge between:
-- honest fallback saying "not supported yet"
-- and the next deterministic lane implementation work
-
-The runtime keeps these signals separately:
-- `runtime/selected_project_session.json`: strongest user-selected project signal
-- `runtime/active_project_session.json`: last project touched by a build or patch run
-- `runtime/project_browser_state.json`: UI-facing project catalog plus selection/session state
-
-## Desktop UI
-
-- `cargo run -p chatty_factory_ui`: open the rebuild desktop shell
-
-The desktop UI currently:
-- reads `runtime/project_browser_state.json`
-- lists discovered output projects
-- lets you refresh, select, and clear the active user project
-- sends build and patch requests through `chatty_factory_cli`
-- shows the extension registry with shipped, active, and archived lanes
-- lets you inspect a lane and drive its next lifecycle action from the shell
-- shows command output in-app
-- shows project patchability badges, filters, and refresh state
-- shows patch X-ray summaries and recent patch surgeries
-- shows proof and governance surfaces beyond the original thin-shell project browser
-
-## Release Notes
-
-The initial public release plan and notes live at:
-
-- [Initial GitHub Release Plan](./build-docs/plans/INITIAL_GITHUB_RELEASE_PLAN.md)
-- [GitHub Upload Metadata](./build-docs/plans/GITHUB_UPLOAD_METADATA.md)
-- [Release Notes v0.1.0](./build-docs/plans/RELEASE_NOTES_v0.1.0.md)
+- Full license text: [LICENSE](./LICENSE)
+- Workspace declaration: [Cargo.toml](./Cargo.toml)

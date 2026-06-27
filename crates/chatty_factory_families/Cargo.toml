@@ -7,5 +7,6 @@ license = "AGPL-3.0-only"
 [dependencies]
 anyhow = { workspace = true }
 chatty_factory_core = { path = "../chatty_factory_core" }
-chatty_factory_templates = { path = "../chatty_factory_templates" }
+minijinja = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::ids::{FamilyId, OperatorId, WrapperId};
+use crate::ids::{OperatorId, SubstrateKind, WrapperId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -64,7 +64,8 @@ pub struct RequestRecord {
     pub desired_surface: Option<DesiredSurface>,
     pub requested_capabilities: Vec<String>,
     pub exoskeleton_target: Option<ExoskeletonTarget>,
-    pub candidate_family_ids: Vec<FamilyId>,
+    #[serde(default)]
+    pub candidate_substrate_kinds: Vec<SubstrateKind>,
     pub ambiguity_flags: Vec<String>,
     pub created_at: Option<String>,
 }
@@ -73,13 +74,13 @@ pub struct RequestRecord {
 pub struct RouteDecision {
     pub route_id: String,
     pub request_id: String,
-    pub selected_family_id: Option<FamilyId>,
+    pub selected_substrate_kind: Option<SubstrateKind>,
     pub selected_operator_ids: Vec<OperatorId>,
     pub selected_wrapper_ids: Vec<WrapperId>,
     pub selected_behavior_kind: Option<String>,
     pub capability_transition: Option<CapabilityTransition>,
     pub decision_reasons: Vec<String>,
-    pub fallback_level: Option<String>,
+    pub next_attempt_level: Option<String>,
     pub needs_llm_review: bool,
     pub created_at: Option<String>,
 }
@@ -90,7 +91,8 @@ pub struct RequestPlan {
     pub request_id: String,
     pub mode: Option<RequestMode>,
     pub interpreted_goal: String,
-    pub inferred_family_candidates: Vec<FamilyId>,
+    #[serde(default)]
+    pub inferred_substrate_candidates: Vec<SubstrateKind>,
     pub inferred_tool_kind: Option<String>,
     pub intended_patch_kind: Option<String>,
     pub available_patch_kinds: Vec<String>,
@@ -132,16 +134,14 @@ pub struct BuildIntentFreeze {
     pub mode: Option<RequestMode>,
     pub raw_request: String,
     pub project_name: String,
-    pub selected_family_id: Option<FamilyId>,
-    pub starter_override_id: Option<String>,
-    pub recommended_starter_id: Option<String>,
+    pub target_substrate_kind: Option<SubstrateKind>,
     pub explicit_stack: Option<String>,
     pub desired_surface: Option<DesiredSurface>,
     pub exoskeleton_target: Option<ExoskeletonTarget>,
     pub inferred_tool_kind: Option<String>,
     pub interpreted_goal: String,
     #[serde(default)]
-    pub candidate_family_ids: Vec<FamilyId>,
+    pub candidate_substrate_kinds: Vec<SubstrateKind>,
     #[serde(default)]
     pub requested_capabilities: Vec<String>,
     #[serde(default)]
@@ -210,9 +210,7 @@ pub struct BuildPlanArtifact {
     pub source_request_plan_id: String,
     pub source_build_intent_freeze_id: String,
     pub project_name: String,
-    pub family_id: Option<FamilyId>,
-    pub starter_override_id: Option<String>,
-    pub recommended_starter_id: Option<String>,
+    pub substrate_kind: Option<SubstrateKind>,
     pub desired_surface: Option<DesiredSurface>,
     pub exoskeleton_target: Option<ExoskeletonTarget>,
     pub tool_kind: Option<String>,
@@ -242,9 +240,7 @@ pub struct BuildPlanReview {
     pub build_intent_freeze_id: String,
     pub source_build_plan_id: String,
     pub project_name: String,
-    pub family_id: Option<FamilyId>,
-    pub starter_override_id: Option<String>,
-    pub recommended_starter_id: Option<String>,
+    pub substrate_kind: Option<SubstrateKind>,
     pub decision: String,
     pub original_feature_slice_count: usize,
     pub reviewed_feature_slice_count: usize,
@@ -267,7 +263,7 @@ pub struct BuildConstraintReviewReceipt {
     pub request_id: String,
     pub build_plan_id: String,
     pub project_name: String,
-    pub family_id: Option<FamilyId>,
+    pub substrate_kind: Option<SubstrateKind>,
     pub tool_kind: Option<String>,
     pub review_subject: String,
     #[serde(default)]
@@ -293,9 +289,8 @@ pub struct BuildExecutionWorkOrder {
     pub build_plan_review_id: String,
     pub build_constraint_review_id: String,
     pub project_name: String,
-    pub family_id: Option<FamilyId>,
+    pub substrate_kind: Option<SubstrateKind>,
     pub tool_kind: Option<String>,
-    pub starter_override_id: Option<String>,
     pub decision: String,
     #[serde(default)]
     pub feature_slice_ids: Vec<String>,
@@ -342,7 +337,7 @@ pub struct PlanTaskList {
     pub build_constraint_review_id: String,
     pub build_work_order_id: String,
     pub project_name: String,
-    pub family_id: Option<FamilyId>,
+    pub substrate_kind: Option<SubstrateKind>,
     pub tool_kind: Option<String>,
     #[serde(default)]
     pub tasks: Vec<PlanTask>,
@@ -588,7 +583,8 @@ pub struct PlannerHandoff {
     pub mode: Option<RequestMode>,
     pub active_project: Option<String>,
     pub interpreted_goal: String,
-    pub inferred_family_candidates: Vec<FamilyId>,
+    #[serde(default)]
+    pub inferred_substrate_candidates: Vec<SubstrateKind>,
     pub inferred_tool_kind: Option<String>,
     pub available_patch_kinds: Vec<String>,
     #[serde(default)]
@@ -603,8 +599,8 @@ pub struct PlannerHandoff {
     pub candidate_composition_patch_kinds: Vec<String>,
     #[serde(default)]
     pub candidate_composition_patch_primitive_classes: Vec<String>,
-    #[serde(default)]
-    pub candidate_composition_family_build_primitive_classes: Vec<String>,
+    #[serde(default, alias = "candidate_composition_family_build_primitive_classes")]
+    pub candidate_composition_base_build_primitive_classes: Vec<String>,
     #[serde(default)]
     pub candidate_composition_layers: Vec<String>,
     #[serde(default)]
@@ -631,7 +627,7 @@ pub struct PlannerResponse {
     pub approved: bool,
     pub recommended_request_mode: Option<String>,
     pub recommended_active_project: Option<String>,
-    pub recommended_family_id: Option<FamilyId>,
+    pub recommended_substrate_kind: Option<SubstrateKind>,
     pub recommended_tool_kind: Option<String>,
     pub recommended_patch_kind: Option<String>,
     #[serde(default)]
@@ -640,8 +636,8 @@ pub struct PlannerResponse {
     pub recommended_composition_patch_kinds: Vec<String>,
     #[serde(default)]
     pub recommended_composition_patch_primitive_classes: Vec<String>,
-    #[serde(default)]
-    pub recommended_composition_family_build_primitive_classes: Vec<String>,
+    #[serde(default, alias = "recommended_composition_family_build_primitive_classes")]
+    pub recommended_composition_base_build_primitive_classes: Vec<String>,
     #[serde(default)]
     pub recommended_composition_layers: Vec<String>,
     #[serde(default)]
@@ -672,8 +668,7 @@ pub struct PlannerResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct ScaffoldInputs {
-    pub family_id: Option<FamilyId>,
+pub struct BuildSeedInputs {
     pub project_name: String,
     pub title: String,
     pub summary: String,
@@ -697,7 +692,6 @@ pub struct AcceptanceCheck {
 pub struct AcceptancePlan {
     pub acceptance_id: String,
     pub request_id: String,
-    pub family_id: Option<FamilyId>,
     pub checks: Vec<AcceptanceCheck>,
     pub required_files: Vec<String>,
     pub required_markers: Vec<String>,
@@ -717,7 +711,9 @@ pub struct FailureReportEvidence {
 pub struct FailureReport {
     pub failure_id: String,
     pub request_id: String,
-    pub family_id: Option<FamilyId>,
+    #[serde(default)]
+    pub substrate_kind: Option<SubstrateKind>,
+    pub tool_kind: Option<String>,
     pub failure_class: Option<FailureClass>,
     pub failing_check_id: Option<String>,
     pub evidence: Option<FailureReportEvidence>,
@@ -730,7 +726,6 @@ pub struct FailureReport {
 pub struct ProjectSpec {
     pub spec_id: String,
     pub project_name: String,
-    pub family_id: Option<FamilyId>,
     pub substrate: String,
     pub tool_kind: Option<String>,
     pub request_summary: Option<String>,
@@ -777,7 +772,6 @@ pub struct HelperServiceSpec {
     pub helper_spec_id: String,
     pub helper_id: String,
     pub helper_kind: String,
-    pub attached_family_id: Option<FamilyId>,
     pub attached_tool_kind: Option<String>,
     pub attached_project_name: Option<String>,
     pub purpose: String,
@@ -916,14 +910,9 @@ pub struct OperatorBundleStatus {
 pub struct BuildReceipt {
     pub receipt_id: String,
     pub request_id: String,
-    pub family_id: Option<FamilyId>,
-    pub starter_override_id: Option<String>,
-    pub starter_override_summary: Option<String>,
-    pub recommended_starter_id: Option<String>,
-    pub recommended_starter_summary: Option<String>,
-    pub starter_recommendation_comparison: Option<String>,
     pub project_name: String,
     pub project_dir: String,
+    pub substrate: String,
     pub tool_kind: Option<String>,
     pub emitted_files: Vec<String>,
     pub created_at: Option<String>,
@@ -932,7 +921,8 @@ pub struct BuildReceipt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ProjectCatalogEntry {
     pub project_name: String,
-    pub family_id: Option<FamilyId>,
+    #[serde(default)]
+    pub substrate: String,
     pub tool_kind: Option<String>,
     pub request_summary: Option<String>,
     pub recency_hint: String,
@@ -941,7 +931,8 @@ pub struct ProjectCatalogEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ProjectSession {
     pub project_name: String,
-    pub family_id: Option<FamilyId>,
+    #[serde(default)]
+    pub substrate: String,
     pub tool_kind: Option<String>,
     pub request_summary: Option<String>,
     pub last_action: String,
@@ -964,8 +955,8 @@ pub struct ProjectBrowserState {
 pub struct PatchReceipt {
     pub patch_id: String,
     pub request_id: String,
-    pub family_id: Option<FamilyId>,
     pub project_name: String,
+    pub substrate: String,
     pub patch_kind: String,
     pub request_summary: String,
     pub modified_files: Vec<String>,
@@ -977,7 +968,6 @@ pub struct ProjectPatchDiagnosis {
     pub diagnosis_id: String,
     pub request_id: String,
     pub project_name: String,
-    pub family_id: Option<FamilyId>,
     pub tool_kind: Option<String>,
     pub substrate: String,
     pub request_summary: String,
@@ -1025,7 +1015,7 @@ pub struct PatchIntentFreeze {
     pub freeze_id: String,
     pub request_id: String,
     pub project_name: String,
-    pub family_id: Option<FamilyId>,
+    pub substrate: String,
     pub tool_kind: Option<String>,
     pub interpreted_goal: String,
     pub intended_patch_kind: Option<String>,
@@ -1116,7 +1106,8 @@ pub struct ImplementationConstraint {
     pub constraint_scope: String,
     #[serde(default)]
     pub constraint_origin: String,
-    pub family_id: Option<FamilyId>,
+    #[serde(default)]
+    pub substrate_kind: Option<SubstrateKind>,
     pub tool_kind: Option<String>,
     pub language_id: Option<String>,
     pub constraint_kind: String,
@@ -1154,7 +1145,7 @@ pub struct ConstraintReviewReceipt {
     pub review_id: String,
     pub request_id: String,
     pub project_name: String,
-    pub family_id: Option<FamilyId>,
+    pub substrate_kind: Option<SubstrateKind>,
     pub tool_kind: Option<String>,
     pub review_subject: String,
     pub original_intended_patch_kind: Option<String>,
@@ -1190,10 +1181,16 @@ pub struct BuildVerificationReceipt {
     pub review_subject: String,
     pub interpreted_goal: String,
     #[serde(default)]
-    pub candidate_family_ids: Vec<FamilyId>,
-    pub suggested_family_id: Option<FamilyId>,
+    pub candidate_substrate_kinds: Vec<SubstrateKind>,
+    pub suggested_substrate_kind: Option<SubstrateKind>,
     pub suggested_tool_kind: Option<String>,
-    pub suggested_extension_kind: String,
+    pub next_attempt_kind: String,
+    #[serde(default)]
+    pub funnel_stage: String,
+    #[serde(default)]
+    pub next_attempt_mechanics: Vec<String>,
+    #[serde(default)]
+    pub promoted_constraint_summaries: Vec<String>,
     pub failure_class: FailureClass,
     #[serde(default)]
     pub normalized_failure_class: String,
@@ -1294,52 +1291,6 @@ pub struct ConstraintShelfMutationReceipt {
     #[serde(default)]
     pub recommended_next_step: String,
     pub created_at: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FamilyCapabilityManifest {
-    pub family_id: FamilyId,
-    pub primary_substrate: String,
-    pub supports_chattycog_wrapper: bool,
-    #[serde(default = "default_family_lifecycle_status")]
-    pub lifecycle_status: String,
-    #[serde(default)]
-    pub lifecycle_notes: Vec<String>,
-    #[serde(default)]
-    pub supported_stack_ids: Vec<String>,
-    #[serde(default)]
-    pub provided_build_primitive_classes: Vec<String>,
-    #[serde(default)]
-    pub primitive_adapters: Vec<FamilyPrimitiveAdapter>,
-    pub explicit_stack_keywords: Vec<String>,
-    pub route_keywords: Vec<String>,
-    pub supported_tool_kinds: Vec<String>,
-    #[serde(default)]
-    pub forbids_capabilities: Vec<String>,
-    #[serde(default)]
-    pub requires_helper_for: Vec<String>,
-}
-
-fn default_family_lifecycle_status() -> String {
-    "active".into()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct FamilyPrimitiveAdapter {
-    pub adapter_id: String,
-    pub composition_layer: String,
-    pub primitive_name: String,
-    pub adapter_kind: String,
-    pub support_level: String,
-    #[serde(default)]
-    pub requires_helpers: Vec<String>,
-    #[serde(default)]
-    pub requires_primitives: Vec<String>,
-    #[serde(default)]
-    pub companion_primitives: Vec<String>,
-    pub execution_hint: Option<String>,
-    #[serde(default)]
-    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1498,7 +1449,7 @@ pub struct PlannerDispatchReceipt {
     pub requested_model_selector: Option<String>,
     pub attempted_model_paths: Vec<String>,
     pub successful_model_path: Option<String>,
-    pub fallback_used: bool,
+    pub model_retry_used: bool,
     pub degraded_response_used: bool,
     pub final_response_path: Option<String>,
     pub run_receipt_paths: Vec<String>,
@@ -1510,7 +1461,8 @@ pub struct PlannerDispatchReceipt {
 pub struct ExecutionPolicy {
     pub policy_id: String,
     pub request_id: String,
-    pub family_id: Option<FamilyId>,
+    pub target_substrate_kind: Option<SubstrateKind>,
+    pub target_tool_kind: Option<String>,
     pub project_dir: String,
     pub allowed_root: String,
     pub allowed_entrypoints: Vec<String>,
@@ -1534,7 +1486,8 @@ pub struct ExecutionReceipt {
     pub receipt_id: String,
     pub request_id: String,
     pub policy_id: String,
-    pub family_id: Option<FamilyId>,
+    pub target_substrate_kind: Option<SubstrateKind>,
+    pub target_tool_kind: Option<String>,
     pub project_dir: String,
     pub status: String,
     pub smoke_checks: Vec<ExecutionSmokeCheck>,
@@ -1547,7 +1500,8 @@ pub struct ProjectSnapshot {
     pub snapshot_id: String,
     pub project_name: String,
     pub project_dir: String,
-    pub family_id: Option<FamilyId>,
+    #[serde(default)]
+    pub substrate: String,
     pub tool_kind: Option<String>,
     pub entrypoints: Vec<String>,
     pub expected_files: Vec<String>,
@@ -1560,7 +1514,8 @@ pub struct ContextBundle {
     pub context_id: String,
     pub request_id: String,
     pub project_name: String,
-    pub family_id: Option<FamilyId>,
+    #[serde(default)]
+    pub substrate: String,
     pub tool_kind: Option<String>,
     pub request_summary: Option<String>,
     pub entrypoints: Vec<String>,
@@ -1600,11 +1555,11 @@ pub struct ComposableRoutePlan {
     pub mode: Option<RequestMode>,
     pub active_project: Option<String>,
     pub interpreted_goal: String,
-    pub target_family_id: Option<FamilyId>,
+    pub target_substrate_kind: Option<SubstrateKind>,
     pub target_tool_kind: Option<String>,
     pub target_patch_kind: Option<String>,
     #[serde(default)]
-    pub candidate_family_ids: Vec<FamilyId>,
+    pub candidate_substrate_kinds: Vec<SubstrateKind>,
     #[serde(default)]
     pub helper_ids: Vec<String>,
     #[serde(default)]
@@ -1621,8 +1576,8 @@ pub struct ComposableRoutePlan {
     pub selected_patch_kinds: Vec<String>,
     #[serde(default)]
     pub patch_primitive_classes: Vec<String>,
-    #[serde(default)]
-    pub family_build_primitive_classes: Vec<String>,
+    #[serde(default, alias = "family_build_primitive_classes")]
+    pub base_build_primitive_classes: Vec<String>,
     #[serde(default)]
     pub composition_layers: Vec<String>,
     #[serde(default)]
@@ -1641,8 +1596,8 @@ pub struct ComposableRoutePlan {
     pub selected_acceptance_recipe_ids: Vec<String>,
     #[serde(default)]
     pub selected_patch_primitive_classes: Vec<String>,
-    #[serde(default)]
-    pub selected_family_build_primitive_classes: Vec<String>,
+    #[serde(default, alias = "selected_family_build_primitive_classes")]
+    pub selected_base_build_primitive_classes: Vec<String>,
     #[serde(default)]
     pub selected_composition_layers: Vec<String>,
     #[serde(default)]
@@ -1675,7 +1630,7 @@ pub struct PrimitiveExecutionPlan {
     pub execution_plan_id: String,
     pub composition_plan_id: String,
     pub request_id: String,
-    pub target_family_id: Option<FamilyId>,
+    pub target_substrate_kind: Option<SubstrateKind>,
     pub target_tool_kind: Option<String>,
     pub composition_work_order_kind: String,
     #[serde(default)]
@@ -1693,16 +1648,17 @@ pub struct PrimitiveExecutionPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PrimitiveProofFamilyRequestBinding {
-    pub family_id: FamilyId,
-    pub family_label: String,
+pub struct PrimitiveProofSubstrateRequestBinding {
+    pub substrate_kind: Option<SubstrateKind>,
+    #[serde(default)]
+    pub substrate_label: String,
     pub request_template: String,
     pub empty_request_fallback: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrimitiveProofEnrichmentBinding {
-    pub family_id: FamilyId,
+    pub substrate_kind: Option<SubstrateKind>,
     #[serde(default)]
     pub missing_capability_classes: Vec<String>,
     #[serde(default)]
@@ -1715,7 +1671,7 @@ pub struct PrimitiveProofExecutionRecipe {
     pub request_generation_kind: String,
     pub enrichment_kind: String,
     #[serde(default)]
-    pub family_request_bindings: Vec<PrimitiveProofFamilyRequestBinding>,
+    pub substrate_request_bindings: Vec<PrimitiveProofSubstrateRequestBinding>,
     #[serde(default)]
     pub enrichment_bindings: Vec<PrimitiveProofEnrichmentBinding>,
 }
@@ -1728,11 +1684,11 @@ pub struct PrimitiveProofTemplate {
     pub description: String,
     pub shared_request_seed: String,
     #[serde(default)]
-    pub target_family_ids: Vec<FamilyId>,
+    pub target_substrate_kinds: Vec<SubstrateKind>,
     #[serde(default)]
     pub required_composition_layers: Vec<String>,
-    #[serde(default)]
-    pub required_family_build_primitive_classes: Vec<String>,
+    #[serde(default, alias = "required_family_build_primitive_classes")]
+    pub required_base_build_primitive_classes: Vec<String>,
     #[serde(default)]
     pub required_patch_primitive_classes: Vec<String>,
     #[serde(default)]
@@ -1790,14 +1746,14 @@ pub struct PrimitiveProofHarnessReceipt {
     pub left_request: String,
     pub right_request: String,
     #[serde(default)]
-    pub target_family_ids: Vec<FamilyId>,
+    pub target_substrate_kinds: Vec<SubstrateKind>,
     pub left_project_name: String,
-    pub left_family_id: Option<FamilyId>,
+    pub left_substrate_kind: Option<SubstrateKind>,
     pub left_request_id: String,
     pub left_composable_route_plan_path: Option<String>,
     pub left_primitive_execution_plan_path: Option<String>,
     pub right_project_name: String,
-    pub right_family_id: Option<FamilyId>,
+    pub right_substrate_kind: Option<SubstrateKind>,
     pub right_request_id: String,
     pub right_composable_route_plan_path: Option<String>,
     pub right_primitive_execution_plan_path: Option<String>,
@@ -1865,20 +1821,30 @@ pub struct ClarificationRequest {
     pub mode: Option<RequestMode>,
     pub question: String,
     pub reasons: Vec<String>,
-    pub candidate_family_ids: Vec<FamilyId>,
+    #[serde(default)]
+    pub candidate_substrate_kinds: Vec<SubstrateKind>,
     pub created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct FallbackBuildSpec {
-    pub fallback_spec_id: String,
+pub struct NextAttemptBuildSpec {
+    pub next_attempt_spec_id: String,
     pub request_id: String,
     pub mode: Option<RequestMode>,
     pub composition_route_class: Option<CompositionRouteClass>,
     pub interpreted_goal: String,
-    pub candidate_family_ids: Vec<FamilyId>,
-    pub suggested_extension_kind: String,
-    pub suggested_family_id: Option<FamilyId>,
+    #[serde(default)]
+    pub candidate_substrate_kinds: Vec<SubstrateKind>,
+    pub next_attempt_kind: String,
+    #[serde(default)]
+    pub funnel_stage: String,
+    #[serde(default)]
+    pub next_attempt_mechanics: Vec<String>,
+    #[serde(default)]
+    pub promoted_constraint_summaries: Vec<String>,
+    #[serde(default)]
+    pub host_shape_substitution_forbidden: bool,
+    pub suggested_substrate_kind: Option<SubstrateKind>,
     pub suggested_tool_kind: Option<String>,
     pub suggested_patch_kind: Option<String>,
     #[serde(default)]
@@ -1886,8 +1852,8 @@ pub struct FallbackBuildSpec {
     pub suggested_hosting_mode: Option<String>,
     pub requested_capabilities: Vec<String>,
     pub constraints: Vec<String>,
-    #[serde(default)]
-    pub missing_family_build_primitive_classes: Vec<String>,
+    #[serde(default, alias = "missing_family_build_primitive_classes")]
+    pub missing_base_build_primitive_classes: Vec<String>,
     #[serde(default)]
     pub missing_patch_primitive_classes: Vec<String>,
     #[serde(default)]
@@ -1898,9 +1864,9 @@ pub struct FallbackBuildSpec {
     pub acceptance_targets: Vec<String>,
     #[serde(default)]
     pub implementation_notes: Vec<String>,
-    pub suggested_proof_seed_template_id: Option<String>,
-    pub suggested_proof_seed_bundle_id: Option<String>,
-    pub stub_bundle_path: Option<String>,
+    pub comparison_seed_template_id: Option<String>,
+    pub comparison_seed_bundle_id: Option<String>,
+    pub attempt_bundle_path: Option<String>,
     #[serde(default)]
     pub recommended_next_action: String,
     pub recommended_next_step: String,
@@ -1908,16 +1874,22 @@ pub struct FallbackBuildSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct FallbackPlanReceipt {
-    pub fallback_receipt_id: String,
+pub struct NextAttemptReceipt {
+    pub next_attempt_receipt_id: String,
     pub request_id: String,
     pub mode: Option<RequestMode>,
     pub status: String,
     pub reasons: Vec<String>,
+    #[serde(default)]
+    pub funnel_stage: String,
+    #[serde(default)]
+    pub next_attempt_mechanics: Vec<String>,
+    #[serde(default)]
+    pub evidence_receipt_paths: Vec<String>,
     pub clarification_path: Option<String>,
     pub build_spec_path: Option<String>,
     pub planner_handoff_path: Option<String>,
-    pub stub_bundle_path: Option<String>,
+    pub attempt_bundle_path: Option<String>,
     pub created_at: Option<String>,
 }
 

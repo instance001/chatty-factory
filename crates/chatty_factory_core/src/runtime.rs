@@ -855,10 +855,10 @@ fn http_probe(host: &str, port: u16) -> Result<bool> {
 }
 
 fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
-    let allowed_family_ids = handoff
-        .inferred_family_candidates
+    let allowed_substrate_kinds = handoff
+        .inferred_substrate_candidates
         .iter()
-        .map(|family| serde_json::to_value(family))
+        .map(|substrate| serde_json::to_value(substrate))
         .collect::<Result<Vec<_>, _>>()?;
     let allowed_tool_kinds = serde_json::json!([
         "directory_audit",
@@ -892,7 +892,7 @@ fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
             "mode": handoff.mode,
             "active_project": handoff.active_project,
             "interpreted_goal": handoff.interpreted_goal,
-            "candidate_families": allowed_family_ids,
+            "candidate_substrates": allowed_substrate_kinds,
             "inferred_tool_kind": handoff.inferred_tool_kind,
             "available_patch_kinds": handoff.available_patch_kinds,
             "candidate_patch_recipe_ids": handoff.candidate_patch_recipe_ids
@@ -904,9 +904,9 @@ fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
             "mode": handoff.mode,
             "active_project": handoff.active_project,
             "interpreted_goal": handoff.interpreted_goal,
-            "candidate_families": allowed_family_ids,
+            "candidate_substrates": allowed_substrate_kinds,
             "inferred_tool_kind": handoff.inferred_tool_kind,
-            "candidate_composition_family_build_primitive_classes": handoff.candidate_composition_family_build_primitive_classes,
+            "candidate_composition_base_build_primitive_classes": handoff.candidate_composition_base_build_primitive_classes,
             "candidate_composition_layers": handoff.candidate_composition_layers,
             "candidate_composition_patch_kinds": handoff.candidate_composition_patch_kinds,
             "candidate_composition_patch_primitive_classes": handoff.candidate_composition_patch_primitive_classes,
@@ -920,7 +920,7 @@ fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
             "source_plan_id": handoff.source_plan_id,
             "mode": handoff.mode,
             "interpreted_goal": handoff.interpreted_goal,
-            "candidate_families": allowed_family_ids,
+            "candidate_substrates": allowed_substrate_kinds,
             "candidate_operator_bundle_ids": handoff.candidate_operator_bundle_ids
         })
     } else if has_acceptance_recipe_candidates {
@@ -929,7 +929,7 @@ fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
             "source_plan_id": handoff.source_plan_id,
             "mode": handoff.mode,
             "interpreted_goal": handoff.interpreted_goal,
-            "candidate_families": allowed_family_ids,
+            "candidate_substrates": allowed_substrate_kinds,
             "inferred_tool_kind": handoff.inferred_tool_kind,
             "candidate_acceptance_recipe_ids": handoff.candidate_acceptance_recipe_ids
         })
@@ -940,7 +940,7 @@ fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
             "mode": handoff.mode,
             "active_project": handoff.active_project,
             "interpreted_goal": handoff.interpreted_goal,
-            "candidate_families": allowed_family_ids,
+            "candidate_substrates": allowed_substrate_kinds,
             "inferred_tool_kind": handoff.inferred_tool_kind,
             "available_patch_kinds": handoff.available_patch_kinds
         })
@@ -950,7 +950,7 @@ fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
             "source_plan_id": handoff.source_plan_id,
             "mode": handoff.mode,
             "interpreted_goal": handoff.interpreted_goal,
-            "candidate_families": allowed_family_ids,
+            "candidate_substrates": allowed_substrate_kinds,
             "inferred_tool_kind": handoff.inferred_tool_kind,
             "allowed_tool_kinds": allowed_tool_kinds
         })
@@ -973,7 +973,7 @@ fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
             "approved": true,
             "recommended_composition_patch_kinds": ["helper_summary_panel"],
             "recommended_composition_patch_primitive_classes": handoff.candidate_composition_patch_primitive_classes.iter().take(4).cloned().collect::<Vec<_>>(),
-            "recommended_composition_family_build_primitive_classes": handoff.candidate_composition_family_build_primitive_classes.iter().take(4).cloned().collect::<Vec<_>>(),
+            "recommended_composition_base_build_primitive_classes": handoff.candidate_composition_base_build_primitive_classes.iter().take(4).cloned().collect::<Vec<_>>(),
             "recommended_composition_layers": handoff.candidate_composition_layers.iter().take(4).cloned().collect::<Vec<_>>(),
             "recommended_composition_helper_primitive_ids": if has_composition_helper_candidates {
                 handoff.candidate_composition_helper_primitive_ids.iter().take(4).cloned().collect::<Vec<_>>()
@@ -1008,7 +1008,7 @@ fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
     } else {
         serde_json::json!({
             "approved": true,
-            "recommended_family_id": "python_cli_tool",
+            "recommended_substrate_kind": "cli",
             "recommended_tool_kind": "directory_audit",
             "rationale": ["short reason"]
         })
@@ -1027,7 +1027,7 @@ fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
         )
     } else if has_composition_patch_candidates {
         format!(
-            "Return a compact bounded composition review JSON for this handoff summary: {}. Rules: output one-line JSON only, choose zero or more recommended_composition_patch_kinds from candidate_composition_patch_kinds, choose zero or more recommended_composition_patch_primitive_classes from candidate_composition_patch_primitive_classes when present, choose zero or more recommended_composition_family_build_primitive_classes from candidate_composition_family_build_primitive_classes when present, choose zero or more recommended_composition_layers from candidate_composition_layers when present, choose zero or more recommended_composition_helper_primitive_ids from candidate_composition_helper_primitive_ids when present, choose zero or more recommended_composition_helper_primitive_kinds from candidate_composition_helper_primitive_kinds when present, use candidate_composition_adapter_semantics to sanity-check whether the execution shape looks too broad, under-supported, or dependency-risky, preserve dependency-safe order when possible, do not invent ids or kinds, keep rationale to one short string, and match this JSON shape exactly: {}",
+            "Return a compact bounded composition review JSON for this handoff summary: {}. Rules: output one-line JSON only, choose zero or more recommended_composition_patch_kinds from candidate_composition_patch_kinds, choose zero or more recommended_composition_patch_primitive_classes from candidate_composition_patch_primitive_classes when present, choose zero or more recommended_composition_base_build_primitive_classes from candidate_composition_base_build_primitive_classes when present, choose zero or more recommended_composition_layers from candidate_composition_layers when present, choose zero or more recommended_composition_helper_primitive_ids from candidate_composition_helper_primitive_ids when present, choose zero or more recommended_composition_helper_primitive_kinds from candidate_composition_helper_primitive_kinds when present, use candidate_composition_adapter_semantics to sanity-check whether the execution shape looks too broad, under-supported, or dependency-risky, preserve dependency-safe order when possible, do not invent ids or kinds, keep rationale to one short string, and match this JSON shape exactly: {}",
             serde_json::to_string(&handoff_summary)?,
             serde_json::to_string(&response_shape)?
         )
@@ -1051,7 +1051,7 @@ fn build_planner_chat_request(handoff: &PlannerHandoff) -> Result<String> {
         )
     } else {
         format!(
-            "Return a compact planner build choice JSON for this handoff summary: {}. Rules: output one-line JSON only, choose recommended_family_id from candidate_families, choose recommended_tool_kind from allowed_tool_kinds when relevant, keep rationale to one short string, and match this JSON shape exactly: {}",
+            "Return a compact planner build choice JSON for this handoff summary: {}. Rules: output one-line JSON only, choose recommended_substrate_kind from candidate_substrates when present, choose recommended_tool_kind from allowed_tool_kinds when relevant, do not invent substrate kinds, keep rationale to one short string, and match this JSON shape exactly: {}",
             serde_json::to_string(&handoff_summary)?,
             serde_json::to_string(&response_shape)?
         )
@@ -1194,11 +1194,17 @@ fn normalize_choice_response_value(
 ) -> Result<PlannerResponse> {
     let inner = parsed_value.get("planner_choice").unwrap_or(parsed_value);
 
-    let recommended_family_id = inner
-        .get("recommended_family_id")
+    let recommended_substrate_kind = inner
+        .get("recommended_substrate_kind")
         .cloned()
         .and_then(|value| serde_json::from_value(value).ok())
-        .or_else(|| handoff.inferred_family_candidates.first().cloned());
+        .or_else(|| {
+            inner
+                .get("structured_substrate_recommendation")
+                .and_then(|value| value.as_array().and_then(|items| items.first()).cloned())
+                .and_then(|value| serde_json::from_value(value).ok())
+        })
+        .or_else(|| handoff.inferred_substrate_candidates.first().cloned());
 
     let recommended_tool_kind = inner
         .get("recommended_tool_kind")
@@ -1225,8 +1231,9 @@ fn normalize_choice_response_value(
     let recommended_composition_patch_primitive_classes =
         string_array(inner.get("recommended_composition_patch_primitive_classes"))
             .unwrap_or_default();
-    let recommended_composition_family_build_primitive_classes =
-        string_array(inner.get("recommended_composition_family_build_primitive_classes"))
+    let recommended_composition_base_build_primitive_classes =
+        string_array(inner.get("recommended_composition_base_build_primitive_classes"))
+            .or_else(|| string_array(inner.get("recommended_composition_family_build_primitive_classes")))
             .unwrap_or_default();
     let recommended_composition_layers =
         string_array(inner.get("recommended_composition_layers")).unwrap_or_default();
@@ -1249,13 +1256,13 @@ fn normalize_choice_response_value(
     });
 
     if recommended_request_mode.is_none()
-        && recommended_family_id.is_none()
+        && recommended_substrate_kind.is_none()
         && recommended_tool_kind.is_none()
         && recommended_patch_kind.is_none()
         && recommended_patch_recipe_ids.is_empty()
         && recommended_composition_patch_kinds.is_empty()
         && recommended_composition_patch_primitive_classes.is_empty()
-        && recommended_composition_family_build_primitive_classes.is_empty()
+        && recommended_composition_base_build_primitive_classes.is_empty()
         && recommended_composition_layers.is_empty()
         && recommended_composition_helper_primitive_ids.is_empty()
         && recommended_composition_helper_primitive_kinds.is_empty()
@@ -1275,13 +1282,13 @@ fn normalize_choice_response_value(
             .unwrap_or(true),
         recommended_request_mode,
         recommended_active_project,
-        recommended_family_id,
+        recommended_substrate_kind,
         recommended_tool_kind,
         recommended_patch_kind,
         recommended_patch_recipe_ids,
         recommended_composition_patch_kinds,
         recommended_composition_patch_primitive_classes,
-        recommended_composition_family_build_primitive_classes,
+        recommended_composition_base_build_primitive_classes,
         recommended_composition_layers,
         recommended_composition_helper_primitive_ids,
         recommended_composition_helper_primitive_kinds,
@@ -1292,7 +1299,7 @@ fn normalize_choice_response_value(
         execution_steps: if matches!(handoff.mode, Some(crate::RequestMode::Patch)) {
             vec!["apply the recommended deterministic patch lane".into()]
         } else {
-            vec!["route to the recommended family and continue deterministic build".into()]
+            vec!["route to the recommended bounded substrate and continue deterministic build".into()]
         },
         acceptance_notes: vec!["verify the deterministic output contract after execution".into()],
         acceptance_checks_to_add: Vec::new(),
@@ -1311,15 +1318,17 @@ fn normalize_planner_response_value(
 ) -> Result<PlannerResponse> {
     let inner = parsed_value.get("planner_response").unwrap_or(parsed_value);
 
-    let recommended_family_id = inner
-        .get("recommended_family_id")
+    let recommended_substrate_kind = inner
+        .get("recommended_substrate_kind")
         .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
         .or_else(|| {
             inner
-                .get("structured_family_recommendation")
+                .get("structured_substrate_recommendation")
                 .and_then(|value| value.as_array().and_then(|items| items.first()).cloned())
+                .and_then(|value| serde_json::from_value(value).ok())
         })
-        .and_then(|value| serde_json::from_value(value).ok());
+        .or_else(|| handoff.inferred_substrate_candidates.first().cloned());
 
     let recommended_patch_kind = inner
         .get("recommended_patch_kind")
@@ -1349,7 +1358,7 @@ fn normalize_planner_response_value(
         approved: true,
         recommended_request_mode: None,
         recommended_active_project: None,
-        recommended_family_id,
+        recommended_substrate_kind,
         recommended_tool_kind: inner
             .get("recommended_tool_kind")
             .and_then(|value| value.as_str())
@@ -1368,9 +1377,10 @@ fn normalize_planner_response_value(
         )
         .or_else(|| string_array(inner.get("composition_patch_primitive_classes")))
         .unwrap_or_default(),
-        recommended_composition_family_build_primitive_classes: string_array(
-            inner.get("recommended_composition_family_build_primitive_classes"),
+        recommended_composition_base_build_primitive_classes: string_array(
+            inner.get("recommended_composition_base_build_primitive_classes"),
         )
+        .or_else(|| string_array(inner.get("recommended_composition_family_build_primitive_classes")))
         .or_else(|| string_array(inner.get("composition_family_build_primitive_classes")))
         .unwrap_or_default(),
         recommended_composition_layers: string_array(inner.get("recommended_composition_layers"))
@@ -1430,30 +1440,31 @@ fn infer_planner_response_from_text(
     handoff: &PlannerHandoff,
 ) -> Result<PlannerResponse> {
     let lower = text.to_ascii_lowercase();
-    let recommended_family_id = if lower.contains("python_cli_tool") {
-        Some(crate::FamilyId::PythonCliTool)
-    } else if lower.contains("rust_cli_tool") {
-        Some(crate::FamilyId::RustCliTool)
-    } else if lower.contains("chattycog_chattyedu_native_window_module") {
-        Some(crate::FamilyId::ChattycogChattyeduNativeWindowModule)
-    } else if lower.contains("chattycog_native_window_module") {
-        Some(crate::FamilyId::ChattycogNativeWindowModule)
-    } else if lower.contains("chattyedu_native_window_module") {
-        Some(crate::FamilyId::ChattyeduNativeWindowModule)
-    } else if lower.contains("chattycog_workspace_module") {
-        Some(crate::FamilyId::ChattycogWorkspaceModule)
-    } else if lower.contains("chattycog_webview_module") {
-        Some(crate::FamilyId::ChattycogWebviewModule)
+    let recommended_substrate_kind = if lower.contains("webview") {
+        Some(crate::SubstrateKind::Webview)
+    } else if lower.contains("workspace") || lower.contains("ui.json") {
+        Some(crate::SubstrateKind::Workspace)
+    } else if lower.contains("python_cli_tool")
+        || lower.contains("rust_cli_tool")
+        || lower.contains("cli")
+    {
+        Some(crate::SubstrateKind::Cli)
+    } else if lower.contains("native window")
+        || lower.contains("desktop")
+        || lower.contains("chattycog_native_window_module")
+        || lower.contains("chattyedu_native_window_module")
+        || lower.contains("chattycog_chattyedu_native_window_module")
+    {
+        Some(crate::SubstrateKind::NativeWindow)
     } else if lower.contains("static_web_dashboard")
         || lower.contains("static web dashboard")
         || lower.contains("browser dashboard")
         || lower.contains("web dashboard")
     {
-        Some(crate::FamilyId::StaticWebDashboard)
+        Some(crate::SubstrateKind::StaticWeb)
     } else {
-        handoff.inferred_family_candidates.first().cloned()
+        handoff.inferred_substrate_candidates.first().cloned()
     };
-
     let recommended_tool_kind = if lower.contains("directory_audit") {
         Some("directory_audit".to_string())
     } else if lower.contains("csv_report") {
@@ -1489,13 +1500,13 @@ fn infer_planner_response_from_text(
         approved: true,
         recommended_request_mode: None,
         recommended_active_project: None,
-        recommended_family_id,
+        recommended_substrate_kind,
         recommended_tool_kind,
         recommended_patch_kind,
         recommended_patch_recipe_ids: Vec::new(),
         recommended_composition_patch_kinds: Vec::new(),
         recommended_composition_patch_primitive_classes: Vec::new(),
-        recommended_composition_family_build_primitive_classes: Vec::new(),
+        recommended_composition_base_build_primitive_classes: Vec::new(),
         recommended_composition_layers: Vec::new(),
         recommended_composition_helper_primitive_ids: Vec::new(),
         recommended_composition_helper_primitive_kinds: Vec::new(),
@@ -1506,7 +1517,7 @@ fn infer_planner_response_from_text(
         execution_steps: if matches!(handoff.mode, Some(crate::RequestMode::Patch)) {
             vec!["apply the recommended deterministic patch lane".into()]
         } else {
-            vec!["route to the recommended family and continue deterministic build".into()]
+            vec!["route to the recommended bounded substrate and continue deterministic build".into()]
         },
         acceptance_notes: vec!["verify the deterministic output contract after execution".into()],
         acceptance_checks_to_add: Vec::new(),
@@ -1563,30 +1574,6 @@ fn extract_first_json_object(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FamilyId, PlannerHandoff, RequestMode};
+    use crate::{PlannerHandoff, RequestMode};
 
-    #[test]
-    fn parser_does_not_force_static_web_from_generic_dashboard_word() {
-        let handoff = PlannerHandoff {
-            handoff_id: "handoff-1".into(),
-            request_id: "request-1".into(),
-            source_plan_id: "plan-1".into(),
-            mode: Some(RequestMode::NewBuild),
-            interpreted_goal: "Build a project".into(),
-            inferred_family_candidates: vec![FamilyId::ChattycogNativeWindowModule],
-            inferred_tool_kind: Some("native_window_starter".into()),
-            ..Default::default()
-        };
-
-        let parsed = infer_planner_response_from_text(
-            "approved with dashboard tool kind and native shell intent",
-            &handoff,
-        )
-        .expect("planner response should parse");
-
-        assert_eq!(
-            parsed.recommended_family_id,
-            Some(FamilyId::ChattycogNativeWindowModule)
-        );
-    }
 }

@@ -1,6 +1,6 @@
 use chatty_factory_core::{
-    infer_route_hints, CapabilityTransition, ExoskeletonTarget, FamilyId, RequestPlan,
-    RequestRecord, RouteDecision,
+    infer_route_hints, CapabilityTransition, ExoskeletonTarget, RequestPlan, RequestRecord,
+    RouteDecision, SubstrateKind,
 };
 use petgraph::stable_graph::{NodeIndex, StableDiGraph};
 
@@ -9,9 +9,9 @@ pub enum ControlNodeKind {
     NormalizeRequest,
     ClassifyMode,
     DetectWrapperIntent,
-    ChooseFamily,
-    ResolveScaffoldInputs,
-    RenderScaffold,
+    ChooseSubstrate,
+    ResolveBuildSeedInputs,
+    RenderBuildSeed,
     RenderWrapper,
     EmitProjectSpec,
     BuildAcceptancePlan,
@@ -30,7 +30,7 @@ pub struct ControlNode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControlEdge {
     pub reason: &'static str,
-    pub family: Option<FamilyId>,
+    pub substrate: Option<SubstrateKind>,
 }
 
 #[derive(Debug, Default)]
@@ -53,16 +53,20 @@ impl ControlPlane {
             ControlNodeKind::DetectWrapperIntent,
             "detect_wrapper_intent",
         );
-        let choose = add(&mut graph, ControlNodeKind::ChooseFamily, "choose_family");
-        let scaffold = add(
+        let choose = add(
             &mut graph,
-            ControlNodeKind::ResolveScaffoldInputs,
-            "resolve_scaffold_inputs",
+            ControlNodeKind::ChooseSubstrate,
+            "choose_substrate",
         );
-        let render_scaffold = add(
+        let build_seed = add(
             &mut graph,
-            ControlNodeKind::RenderScaffold,
-            "render_scaffold",
+            ControlNodeKind::ResolveBuildSeedInputs,
+            "resolve_build_seed_inputs",
+        );
+        let render_build_seed = add(
+            &mut graph,
+            ControlNodeKind::RenderBuildSeed,
+            "render_build_seed",
         );
         let render_wrapper = add(&mut graph, ControlNodeKind::RenderWrapper, "render_wrapper");
         let project_spec = add(
@@ -90,35 +94,35 @@ impl ControlPlane {
         connect(
             &mut graph,
             choose,
-            scaffold,
-            "family_supported",
-            Some(FamilyId::StaticWebDashboard),
+            build_seed,
+            "substrate_supported",
+            Some(SubstrateKind::StaticWeb),
         );
         connect(
             &mut graph,
             choose,
-            scaffold,
-            "family_supported",
-            Some(FamilyId::ChattycogWebviewModule),
+            build_seed,
+            "substrate_supported",
+            Some(SubstrateKind::Webview),
         );
         connect(
             &mut graph,
             choose,
-            scaffold,
-            "family_supported",
-            Some(FamilyId::ChattycogNativeWindowModule),
+            build_seed,
+            "substrate_supported",
+            Some(SubstrateKind::NativeWindow),
         );
         connect(
             &mut graph,
             choose,
-            scaffold,
-            "family_supported",
-            Some(FamilyId::ChattycogWorkspaceModule),
+            build_seed,
+            "substrate_supported",
+            Some(SubstrateKind::Workspace),
         );
-        connect(&mut graph, scaffold, render_scaffold, "inputs_ready", None);
+        connect(&mut graph, build_seed, render_build_seed, "inputs_ready", None);
         connect(
             &mut graph,
-            render_scaffold,
+            render_build_seed,
             render_wrapper,
             "wrapper_optional",
             None,
@@ -187,32 +191,31 @@ impl ControlPlane {
             Some(ExoskeletonTarget::ChattyCog)
         );
         let wants_cli = plan
-            .inferred_family_candidates
+            .inferred_substrate_candidates
             .iter()
-            .any(|family| matches!(family, FamilyId::PythonCliTool | FamilyId::RustCliTool))
+            .any(|substrate| matches!(substrate, SubstrateKind::Cli))
             && matches!(
                 request.desired_surface,
                 Some(chatty_factory_core::DesiredSurface::Cli)
             );
-        let selected_family_id = if wants_wrapper {
-            plan.inferred_family_candidates
+        let selected_substrate_kind = if wants_wrapper {
+            plan.inferred_substrate_candidates
                 .first()
                 .cloned()
-                .or(Some(FamilyId::ChattycogWebviewModule))
-        } else if let Some(first) = plan.inferred_family_candidates.first() {
+                .or(Some(SubstrateKind::Webview))
+        } else if let Some(first) = plan.inferred_substrate_candidates.first() {
             Some(first.clone())
         } else if request
             .requested_capabilities
             .iter()
             .any(|cap| cap == "rust")
         {
-            Some(FamilyId::RustCliTool)
+            Some(SubstrateKind::Cli)
         } else if wants_cli {
-            Some(FamilyId::PythonCliTool)
+            Some(SubstrateKind::Cli)
         } else {
-            Some(FamilyId::StaticWebDashboard)
+            Some(SubstrateKind::StaticWeb)
         };
-
         let capability_transition = if wants_wrapper {
             Some(CapabilityTransition::WrapperEmission)
         } else {
@@ -229,38 +232,36 @@ impl ControlPlane {
             }
         }
         let mut decision_reasons = Vec::new();
-        decision_reasons.push("route_selected_from_request_plan".into());
+        decision_reasons.push("substrate_route_selected_from_request_plan".into());
         if wants_wrapper {
             decision_reasons.push("wrapper_intent_detected".into());
-        } else if matches!(
-            selected_family_id,
-            Some(FamilyId::ChattycogChattyeduNativeWindowModule)
-        ) {
-            decision_reasons.push("dual_native_window_fit_detected".into());
-        } else if matches!(
-            selected_family_id,
-            Some(FamilyId::ChattycogNativeWindowModule)
-        ) {
-            decision_reasons.push("chattycog_native_window_fit_detected".into());
-        } else if matches!(
-            selected_family_id,
-            Some(FamilyId::ChattyeduNativeWindowModule)
-        ) {
-            decision_reasons.push("chattyedu_native_window_fit_detected".into());
-        } else if matches!(selected_family_id, Some(FamilyId::RustCliTool)) {
-            decision_reasons.push("rust_cli_fit_detected".into());
+        } else if matches!(selected_substrate_kind, Some(SubstrateKind::NativeWindow)) {
+            decision_reasons.push("native_window_substrate_fit_detected".into());
+        } else if matches!(selected_substrate_kind, Some(SubstrateKind::Webview)) {
+            decision_reasons.push("webview_substrate_fit_detected".into());
+        } else if matches!(selected_substrate_kind, Some(SubstrateKind::Workspace)) {
+            decision_reasons.push("workspace_substrate_fit_detected".into());
+        } else if matches!(selected_substrate_kind, Some(SubstrateKind::Cli)) {
+            decision_reasons.push("cli_substrate_fit_detected".into());
+            if request.requested_capabilities.iter().any(|cap| cap == "rust") {
+                decision_reasons.push("rust_cli_adapter_selected".into());
+            } else if wants_cli {
+                decision_reasons.push("python_cli_adapter_selected".into());
+            }
+        } else if matches!(selected_substrate_kind, Some(SubstrateKind::StaticWeb)) {
+            decision_reasons.push("static_web_substrate_default".into());
         } else if wants_cli {
-            decision_reasons.push("python_cli_fit_detected".into());
+            decision_reasons.push("cli_substrate_fit_detected".into());
         } else {
-            decision_reasons.push("standalone_dashboard_default".into());
+            decision_reasons.push("substrate_default_resolution".into());
         }
         if let Some(tool_kind) = &plan.inferred_tool_kind {
             decision_reasons.push(format!("tool_kind={tool_kind}"));
         }
         if plan.rationale.iter().any(|reason| {
-            reason.starts_with("no exact deterministic family matched; using scaffold substrate")
+            reason.starts_with("no exact deterministic substrate matched from the request record")
         }) {
-            decision_reasons.push("scaffold_substrate_fallback".into());
+            decision_reasons.push("gauntlet_substrate_retry".into());
         }
         if !plan.planner_operator_ids.is_empty() {
             decision_reasons.push(format!(
@@ -293,13 +294,13 @@ impl ControlPlane {
         RouteDecision {
             route_id: chatty_factory_core::timestamp_id("route"),
             request_id: request.request_id.clone(),
-            selected_family_id,
+            selected_substrate_kind,
             selected_operator_ids,
             selected_wrapper_ids,
             selected_behavior_kind: None,
             capability_transition,
             decision_reasons,
-            fallback_level: Some("family".into()),
+            next_attempt_level: Some("next_attempt_substrate".into()),
             needs_llm_review: plan.needs_llm_review,
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         }
@@ -319,7 +320,7 @@ fn connect(
     a: NodeIndex,
     b: NodeIndex,
     reason: &'static str,
-    family: Option<FamilyId>,
+    substrate: Option<SubstrateKind>,
 ) {
-    graph.add_edge(a, b, ControlEdge { reason, family });
+    graph.add_edge(a, b, ControlEdge { reason, substrate });
 }

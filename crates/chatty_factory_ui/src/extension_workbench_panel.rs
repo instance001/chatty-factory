@@ -10,20 +10,23 @@ impl ChattyFactoryUiApp {
         implementation_notes_path: &Path,
         acceptance_targets_path: &Path,
     ) {
-        ui.label(format!("Scaffold: {}", short_path(&entry.scaffold_root)));
+        ui.label(format!(
+            "Attempt bundle root: {}",
+            short_path(&entry.attempt_bundle_root)
+        ));
         ui.label(format!(
             "Source spec: {}",
             short_path(&entry.source_stub_path)
         ));
         ui.horizontal(|ui| {
-            if ui.small_button("Open Scaffold").clicked() {
+            if ui.small_button("Open Bundle").clicked() {
                 self.reveal_governed_artifact(
-                    &entry.scaffold_root,
-                    "Opened lane scaffold folder",
+                    &entry.attempt_bundle_root,
+                    "Opened attempt bundle folder",
                     "Open failed",
-                    "Opened lane scaffold folder",
+                    "Opened attempt bundle folder",
                     "Open failed",
-                    Some((Some(entry.entry_id.clone()), "Open Scaffold")),
+                    Some((Some(entry.entry_id.clone()), "Open Bundle")),
                 );
             }
             if ui.small_button("Reveal Spec").clicked() {

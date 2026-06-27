@@ -3,13 +3,11 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use chatty_factory_control::ControlPlane;
-use chatty_factory_core::{build_starter_choices, default_request_text, is_known_build_starter_id};
-use chatty_factory_families::built_in_families;
+use chatty_factory_core::default_request_text;
 use chatty_factory_host::{HostActionResult, HostBridge, HostPlannerOptions};
 use serde::Serialize;
 
 fn main() -> Result<()> {
-    let families = built_in_families();
     let control = ControlPlane::milestone_one();
 
     let output_root = PathBuf::from("output");
@@ -52,15 +50,12 @@ fn main() -> Result<()> {
     }
     if matches!(
         args.first().map(String::as_str),
-        Some("run-cross-family-helper-monitoring-proof")
+        Some("run-legacy-comparison-helper-monitoring-proof")
     ) {
-        return run_cross_family_helper_monitoring_proof_mode(&host_bridge, &args);
+        return run_legacy_comparison_helper_monitoring_proof_mode(&host_bridge, &args);
     }
     if matches!(args.first().map(String::as_str), Some("stop-helper")) {
         return run_stop_helper_mode(&host_bridge, &args);
-    }
-    if matches!(args.first().map(String::as_str), Some("scaffold-extension")) {
-        return run_scaffold_extension_mode(&host_bridge, &args);
     }
     if matches!(
         args.first().map(String::as_str),
@@ -100,18 +95,6 @@ fn main() -> Result<()> {
         Some("refresh-helper-governance")
     ) {
         return run_refresh_helper_governance_mode(&host_bridge, &args);
-    }
-    if matches!(
-        args.first().map(String::as_str),
-        Some("refresh-family-governance")
-    ) {
-        return run_refresh_family_governance_mode(&host_bridge, &args);
-    }
-    if matches!(
-        args.first().map(String::as_str),
-        Some("refresh-template-governance")
-    ) {
-        return run_refresh_template_governance_mode(&host_bridge, &args);
     }
     if matches!(
         args.first().map(String::as_str),
@@ -222,24 +205,13 @@ fn main() -> Result<()> {
     } else {
         clean_args.join(" ")
     };
-    validate_build_starter_override_arg(build_starter_override_from_args(&args))?;
-
     let planner_response = planner_response_path.as_deref().map(PathBuf::from);
-    let result = if let Some(starter_override_id) = build_starter_override_from_args(&args) {
-        host_bridge.build_request_with_starter_override(
-            &raw_request,
-            Some(starter_override_id),
-            &planner_options_from_args(&args),
-        )?
-    } else {
-        host_bridge.smart_request(
-            &raw_request,
-            planner_response.as_deref(),
-            &planner_options_from_args(&args),
-        )?
-    };
+    let result = host_bridge.smart_request(
+        &raw_request,
+        planner_response.as_deref(),
+        &planner_options_from_args(&args),
+    )?;
     println!("ChattyFactory rebuild");
-    println!("Built-in families: {}", families.len());
     println!("Milestone-one control nodes: {}", control.node_count());
     println!("Milestone-one control edges: {}", control.edge_count());
     print_host_action_result(&result, has_json_flag(&args))?;
@@ -260,22 +232,16 @@ fn run_patch_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
 fn run_build_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     let clean_args = strip_runtime_control_args(args);
     if clean_args.len() < 2 {
-        anyhow::bail!("build requires: build [--starter <family_id|auto>] <request>");
+        anyhow::bail!("build requires: build <request>");
     }
     let raw_request = clean_args[1..].join(" ");
-    validate_build_starter_override_arg(build_starter_override_from_args(args))?;
-    let result = host_bridge.build_request_with_starter_override(
+    let result = host_bridge.smart_request(
         &raw_request,
-        build_starter_override_from_args(args),
+        None,
         &planner_options_from_args(args),
     )?;
     println!("ChattyFactory deterministic build");
     println!("Request: {}", raw_request);
-    if let Some(starter_override_id) = build_starter_override_from_args(args) {
-        println!("starter={}", starter_override_id);
-    } else {
-        println!("starter=auto");
-    }
     print_host_action_result(&result, has_json_flag(args))
 }
 
@@ -419,29 +385,6 @@ fn run_selected_project_status_mode(
     Ok(())
 }
 
-fn run_scaffold_extension_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
-    let integrate = args.iter().any(|arg| arg == "--integrate");
-    let promote = args.iter().any(|arg| arg == "--promote");
-    let positional = args
-        .iter()
-        .skip(1)
-        .filter(|arg| arg.as_str() != "--integrate" && arg.as_str() != "--promote")
-        .cloned()
-        .collect::<Vec<_>>();
-    if positional.is_empty() {
-        anyhow::bail!(
-            "scaffold-extension requires: scaffold-extension [--integrate] [--promote] <stub_dir_or_extension_spec_json>"
-        );
-    }
-    let result = host_bridge.scaffold_extension_from_stub(
-        &PathBuf::from(&positional[0]),
-        integrate,
-        promote,
-    )?;
-    println!("ChattyFactory extension scaffold");
-    print_host_action_result(&result, has_json_flag(args))
-}
-
 fn run_register_proof_harness_bundle_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     if args.len() < 3 {
         anyhow::bail!(
@@ -485,7 +428,7 @@ fn run_compare_helper_monitoring_mode(host_bridge: &HostBridge, args: &[String])
     print_host_action_result(&result, has_json_flag(args))
 }
 
-fn run_cross_family_helper_monitoring_proof_mode(
+fn run_legacy_comparison_helper_monitoring_proof_mode(
     host_bridge: &HostBridge,
     args: &[String],
 ) -> Result<()> {
@@ -495,11 +438,11 @@ fn run_cross_family_helper_monitoring_proof_mode(
     } else {
         "build me a helper-backed monitoring surface that watches two inbox lanes, filters module assets to txt, and surfaces processed file status and preview".to_string()
     };
-    let result = host_bridge.run_cross_family_helper_monitoring_proof(
+    let result = host_bridge.run_legacy_comparison_helper_monitoring_proof(
         &shared_request,
         &planner_options_from_args(args),
     )?;
-    println!("ChattyFactory cross-family paired proof");
+    println!("ChattyFactory paired proof");
     print_host_action_result(&result, has_json_flag(args))
 }
 
@@ -583,18 +526,6 @@ fn run_refresh_project_patch_readiness_mode(
 fn run_refresh_helper_governance_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
     let result = host_bridge.refresh_helper_governance_registry()?;
     println!("ChattyFactory helper governance refresh");
-    print_host_action_result(&result, has_json_flag(args))
-}
-
-fn run_refresh_family_governance_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
-    let result = host_bridge.refresh_family_governance_registry()?;
-    println!("ChattyFactory family governance refresh");
-    print_host_action_result(&result, has_json_flag(args))
-}
-
-fn run_refresh_template_governance_mode(host_bridge: &HostBridge, args: &[String]) -> Result<()> {
-    let result = host_bridge.refresh_template_governance_registry()?;
-    println!("ChattyFactory template governance refresh");
     print_host_action_result(&result, has_json_flag(args))
 }
 
@@ -749,10 +680,6 @@ fn parse_cli_args(args: Vec<String>) -> (Option<String>, Vec<String>) {
         if args[i] == "--planner-response" && i + 1 < args.len() {
             planner_response_path = Some(args[i + 1].clone());
             i += 2;
-        } else if args[i] == "--starter" && i + 1 < args.len() {
-            remaining.push(args[i].clone());
-            remaining.push(args[i + 1].clone());
-            i += 2;
         } else {
             remaining.push(args[i].clone());
             i += 1;
@@ -769,7 +696,7 @@ fn strip_runtime_control_args(args: &[String]) -> Vec<String> {
             "--auto-planner" | "--skip-launch" | "--json" => {
                 i += 1;
             }
-            "--model" | "--port" | "--starter" => {
+            "--model" | "--port" => {
                 i += if i + 1 < args.len() { 2 } else { 1 };
             }
             _ => {
@@ -794,38 +721,6 @@ fn has_json_flag(args: &[String]) -> bool {
     args.iter().any(|arg| arg == "--json")
 }
 
-fn build_starter_override_from_args(args: &[String]) -> Option<&str> {
-    let mut i = 0usize;
-    while i < args.len() {
-        if args[i] == "--starter" {
-            return args
-                .get(i + 1)
-                .map(String::as_str)
-                .filter(|value| !value.is_empty());
-        }
-        i += 1;
-    }
-    None
-}
-
-fn validate_build_starter_override_arg(starter_override_id: Option<&str>) -> Result<()> {
-    if let Some(starter_override_id) = starter_override_id {
-        if !is_known_build_starter_id(starter_override_id) {
-            let known = build_starter_choices()
-                .iter()
-                .map(|choice| choice.id)
-                .collect::<Vec<_>>()
-                .join(", ");
-            anyhow::bail!(
-                "unknown build starter '{}'; known starters: {}",
-                starter_override_id,
-                known
-            );
-        }
-    }
-    Ok(())
-}
-
 fn print_json<T: Serialize>(value: &T) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
@@ -844,15 +739,6 @@ fn print_host_action_result(result: &HostActionResult, as_json: bool) -> Result<
         println!("kind={}", execution.kind);
         println!("request_id={}", execution.request_id);
         println!("project={}", execution.project_name);
-        if let Some(starter_override_id) = &execution.starter_override_id {
-            println!("starter_override_id={starter_override_id}");
-        }
-        if let Some(starter_override_summary) = &execution.starter_override_summary {
-            println!("starter_override_summary={starter_override_summary}");
-        }
-        if let Some(family_id) = &execution.family_id {
-            println!("family={family_id}");
-        }
         if let Some(tool_kind) = &execution.tool_kind {
             println!("tool={tool_kind}");
         }
@@ -948,122 +834,122 @@ fn print_host_action_result(result: &HostActionResult, as_json: bool) -> Result<
             );
         }
         println!("files={}", execution.file_paths.len());
-    } else if let Some(fallback) = &result.fallback_result {
-        println!("fallback_request_id={}", fallback.request_id);
-        if let Some(mode) = &fallback.mode {
-            println!("fallback_mode={mode}");
+    } else if let Some(next_attempt) = &result.next_attempt_result {
+        println!("next_attempt_request_id={}", next_attempt.request_id);
+        if let Some(mode) = &next_attempt.mode {
+            println!("next_attempt_mode={mode}");
         }
-        if let Some(outcome_class) = &fallback.outcome_class {
-            println!("fallback_outcome={outcome_class}");
+        if let Some(outcome_class) = &next_attempt.outcome_class {
+            println!("next_attempt_outcome={outcome_class}");
         }
-        if let Some(route_class) = &fallback.composition_route_class {
-            println!("fallback_composition_route_class={route_class}");
+        if let Some(route_class) = &next_attempt.composition_route_class {
+            println!("next_attempt_composition_route_class={route_class}");
         }
-        if let Some(path) = &fallback.composable_route_plan_path {
-            println!("fallback_composable_route_plan={path}");
+        if let Some(path) = &next_attempt.composable_route_plan_path {
+            println!("next_attempt_composable_route_plan={path}");
         }
-        if let Some(path) = &fallback.composition_review_receipt_path {
-            println!("fallback_composition_review_receipt={path}");
+        if let Some(path) = &next_attempt.composition_review_receipt_path {
+            println!("next_attempt_composition_review_receipt={path}");
         }
-        println!("fallback_goal={}", fallback.interpreted_goal);
-        println!("fallback_question={}", fallback.question);
-        if let Some(next_action) = &fallback.recommended_next_action {
-            println!("fallback_next_action={next_action}");
+        println!("next_attempt_goal={}", next_attempt.interpreted_goal);
+        println!("next_attempt_question={}", next_attempt.question);
+        if let Some(next_action) = &next_attempt.recommended_next_action {
+            println!("next_attempt_action={next_action}");
         }
-        println!("fallback_next_step={}", fallback.recommended_next_step);
-        if let Some(class) = &fallback.build_failure_class {
-            println!("fallback_build_failure_class={class}");
+        println!("next_attempt_step={}", next_attempt.recommended_next_step);
+        if let Some(class) = &next_attempt.build_failure_class {
+            println!("next_attempt_build_failure_class={class}");
         }
-        if let Some(mode) = &fallback.build_failure_mode {
-            println!("fallback_build_failure_mode={mode}");
+        if let Some(mode) = &next_attempt.build_failure_mode {
+            println!("next_attempt_build_failure_mode={mode}");
         }
-        for constraint_id in &fallback.matched_approved_constraint_ids {
-            println!("fallback_approved_constraint_id={constraint_id}");
+        for constraint_id in &next_attempt.matched_approved_constraint_ids {
+            println!("next_attempt_approved_constraint_id={constraint_id}");
         }
-        for summary in &fallback.matched_approved_constraint_summaries {
-            println!("fallback_approved_constraint_summary={summary}");
+        for summary in &next_attempt.matched_approved_constraint_summaries {
+            println!("next_attempt_approved_constraint_summary={summary}");
         }
-        for reason in &fallback.reasons {
-            println!("fallback_reason={reason}");
+        for reason in &next_attempt.reasons {
+            println!("next_attempt_reason={reason}");
         }
-        for note in &fallback.outcome_notes {
-            println!("fallback_outcome_note={note}");
+        for note in &next_attempt.outcome_notes {
+            println!("next_attempt_outcome_note={note}");
         }
-        for family_id in &fallback.candidate_family_ids {
-            println!("fallback_candidate_family={family_id}");
+        for substrate_kind in &next_attempt.candidate_substrate_kinds {
+            println!("next_attempt_candidate_substrate={substrate_kind}");
         }
-        for capability in &fallback.requested_capabilities {
-            println!("fallback_capability={capability}");
+        for capability in &next_attempt.requested_capabilities {
+            println!("next_attempt_capability={capability}");
         }
         println!(
-            "fallback_extension_kind={}",
-            fallback.suggested_extension_kind
+            "next_attempt_kind={}",
+            next_attempt.next_attempt_kind
         );
-        if let Some(family_id) = &fallback.suggested_family_id {
-            println!("fallback_suggested_family={family_id}");
+        if let Some(substrate_kind) = &next_attempt.suggested_substrate_kind {
+            println!("next_attempt_suggested_substrate={substrate_kind}");
         }
-        if let Some(tool_kind) = &fallback.suggested_tool_kind {
-            println!("fallback_suggested_tool_kind={tool_kind}");
+        if let Some(tool_kind) = &next_attempt.suggested_tool_kind {
+            println!("next_attempt_suggested_tool_kind={tool_kind}");
         }
-        if let Some(patch_kind) = &fallback.suggested_patch_kind {
-            println!("fallback_suggested_patch_kind={patch_kind}");
+        if let Some(patch_kind) = &next_attempt.suggested_patch_kind {
+            println!("next_attempt_suggested_patch_kind={patch_kind}");
         }
-        if let Some(mode) = &fallback.suggested_hosting_mode {
-            println!("fallback_suggested_hosting_mode={mode}");
+        if let Some(mode) = &next_attempt.suggested_hosting_mode {
+            println!("next_attempt_suggested_hosting_mode={mode}");
         }
-        for capability in &fallback.suggested_bridge_capabilities {
-            println!("fallback_suggested_bridge_capability={capability}");
+        for capability in &next_attempt.suggested_bridge_capabilities {
+            println!("next_attempt_suggested_bridge_capability={capability}");
         }
-        for artifact in &fallback.suggested_artifacts {
-            println!("fallback_suggested_artifact={artifact}");
+        for artifact in &next_attempt.suggested_artifacts {
+            println!("next_attempt_suggested_artifact={artifact}");
         }
-        for class in &fallback.missing_family_build_primitive_classes {
-            println!("fallback_missing_family_build_class={class}");
+        for class in &next_attempt.missing_base_build_primitive_classes {
+            println!("next_attempt_missing_base_build_class={class}");
         }
-        for class in &fallback.missing_patch_primitive_classes {
-            println!("fallback_missing_patch_class={class}");
+        for class in &next_attempt.missing_patch_primitive_classes {
+            println!("next_attempt_missing_patch_class={class}");
         }
-        for kind in &fallback.missing_helper_primitive_kinds {
-            println!("fallback_missing_helper_kind={kind}");
+        for kind in &next_attempt.missing_helper_primitive_kinds {
+            println!("next_attempt_missing_helper_kind={kind}");
         }
-        for target in &fallback.acceptance_targets {
-            println!("fallback_acceptance_target={target}");
+        for target in &next_attempt.acceptance_targets {
+            println!("next_attempt_acceptance_target={target}");
         }
-        for note in &fallback.implementation_notes {
-            println!("fallback_implementation_note={note}");
+        for note in &next_attempt.implementation_notes {
+            println!("next_attempt_implementation_note={note}");
         }
-        for entry_id in &fallback.pending_extension_ids {
-            println!("fallback_pending_extension_id={entry_id}");
+        for entry_id in &next_attempt.pending_attempt_ids {
+            println!("next_attempt_pending_attempt_id={entry_id}");
         }
-        for root in &fallback.pending_extension_scaffold_roots {
-            println!("fallback_pending_extension_scaffold={root}");
+        for root in &next_attempt.pending_attempt_bundle_roots {
+            println!("next_attempt_pending_attempt_bundle={root}");
         }
-        if let Some(mode) = &fallback.chattycog_requested_hosting_mode {
-            println!("fallback_chattycog_requested_hosting_mode={mode}");
+        if let Some(mode) = &next_attempt.chattycog_requested_hosting_mode {
+            println!("next_attempt_chattycog_requested_hosting_mode={mode}");
         }
-        for mode in &fallback.chattycog_valid_hosting_modes {
-            println!("fallback_chattycog_valid_hosting_mode={mode}");
+        for mode in &next_attempt.chattycog_valid_hosting_modes {
+            println!("next_attempt_chattycog_valid_hosting_mode={mode}");
         }
-        for capability in &fallback.chattycog_requested_bridge_capabilities {
-            println!("fallback_chattycog_requested_bridge_capability={capability}");
+        for capability in &next_attempt.chattycog_requested_bridge_capabilities {
+            println!("next_attempt_chattycog_requested_bridge_capability={capability}");
         }
-        for capability in &fallback.chattycog_supported_bridge_capabilities {
-            println!("fallback_chattycog_supported_bridge_capability={capability}");
+        for capability in &next_attempt.chattycog_supported_bridge_capabilities {
+            println!("next_attempt_chattycog_supported_bridge_capability={capability}");
         }
-        if let Some(summary) = &fallback.proposed_constraint_summary {
-            println!("fallback_proposed_constraint_summary={summary}");
+        if let Some(summary) = &next_attempt.proposed_constraint_summary {
+            println!("next_attempt_proposed_constraint_summary={summary}");
         }
-        if let Some(guidance) = &fallback.proposed_constraint_replacement_guidance {
-            println!("fallback_proposed_constraint_guidance={guidance}");
+        if let Some(guidance) = &next_attempt.proposed_constraint_replacement_guidance {
+            println!("next_attempt_proposed_constraint_guidance={guidance}");
         }
-        if let Some(path) = &fallback.build_verification_path {
-            println!("fallback_build_verification={path}");
+        if let Some(path) = &next_attempt.build_verification_path {
+            println!("next_attempt_build_verification={path}");
         }
-        if let Some(path) = &fallback.proposed_constraint_path {
-            println!("fallback_proposed_constraint={path}");
+        if let Some(path) = &next_attempt.proposed_constraint_path {
+            println!("next_attempt_proposed_constraint={path}");
         }
-        if let Some(path) = &fallback.stub_bundle_path {
-            println!("fallback_stub_bundle={path}");
+        if let Some(path) = &next_attempt.attempt_bundle_path {
+            println!("next_attempt_attempt_bundle={path}");
         }
     } else if let Some(runtime_refresh) = &result.runtime_refresh {
         if let Some(config) = &runtime_refresh.config {

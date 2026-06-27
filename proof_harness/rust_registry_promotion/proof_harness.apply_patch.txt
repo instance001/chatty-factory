@@ -1,1 +1,0 @@
-Proof harness bundles are repo-native manifest artifacts. No Rust apply_patch wiring is required; validate catalog loading and run the proof template as the live check.

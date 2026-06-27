@@ -721,7 +721,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chatty_factory_core",
- "chatty_factory_templates",
+ "minijinja",
+ "serde",
  "serde_json",
 ]
 
@@ -736,15 +737,6 @@ dependencies = [
  "chatty_factory_verify",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "chatty_factory_templates"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "minijinja",
- "serde",
 ]
 
 [[package]]

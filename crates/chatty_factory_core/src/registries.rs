@@ -1,14 +1,16 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperatorBundleSpec {
     pub bundle_id: &'static str,
-    pub family_ids: &'static [&'static str],
+    pub substrate_kinds: &'static [&'static str],
+    pub tool_kinds: &'static [&'static str],
     pub operator_ids: &'static [&'static str],
 }
 
 const OPERATOR_BUNDLES: &[OperatorBundleSpec] = &[
     OperatorBundleSpec {
         bundle_id: "dashboard_standard_surface",
-        family_ids: &["static_web_dashboard", "chattycog_webview_module"],
+        substrate_kinds: &["static_web", "webview", "native_window"],
+        tool_kinds: &["dashboard"],
         operator_ids: &[
             "metric_card",
             "status_panel",
@@ -18,7 +20,8 @@ const OPERATOR_BUNDLES: &[OperatorBundleSpec] = &[
     },
     OperatorBundleSpec {
         bundle_id: "dashboard_status_focus",
-        family_ids: &["static_web_dashboard", "chattycog_webview_module"],
+        substrate_kinds: &["static_web", "webview", "native_window"],
+        tool_kinds: &["dashboard"],
         operator_ids: &["status_panel", "results_panel"],
     },
 ];
@@ -27,13 +30,24 @@ pub fn operator_bundle_registry() -> &'static [OperatorBundleSpec] {
     OPERATOR_BUNDLES
 }
 
-pub fn candidate_operator_bundle_ids_for(family_id: &str) -> Vec<String> {
+pub fn candidate_operator_bundle_ids_for_context(
+    substrate_kind: Option<&str>,
+    tool_kind: Option<&str>,
+) -> Vec<String> {
     OPERATOR_BUNDLES
         .iter()
         .filter(|spec| {
-            spec.family_ids
-                .iter()
-                .any(|candidate| candidate == &family_id)
+            let substrate_match = substrate_kind.map_or(true, |candidate| {
+                spec.substrate_kinds
+                    .iter()
+                    .any(|supported| supported == &candidate)
+            });
+            let tool_match = tool_kind.map_or(true, |candidate| {
+                spec.tool_kinds
+                    .iter()
+                    .any(|supported| supported == &candidate)
+            });
+            substrate_match && tool_match
         })
         .map(|spec| spec.bundle_id.to_string())
         .collect()

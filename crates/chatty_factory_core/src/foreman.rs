@@ -11,12 +11,13 @@ use crate::{
     infer_capabilities_from_text, infer_chattycog_bridge_capabilities_from_text,
     infer_chattycog_hosting_mode_from_text, infer_chattycog_hosting_modes_from_text,
     infer_cli_tool_kind_from_text, infer_explicit_stack_from_text, infer_patch_kind_from_text,
-    infer_request_tool_kind_from_text, is_supported_explicit_stack, rank_family_candidates,
+    infer_request_tool_kind_from_text, is_supported_explicit_stack,
     request_has_cli_shape, request_has_dashboard_shape, request_has_vague_improvement,
     request_has_web_shape, request_mentions_chattycog, request_mentions_chattyedu,
     request_mentions_python, request_mentions_rust, supported_chattycog_bridge_capabilities,
-    DesiredSurface, ExoskeletonTarget, FamilyId, OperatorId, PlannerHandoff, PlannerResponse,
-    ProjectSpec, RequestMode, RequestPlan, RequestRecord, RouteDecision, ScaffoldInputs, WrapperId,
+    DesiredSurface, ExoskeletonTarget, OperatorId, PlannerHandoff, PlannerResponse,
+    BuildSeedInputs, ProjectSpec, RequestMode, RequestPlan, RequestRecord, RouteDecision,
+    SubstrateKind, WrapperId,
 };
 
 pub fn default_request_text() -> &'static str {
@@ -85,65 +86,6 @@ pub fn normalize_request(raw_request: &str) -> RequestRecord {
         )
     });
 
-    let mut candidate_family_ids = if unsupported_stack {
-        Vec::new()
-    } else {
-        rank_family_candidates(&lower, &requested_capabilities)
-    };
-    if (wants_chattycog || wants_chattyedu) && helper_or_service_heavy {
-        candidate_family_ids.clear();
-    }
-    if wants_dual_host && !helper_or_service_heavy {
-        ensure_front(
-            &mut candidate_family_ids,
-            FamilyId::ChattycogChattyeduNativeWindowModule,
-        );
-    } else if wants_chattycog && !wants_chattyedu && !helper_or_service_heavy {
-        if contains_any(&lower, &["webview", "browser tab", "hosted webview"]) {
-            ensure_front(&mut candidate_family_ids, FamilyId::ChattycogWebviewModule);
-        } else if contains_any(
-            &lower,
-            &[
-                "native window",
-                "desktop",
-                "rust dashboard",
-                "rust gui",
-                "eframe",
-                "egui",
-                "tkinter",
-            ],
-        ) {
-            ensure_front(
-                &mut candidate_family_ids,
-                FamilyId::ChattycogNativeWindowModule,
-            );
-        } else if contains_any(
-            &lower,
-            &["workspace", "ui.json", "headless", "notes module"],
-        ) {
-            ensure_front(
-                &mut candidate_family_ids,
-                FamilyId::ChattycogWorkspaceModule,
-            );
-        } else {
-            ensure_front(
-                &mut candidate_family_ids,
-                FamilyId::ChattycogNativeWindowModule,
-            );
-        }
-    } else if wants_chattyedu && !wants_chattycog && !helper_or_service_heavy {
-        ensure_front(
-            &mut candidate_family_ids,
-            FamilyId::ChattyeduNativeWindowModule,
-        );
-    } else if wants_rust && !helper_or_service_heavy {
-        ensure_front(&mut candidate_family_ids, FamilyId::RustCliTool);
-    } else if wants_python && !helper_or_service_heavy {
-        ensure_front(&mut candidate_family_ids, FamilyId::PythonCliTool);
-    } else if !unsupported_stack && !helper_or_service_heavy {
-        ensure_front(&mut candidate_family_ids, FamilyId::StaticWebDashboard);
-    }
-
     let desired_surface = if wants_python || wants_rust {
         Some(DesiredSurface::Cli)
     } else if request_has_web_shape(&lower) {
@@ -176,7 +118,23 @@ pub fn normalize_request(raw_request: &str) -> RequestRecord {
             requested_chattycog_modes.join(",")
         ));
     }
-
+    let inferred_tool_kind_hint = infer_request_tool_kind_from_text(
+        raw,
+        wants_chattycog,
+        wants_chattyedu,
+        matches!(desired_surface, Some(DesiredSurface::Cli)),
+    )
+    .map(str::to_string);
+    let candidate_substrate_kinds = infer_request_substrate_kinds(
+        raw,
+        desired_surface.as_ref(),
+        inferred_tool_kind_hint.as_deref(),
+        wants_chattycog,
+        wants_chattyedu,
+        wants_dual_host,
+        helper_or_service_heavy,
+        unsupported_stack,
+    );
     RequestRecord {
         request_id: timestamp_id("request"),
         raw_request: raw.to_string(),
@@ -186,49 +144,42 @@ pub fn normalize_request(raw_request: &str) -> RequestRecord {
         desired_surface,
         requested_capabilities,
         exoskeleton_target,
-        candidate_family_ids,
+        candidate_substrate_kinds,
         ambiguity_flags,
         created_at: Some(timestamp_id("created")),
     }
 }
 
-pub fn derive_scaffold_inputs(
+pub fn derive_build_seed_inputs(
     request: &RequestRecord,
     plan: &RequestPlan,
     route: &RouteDecision,
-) -> ScaffoldInputs {
-    let family_id = route.selected_family_id.clone();
-    let family_label = family_id.as_ref().map(FamilyId::as_str).unwrap_or("build");
+) -> BuildSeedInputs {
+    let substrate_label = route
+        .selected_substrate_kind
+        .as_ref()
+        .map(SubstrateKind::as_str)
+        .unwrap_or("build");
+    let tool_kind = plan.inferred_tool_kind.as_deref();
 
     let project_name = sanitize_name(
-        if matches!(family_id, Some(FamilyId::ChattycogWebviewModule)) {
-            "chattycog_webview_module"
-        } else if matches!(family_id, Some(FamilyId::ChattycogNativeWindowModule)) {
-            "chattycog_native_window_module"
-        } else if matches!(family_id, Some(FamilyId::ChattyeduNativeWindowModule)) {
-            "chattyedu_native_window_module"
-        } else if matches!(
-            family_id,
-            Some(FamilyId::ChattycogChattyeduNativeWindowModule)
-        ) {
-            "chattycog_chattyedu_native_window_module"
-        } else if matches!(family_id, Some(FamilyId::ChattycogWorkspaceModule)) {
-            "chattycog_workspace_module"
-        } else if matches!(family_id, Some(FamilyId::PythonCliTool)) {
-            "python_cli_tool"
-        } else if matches!(family_id, Some(FamilyId::RustCliTool)) {
-            "rust_cli_tool"
-        } else {
-            "static_web_dashboard"
+        match (route.selected_substrate_kind.as_ref(), tool_kind) {
+            (Some(SubstrateKind::Cli), Some("python" | "csv_report")) => "python_cli_tool",
+            (Some(SubstrateKind::Cli), Some("rust" | "log_summary")) => "rust_cli_tool",
+            (Some(SubstrateKind::Cli), _) => "cli_tool",
+            (Some(SubstrateKind::StaticWeb), _) => "static_web",
+            (Some(SubstrateKind::Webview), _) => "webview",
+            (Some(SubstrateKind::NativeWindow), _) => "native_window",
+            (Some(SubstrateKind::Workspace), _) => "workspace",
+            (None, _) => "build",
         },
         &request.raw_request,
     );
 
-    let title = request_title(&request.raw_request, family_label);
-    let summary = request_summary(&request.raw_request, family_label);
+    let title = request_title(&request.raw_request, substrate_label);
+    let summary = request_summary(&request.raw_request, substrate_label);
 
-    ScaffoldInputs {
-        family_id,
+    BuildSeedInputs {
         project_name,
         title,
         summary,
@@ -247,8 +198,8 @@ pub fn derive_scaffold_inputs(
 
 pub fn apply_planner_response(plan: &RequestPlan, response: &PlannerResponse) -> RequestPlan {
     let mut next = plan.clone();
-    if let Some(family_id) = &response.recommended_family_id {
-        next.inferred_family_candidates = vec![family_id.clone()];
+    if let Some(substrate_kind) = &response.recommended_substrate_kind {
+        next.inferred_substrate_candidates = vec![substrate_kind.clone()];
     }
     if let Some(tool_kind) = &response.recommended_tool_kind {
         next.inferred_tool_kind = Some(tool_kind.clone());
@@ -325,20 +276,52 @@ pub fn derive_request_plan(
     };
     let intended_patch_kind =
         active_spec.and_then(|spec| infer_patch_kind(&request.raw_request, spec));
-    let exact_family_candidates = if matches!(request.mode, Some(RequestMode::Patch)) {
+    let lower = request.raw_request.to_ascii_lowercase();
+    let wants_chattycog = matches!(
+        request.exoskeleton_target,
+        Some(ExoskeletonTarget::ChattyCog)
+    ) || request_mentions_chattycog(&lower);
+    let wants_chattyedu = request_mentions_chattyedu(&lower);
+    let wants_dual_host = wants_chattycog && wants_chattyedu;
+    let helper_or_service_heavy = request.requested_capabilities.iter().any(|cap| {
+        matches!(
+            cap.as_str(),
+            "backend_service"
+                | "websocket"
+                | "api_server"
+                | "daemon"
+                | "background_job"
+                | "email_delivery"
+        )
+    });
+    let unsupported_stack = request
+        .explicit_stack
+        .as_deref()
+        .map(|stack| !is_supported_explicit_stack(stack))
+        .unwrap_or(false);
+    let exact_substrate_candidates = if matches!(request.mode, Some(RequestMode::Patch)) {
         active_spec
-            .and_then(|spec| spec.family_id.clone())
-            .map(|family_id| vec![family_id])
-            .unwrap_or_else(|| request.candidate_family_ids.clone())
+            .and_then(project_spec_substrate_kind_for_planning)
+            .map(|substrate_kind| vec![substrate_kind])
+            .unwrap_or_else(|| request.candidate_substrate_kinds.clone())
     } else {
-        request.candidate_family_ids.clone()
+        request.candidate_substrate_kinds.clone()
     };
-    let used_scaffold_substrate_fallback =
-        !matches!(request.mode, Some(RequestMode::Patch)) && exact_family_candidates.is_empty();
-    let inferred_family_candidates = if used_scaffold_substrate_fallback {
-        infer_scaffold_substrate_family_candidates(request, inferred_tool_kind.as_deref())
+    let used_evidence_driven_substrate_recovery =
+        !matches!(request.mode, Some(RequestMode::Patch)) && exact_substrate_candidates.is_empty();
+    let inferred_substrate_candidates = if used_evidence_driven_substrate_recovery {
+        infer_request_substrate_kinds(
+            &request.raw_request,
+            request.desired_surface.as_ref(),
+            inferred_tool_kind.as_deref(),
+            wants_chattycog,
+            wants_chattyedu,
+            wants_dual_host,
+            helper_or_service_heavy,
+            unsupported_stack,
+        )
     } else {
-        exact_family_candidates
+        exact_substrate_candidates
     };
     let available_patch_kinds = active_spec
         .map(|spec| spec.supported_patch_kinds.clone())
@@ -360,25 +343,34 @@ pub fn derive_request_plan(
         }
     } else {
         execution_steps.push("normalize request into native build intent".into());
-        execution_steps.push("rank family candidates and choose the smallest honest fit".into());
-        execution_steps.push("render deterministic scaffold, fixtures, and contracts".into());
-        execution_steps.push("run family acceptance before greenlighting the build".into());
+        execution_steps.push("infer the smallest bounded substrate that can be executed safely".into());
+        execution_steps.push("render deterministic build seed, fixtures, and contracts".into());
+        execution_steps.push("run substrate acceptance before greenlighting the build".into());
     }
 
     if let Some(tool_kind) = inferred_tool_kind.as_deref() {
         rationale.push(format!("inferred tool kind: {tool_kind}"));
     }
-    if used_scaffold_substrate_fallback {
+    if !inferred_substrate_candidates.is_empty() {
         rationale.push(format!(
-            "no exact deterministic family matched; using scaffold substrate candidates: {}",
-            inferred_family_candidates
+            "bounded substrate candidates: {}",
+            inferred_substrate_candidates
                 .iter()
-                .map(FamilyId::as_str)
+                .map(SubstrateKind::as_str)
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
     }
-    let lower = request.raw_request.to_ascii_lowercase();
+    if used_evidence_driven_substrate_recovery {
+        rationale.push(format!(
+            "no exact deterministic substrate matched from the request record; using next-attempt substrate candidates derived from evidence: {}",
+            inferred_substrate_candidates
+                .iter()
+                .map(SubstrateKind::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     let requested_chattycog_modes = infer_chattycog_hosting_modes_from_text(&lower);
     let requested_bridge_capabilities = infer_chattycog_bridge_capabilities_from_text(&lower);
     if let Some(mode) = infer_chattycog_hosting_mode_from_text(&lower) {
@@ -401,7 +393,7 @@ pub fn derive_request_plan(
     if let Some(stack) = request.explicit_stack.as_deref() {
         if !is_supported_explicit_stack(stack) {
             constraints.push(format!(
-                "explicit stack `{stack}` is not supported by a deterministic rebuild family yet"
+                "explicit stack `{stack}` is not supported by a bounded deterministic substrate yet"
             ));
         }
     }
@@ -410,9 +402,9 @@ pub fn derive_request_plan(
             cap.as_str(),
             "backend_service" | "websocket" | "api_server" | "daemon"
         )
-    }) {
+        }) {
         constraints.push(
-            "request asks for service/backend capabilities that do not have a deterministic family yet"
+            "request asks for service/backend capabilities that do not have a bounded deterministic substrate yet"
                 .into(),
         );
     }
@@ -458,7 +450,7 @@ pub fn derive_request_plan(
             .collect::<Vec<_>>();
         if !unsupported_bridge_capabilities.is_empty() {
             constraints.push(format!(
-                "requested ChattyCog bridge capabilities are not implemented by the current deterministic module families: {}",
+                "requested ChattyCog bridge capabilities are not implemented by the current bounded substrate adapters: {}",
                 unsupported_bridge_capabilities.join(", ")
             ));
             constraints.push(format!(
@@ -467,30 +459,30 @@ pub fn derive_request_plan(
             ));
         }
     }
-    if inferred_family_candidates.is_empty() {
-        constraints.push("no family candidates were inferred".into());
+    if inferred_substrate_candidates.is_empty() {
+        constraints.push("no bounded substrate candidates were inferred".into());
     }
     if !request.ambiguity_flags.is_empty() && !matches!(request.mode, Some(RequestMode::Patch)) {
         constraints.extend(request.ambiguity_flags.clone());
     }
     let (mut confidence_score, mut confidence_band, escalation_reasons) = compute_plan_confidence(
         request,
-        &inferred_family_candidates,
+        &inferred_substrate_candidates,
         inferred_tool_kind.as_deref(),
         intended_patch_kind.as_deref(),
         &available_patch_kinds,
         &constraints,
     );
-    if used_scaffold_substrate_fallback
+    if used_evidence_driven_substrate_recovery
         && inferred_tool_kind.is_some()
-        && !inferred_family_candidates.is_empty()
+        && !inferred_substrate_candidates.is_empty()
     {
         confidence_score = confidence_score.max(60);
         if confidence_score >= 60 && confidence_band == "low" {
             confidence_band = "medium".into();
         }
         rationale.push(
-            "scaffold-first substrate attempt allowed despite the lack of an exact deterministic family"
+            "next-attempt substrate pass remained admissible despite the lack of an exact deterministic substrate"
                 .into(),
         );
     }
@@ -505,7 +497,7 @@ pub fn derive_request_plan(
             inferred_tool_kind.as_deref(),
             intended_patch_kind.as_deref(),
         ),
-        inferred_family_candidates,
+        inferred_substrate_candidates,
         inferred_tool_kind,
         intended_patch_kind: intended_patch_kind.clone(),
         available_patch_kinds,
@@ -536,7 +528,7 @@ pub fn derive_planner_handoff(
     active_spec: Option<&ProjectSpec>,
 ) -> PlannerHandoff {
     let mut requested_output = vec![
-        "structured family recommendation".into(),
+        "structured substrate recommendation".into(),
         "tool kind or patch kind recommendation".into(),
         "optional patch recipe ids for host-owned bolt-on lanes".into(),
         "optional operator bundle ids for host-owned composition".into(),
@@ -562,7 +554,7 @@ pub fn derive_planner_handoff(
         mode: request.mode.clone(),
         active_project: request.active_project.clone(),
         interpreted_goal: plan.interpreted_goal.clone(),
-        inferred_family_candidates: plan.inferred_family_candidates.clone(),
+        inferred_substrate_candidates: plan.inferred_substrate_candidates.clone(),
         inferred_tool_kind: plan.inferred_tool_kind.clone(),
         available_patch_kinds: plan.available_patch_kinds.clone(),
         candidate_request_modes: Vec::new(),
@@ -571,7 +563,7 @@ pub fn derive_planner_handoff(
         candidate_patch_recipe_ids: Vec::new(),
         candidate_composition_patch_kinds: Vec::new(),
         candidate_composition_patch_primitive_classes: Vec::new(),
-        candidate_composition_family_build_primitive_classes: Vec::new(),
+        candidate_composition_base_build_primitive_classes: Vec::new(),
         candidate_composition_layers: Vec::new(),
         candidate_composition_helper_primitive_ids: Vec::new(),
         candidate_composition_helper_primitive_kinds: Vec::new(),
@@ -583,6 +575,46 @@ pub fn derive_planner_handoff(
         requested_output,
         created_at: Some(timestamp_id("created")),
     }
+}
+
+fn infer_request_substrate_kinds(
+    raw_request: &str,
+    desired_surface: Option<&DesiredSurface>,
+    inferred_tool_kind: Option<&str>,
+    wants_chattycog: bool,
+    wants_chattyedu: bool,
+    wants_dual_host: bool,
+    helper_or_service_heavy: bool,
+    unsupported_stack: bool,
+) -> Vec<SubstrateKind> {
+    let lower = raw_request.to_ascii_lowercase();
+    let mut substrates = Vec::new();
+    if unsupported_stack || helper_or_service_heavy {
+        return substrates;
+    }
+
+    if wants_dual_host {
+        substrates.push(SubstrateKind::NativeWindow);
+    } else if wants_chattycog && contains_any(&lower, &["webview", "browser tab", "hosted webview"]) {
+        substrates.push(SubstrateKind::Webview);
+    } else if wants_chattycog || wants_chattyedu {
+        substrates.push(SubstrateKind::NativeWindow);
+    } else if matches!(desired_surface, Some(DesiredSurface::Cli)) || request_has_cli_shape(&lower)
+    {
+        substrates.push(SubstrateKind::Cli);
+    } else if contains_any(
+        &lower,
+        &["native window", "desktop", "rust gui", "eframe", "egui", "tkinter"],
+    ) {
+        substrates.push(SubstrateKind::NativeWindow);
+    } else if request_has_web_shape(&lower) || request_has_dashboard_shape(&lower) {
+        substrates.push(SubstrateKind::StaticWeb);
+    } else if inferred_tool_kind.is_some() {
+        substrates.push(SubstrateKind::StaticWeb);
+    }
+
+    substrates.dedup();
+    substrates
 }
 
 pub fn persist_json_pretty<T: Serialize>(path: &Path, value: &T) -> Result<()> {
@@ -636,11 +668,6 @@ pub fn infer_route_hints(request: &RequestRecord) -> (Vec<OperatorId>, Vec<Wrapp
     (operators, wrappers)
 }
 
-fn ensure_front(items: &mut Vec<FamilyId>, wanted: FamilyId) {
-    items.retain(|item| item != &wanted);
-    items.insert(0, wanted);
-}
-
 fn infer_entrypoint_config(
     request: &RequestRecord,
     tool_kind_override: Option<&str>,
@@ -675,62 +702,6 @@ fn infer_tool_kind(request: &RequestRecord) -> Option<String> {
         desired_surface_cli,
     )
     .map(str::to_string)
-}
-
-fn infer_scaffold_substrate_family_candidates(
-    request: &RequestRecord,
-    inferred_tool_kind: Option<&str>,
-) -> Vec<FamilyId> {
-    let lower = request.raw_request.to_ascii_lowercase();
-    let wants_chattycog = matches!(
-        request.exoskeleton_target,
-        Some(ExoskeletonTarget::ChattyCog)
-    ) || request_mentions_chattycog(&lower);
-    let wants_chattyedu = request_mentions_chattyedu(&lower);
-    let wants_dual_host = wants_chattycog && wants_chattyedu;
-    let wants_rust = request_mentions_rust(&lower);
-    let wants_python = request_mentions_python(&lower);
-    let wants_cli = matches!(request.desired_surface, Some(DesiredSurface::Cli))
-        || request_has_cli_shape(&lower);
-    let mut candidates = Vec::new();
-
-    if wants_dual_host {
-        ensure_front(
-            &mut candidates,
-            FamilyId::ChattycogChattyeduNativeWindowModule,
-        );
-    } else if wants_chattycog {
-        if contains_any(&lower, &["webview", "browser tab", "hosted webview"]) {
-            ensure_front(&mut candidates, FamilyId::ChattycogWebviewModule);
-        } else if contains_any(
-            &lower,
-            &["workspace", "ui.json", "headless", "notes module"],
-        ) {
-            ensure_front(&mut candidates, FamilyId::ChattycogWorkspaceModule);
-        } else {
-            ensure_front(&mut candidates, FamilyId::ChattycogNativeWindowModule);
-        }
-    } else if wants_chattyedu {
-        ensure_front(&mut candidates, FamilyId::ChattyeduNativeWindowModule);
-    } else if wants_cli {
-        if wants_python && !wants_rust {
-            ensure_front(&mut candidates, FamilyId::PythonCliTool);
-            candidates.push(FamilyId::RustCliTool);
-        } else {
-            ensure_front(&mut candidates, FamilyId::RustCliTool);
-            if wants_python {
-                candidates.push(FamilyId::PythonCliTool);
-            }
-        }
-    } else if inferred_tool_kind.is_some() || request_has_dashboard_shape(&lower) {
-        ensure_front(&mut candidates, FamilyId::StaticWebDashboard);
-    }
-
-    if candidates.is_empty() {
-        candidates.push(FamilyId::StaticWebDashboard);
-    }
-
-    candidates
 }
 
 fn infer_patch_kind(raw_request: &str, spec: &ProjectSpec) -> Option<String> {
@@ -782,29 +753,40 @@ fn sanitize_name(fallback: &str, raw_request: &str) -> String {
     }
 }
 
-fn request_title(raw_request: &str, family_label: &str) -> String {
+fn project_spec_substrate_kind_for_planning(spec: &ProjectSpec) -> Option<SubstrateKind> {
+    match spec.substrate.trim() {
+        "static_web" => Some(SubstrateKind::StaticWeb),
+        "python_cli" | "rust_cli" | "cli" => Some(SubstrateKind::Cli),
+        "webview" => Some(SubstrateKind::Webview),
+        "native_window" => Some(SubstrateKind::NativeWindow),
+        "workspace" => Some(SubstrateKind::Workspace),
+        _ => None,
+    }
+}
+
+fn request_title(raw_request: &str, substrate_label: &str) -> String {
     let trimmed = raw_request.trim();
     if trimmed.is_empty() {
-        format!("{} build", family_label.replace('_', " "))
+        format!("{} build", substrate_label.replace('_', " "))
     } else {
         let mut chars = trimmed.chars();
         match chars.next() {
             Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-            None => format!("{} build", family_label.replace('_', " ")),
+            None => format!("{} build", substrate_label.replace('_', " ")),
         }
     }
 }
 
-fn request_summary(raw_request: &str, family_label: &str) -> String {
+fn request_summary(raw_request: &str, substrate_label: &str) -> String {
     if raw_request.trim().is_empty() {
         format!(
             "A deterministic {} build from the ChattyFactory rebuild.",
-            family_label
+            substrate_label
         )
     } else {
         format!(
             "Deterministic {} build for request: {}",
-            family_label,
+            substrate_label,
             raw_request.trim()
         )
     }
@@ -839,7 +821,7 @@ fn interpreted_goal(
 
 fn compute_plan_confidence(
     request: &RequestRecord,
-    inferred_family_candidates: &[FamilyId],
+    inferred_substrate_candidates: &[SubstrateKind],
     inferred_tool_kind: Option<&str>,
     intended_patch_kind: Option<&str>,
     available_patch_kinds: &[String],
@@ -852,11 +834,11 @@ fn compute_plan_confidence(
     };
     let mut escalation_reasons = Vec::new();
 
-    if !inferred_family_candidates.is_empty() {
+    if !inferred_substrate_candidates.is_empty() {
         score += 15;
     } else {
         score -= 25;
-        escalation_reasons.push("no family candidates were inferred".into());
+        escalation_reasons.push("no bounded substrate candidates were inferred".into());
     }
 
     if inferred_tool_kind.is_some() {
@@ -932,25 +914,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn novel_dashboard_requests_keep_a_scaffold_substrate_candidate() {
+    fn novel_dashboard_requests_keep_a_next_attempt_substrate_candidate() {
         let request = normalize_request("build me a golang dashboard for project tracking");
         let plan = derive_request_plan(&request, None);
 
         assert_eq!(
-            plan.inferred_family_candidates.first(),
-            Some(&FamilyId::StaticWebDashboard)
+            plan.inferred_substrate_candidates.first(),
+            Some(&SubstrateKind::StaticWeb)
         );
         assert_eq!(plan.inferred_tool_kind.as_deref(), Some("dashboard"));
         assert!(
             plan.rationale
                 .iter()
-                .any(|reason| reason.contains("scaffold substrate candidates")),
-            "expected scaffold substrate fallback rationale, got {:?}",
+                .any(|reason| reason.contains("next-attempt substrate candidates derived from evidence")),
+            "expected next-attempt substrate rationale, got {:?}",
             plan.rationale
         );
         assert!(
             !plan.needs_llm_review,
-            "expected scaffold-first substrate fallback to stay executable, got {:?}",
+            "expected evidence-based next-attempt substrate pass to stay executable, got {:?}",
             plan
         );
     }

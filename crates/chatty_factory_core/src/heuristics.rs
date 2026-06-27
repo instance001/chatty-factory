@@ -466,11 +466,11 @@ pub fn infer_request_tool_kind_from_text(
     if (wants_chattycog || wants_chattyedu)
         && contains_any(lower, &["native window", "desktop", "tkinter"])
     {
-        Some("native_window_starter")
+        Some("dashboard")
     } else if wants_chattycog
         && contains_any(lower, &["workspace", "ui.json", "headless", "notes module"])
     {
-        Some("workspace_module")
+        Some("dashboard")
     } else if wants_chattycog
         && contains_any(
             lower,
@@ -482,11 +482,11 @@ pub fn infer_request_tool_kind_from_text(
             ],
         )
     {
-        Some("module_starter")
+        Some("dashboard")
     } else if wants_chattycog {
-        Some("native_window_starter")
+        Some("dashboard")
     } else if wants_chattyedu {
-        Some("native_window_starter")
+        Some("dashboard")
     } else if request_has_dashboard_shape(lower) {
         Some("dashboard")
     } else if desired_surface_cli || request_has_cli_shape(lower) {
@@ -508,20 +508,6 @@ pub fn infer_chattycog_hosting_modes_from_text(lower: &str) -> Vec<&'static str>
     ) {
         modes.push("hosted_native_window");
     }
-    if contains_any(
-        lower,
-        &[
-            "workspace",
-            "ui.json",
-            "headless",
-            "notes module",
-            "workspace surface",
-            "host provided ui",
-        ],
-    ) {
-        modes.push("workspace_surface");
-    }
-
     modes.sort();
     modes.dedup();
     modes
@@ -537,11 +523,7 @@ pub fn infer_chattycog_hosting_mode_from_text(lower: &str) -> Option<&'static st
 }
 
 pub fn chattycog_valid_hosting_modes() -> Vec<String> {
-    vec![
-        "hosted_webview".into(),
-        "hosted_native_window".into(),
-        "workspace_surface".into(),
-    ]
+    vec!["hosted_webview".into(), "hosted_native_window".into()]
 }
 
 pub fn infer_chattycog_bridge_capabilities_from_text(lower: &str) -> Vec<String> {
@@ -629,36 +611,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generic_chattycog_requests_prefer_native_window_starter() {
+    fn generic_chattycog_requests_prefer_dashboard_tool_kind() {
         let tool_kind = infer_request_tool_kind_from_text(
             "build me a chattycog dashboard module",
             true,
             false,
             false,
         );
-        assert_eq!(tool_kind, Some("native_window_starter"));
+        assert_eq!(tool_kind, Some("dashboard"));
     }
 
     #[test]
-    fn explicit_chattycog_webview_requests_keep_webview_starter() {
+    fn explicit_chattycog_webview_requests_stay_dashboard_shaped() {
         let tool_kind = infer_request_tool_kind_from_text(
             "build me a chattycog webview module",
             true,
             false,
             false,
         );
-        assert_eq!(tool_kind, Some("module_starter"));
+        assert_eq!(tool_kind, Some("dashboard"));
     }
 
     #[test]
-    fn generic_chattyedu_requests_prefer_native_window_starter() {
+    fn generic_chattyedu_requests_prefer_dashboard_tool_kind() {
         let tool_kind = infer_request_tool_kind_from_text(
             "build me a chatty-edu lesson dashboard module",
             false,
             true,
             false,
         );
-        assert_eq!(tool_kind, Some("native_window_starter"));
+        assert_eq!(tool_kind, Some("dashboard"));
     }
 
     #[test]

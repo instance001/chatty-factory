@@ -5,7 +5,7 @@ impl ChattyFactoryUiApp {
         &mut self,
         ui: &mut egui::Ui,
         entry: &PendingExtensionEntry,
-        latest_proof_receipt: Option<&(CrossFamilyPairedProofReceiptSummary, PathBuf)>,
+        latest_proof_receipt: Option<&(LegacyComparisonPairedProofReceiptSummary, PathBuf)>,
     ) {
         if entry.extension_kind == "proof_harness_bundle" {
             ui.label(format!(
@@ -295,9 +295,9 @@ impl ChattyFactoryUiApp {
                 entry.unresolved_layers.join(", ")
             }
         ));
-        if !entry.missing_family_build_primitive_classes.is_empty() {
-            ui.label("Missing family build classes");
-            for class in &entry.missing_family_build_primitive_classes {
+        if !entry.missing_base_build_primitive_classes.is_empty() {
+            ui.label("Missing base build classes");
+            for class in &entry.missing_base_build_primitive_classes {
                 ui.label(format!("- {class}"));
             }
         }

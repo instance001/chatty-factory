@@ -4,13 +4,16 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
-use crate::{timestamp_id, ExecutionPolicy, ExecutionReceipt, ExecutionSmokeCheck, FamilyId};
+use crate::{
+    timestamp_id, ExecutionPolicy, ExecutionReceipt, ExecutionSmokeCheck, SubstrateKind,
+};
 
 pub fn build_execution_policy(
     request_id: &str,
     output_root: &Path,
     project_dir: &Path,
-    family_id: Option<&FamilyId>,
+    substrate_kind: Option<&SubstrateKind>,
+    tool_kind: Option<&str>,
     entrypoints: &[String],
 ) -> Result<ExecutionPolicy> {
     if !project_dir.exists() {
@@ -34,8 +37,12 @@ pub fn build_execution_policy(
         }
     }
 
-    let (allowed_commands, substrate_smoke_checks, notes) = match family_id {
-        Some(FamilyId::PythonCliTool) => (
+    let python_entrypoint = entrypoints.iter().any(|entrypoint| entrypoint.ends_with(".py"));
+    let rust_entrypoint = entrypoints.iter().any(|entrypoint| entrypoint.ends_with(".rs"));
+    let cargo_manifest_present = project_dir.join("Cargo.toml").exists();
+
+    let (allowed_commands, substrate_smoke_checks, notes) = match substrate_kind {
+        Some(SubstrateKind::Cli) if python_entrypoint => (
             vec!["py".into(), "python".into(), "python3".into()],
             vec![
                 "project_root_confined".into(),
@@ -44,22 +51,7 @@ pub fn build_execution_policy(
             ],
             vec!["python-backed outputs get a deterministic syntax smoke pass".into()],
         ),
-        Some(FamilyId::ChattycogNativeWindowModule)
-        | Some(FamilyId::ChattyeduNativeWindowModule)
-        | Some(FamilyId::ChattycogChattyeduNativeWindowModule) => (
-            vec!["cargo".into()],
-            vec![
-                "project_root_confined".into(),
-                "entrypoints_exist".into(),
-                "cargo_manifest_guardrails".into(),
-                "cargo_metadata_offline".into(),
-            ],
-            vec![
-                "native Rust dashboard outputs get nested workspace and cargo metadata guardrails"
-                    .into(),
-            ],
-        ),
-        Some(FamilyId::RustCliTool) => (
+        Some(SubstrateKind::Cli) if rust_entrypoint || cargo_manifest_present => (
             vec!["cargo".into()],
             vec![
                 "project_root_confined".into(),
@@ -69,27 +61,50 @@ pub fn build_execution_policy(
             ],
             vec!["rust cli outputs get nested workspace and cargo metadata guardrails".into()],
         ),
-        Some(FamilyId::StaticWebDashboard)
-        | Some(FamilyId::ChattycogWebviewModule)
-        | Some(FamilyId::ChattycogWorkspaceModule) => (
+        Some(SubstrateKind::NativeWindow) | Some(SubstrateKind::Workspace) => (
+            vec!["cargo".into()],
+            vec![
+                "project_root_confined".into(),
+                "entrypoints_exist".into(),
+                "cargo_manifest_guardrails".into(),
+                "cargo_metadata_offline".into(),
+            ],
+            vec![
+                "native or hosted Rust outputs get nested workspace and cargo metadata guardrails"
+                    .into(),
+            ],
+        ),
+        Some(SubstrateKind::StaticWeb) | Some(SubstrateKind::Webview) => (
             Vec::new(),
             vec!["project_root_confined".into(), "entrypoints_exist".into()],
             vec![
-                "web families are currently guarded by path confinement and entrypoint checks"
+                "web-facing outputs are currently guarded by path confinement and entrypoint checks"
+                    .into(),
+            ],
+        ),
+        Some(SubstrateKind::Cli) => (
+            Vec::new(),
+            vec!["project_root_confined".into(), "entrypoints_exist".into()],
+            vec![
+                "cli outputs without concrete toolchain evidence stay confined to generic entrypoint checks"
                     .into(),
             ],
         ),
         None => (
             Vec::new(),
             vec!["project_root_confined".into(), "entrypoints_exist".into()],
-            vec!["unknown family execution policy fell back to generic confinement checks".into()],
+            vec![
+                "unknown substrate execution policy fell back to generic confinement checks"
+                    .into(),
+            ],
         ),
     };
 
     Ok(ExecutionPolicy {
         policy_id: timestamp_id("execution-policy"),
         request_id: request_id.to_string(),
-        family_id: family_id.cloned(),
+        target_substrate_kind: substrate_kind.cloned(),
+        target_tool_kind: tool_kind.map(str::to_string),
         project_dir: project_dir.display().to_string(),
         allowed_root: output_root.display().to_string(),
         allowed_entrypoints: entrypoints.to_vec(),
@@ -114,24 +129,23 @@ pub fn run_execution_policy(policy: &ExecutionPolicy) -> Result<ExecutionReceipt
         &policy.allowed_entrypoints,
     )?);
 
-    match policy.family_id.as_ref() {
-        Some(FamilyId::PythonCliTool) => {
-            checks.push(run_python_py_compile_check(
-                &project_dir,
-                &policy.allowed_entrypoints,
-            )?);
+    for smoke_check in &policy.substrate_smoke_checks {
+        match smoke_check.as_str() {
+            "project_root_confined" | "entrypoints_exist" => {}
+            "python_py_compile" => {
+                checks.push(run_python_py_compile_check(
+                    &project_dir,
+                    &policy.allowed_entrypoints,
+                )?);
+            }
+            "cargo_manifest_guardrails" => {
+                checks.push(run_cargo_manifest_guardrails_check(&project_dir)?);
+            }
+            "cargo_metadata_offline" => {
+                checks.push(run_cargo_metadata_offline_check(&project_dir)?);
+            }
+            _ => {}
         }
-        Some(FamilyId::ChattycogNativeWindowModule)
-        | Some(FamilyId::ChattyeduNativeWindowModule)
-        | Some(FamilyId::ChattycogChattyeduNativeWindowModule) => {
-            checks.push(run_cargo_manifest_guardrails_check(&project_dir)?);
-            checks.push(run_cargo_metadata_offline_check(&project_dir)?);
-        }
-        Some(FamilyId::RustCliTool) => {
-            checks.push(run_cargo_manifest_guardrails_check(&project_dir)?);
-            checks.push(run_cargo_metadata_offline_check(&project_dir)?);
-        }
-        _ => {}
     }
 
     if let Some(failed) = checks.iter().find(|check| check.status != "passed") {
@@ -146,7 +160,8 @@ pub fn run_execution_policy(policy: &ExecutionPolicy) -> Result<ExecutionReceipt
         receipt_id: timestamp_id("execution-receipt"),
         request_id: policy.request_id.clone(),
         policy_id: policy.policy_id.clone(),
-        family_id: policy.family_id.clone(),
+        target_substrate_kind: policy.target_substrate_kind.clone(),
+        target_tool_kind: policy.target_tool_kind.clone(),
         project_dir: policy.project_dir.clone(),
         status: "passed".into(),
         smoke_checks: checks,

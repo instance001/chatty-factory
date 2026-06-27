@@ -4,22 +4,22 @@ use std::hash::{DefaultHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chatty_factory_control::ControlPlane;
 use chatty_factory_core::{
     active_project_summary_line, apply_planner_response, build_context_bundle,
-    build_execution_policy, build_primitive_classes_for_family, build_project_snapshot,
-    build_runtime_model_catalog, build_starter_choices, build_starter_label,
-    build_starter_lifecycle, built_in_capability_comparison_bundles, built_in_proof_templates,
-    candidate_operator_bundle_ids_for, capability_comparison_bundle_by_id,
-    capability_comparison_bundle_by_id_from_root, chattycog_valid_hosting_modes, contains_any,
-    default_runtime_config, derive_planner_handoff, derive_request_plan, derive_scaffold_inputs,
+    build_execution_policy, build_project_snapshot,
+    build_runtime_model_catalog,
+    built_in_capability_comparison_bundles, built_in_proof_templates,
+    capability_comparison_bundle_by_id,
+    capability_comparison_bundle_by_id_from_root, chattycog_valid_hosting_modes,
+    default_runtime_config, derive_build_seed_inputs, derive_planner_handoff, derive_request_plan,
     discover_projects, discover_runtime, gate_patch_project_snapshot,
     infer_chattycog_bridge_capabilities_from_text, infer_chattycog_hosting_mode_from_text,
     infer_chattycog_hosting_modes_from_text, infer_route_hints, load_project_session,
     normalize_patch_request, normalize_request, patch_primitive_classes_for_kinds,
     persist_json_pretty, persist_project_browser_state, persist_project_session,
-    primitive_adapters_for_family, proof_template_by_id, proof_template_by_id_from_root,
+    proof_template_by_id, proof_template_by_id_from_root,
     request_mentions_chattycog, resolve_model_choice, run_execution_policy, run_local_planner,
     run_local_text_generation, run_runtime_smoke, should_route_followup_via_planner_text,
     supported_chattycog_bridge_capabilities, AcceptanceCheck, AcceptanceRecipeStatus,
@@ -30,25 +30,25 @@ use chatty_factory_core::{
     ConstraintApprovalReceipt, ConstraintPromotionCandidate, ConstraintReviewReceipt,
     ConstraintShelfHistory, ConstraintShelfHistoryEntry, ConstraintShelfMutationReceipt,
     ConstraintViolation, DesiredSurface, ExoskeletonTarget, FailureClass, FailureReport,
-    FailureReportEvidence, FailureVaultEntry, FallbackBuildSpec, FallbackPlanReceipt, FamilyId,
-    FamilyPrimitiveAdapter, HelperRuntimeReceipt, HelperServiceSpec, ImplementationConstraint,
+    FailureReportEvidence, FailureVaultEntry,
+    HelperRuntimeReceipt, HelperServiceSpec,
+    ImplementationConstraint,
     ModelTaskGenerationReceipt, OperatorBundleStatus, PatchIntentFreeze, PatchLaneStatus,
     PatchPlanReview, PatchReceipt, PlanTask, PlanTaskExecutionLog, PlanTaskExecutionReceipt,
     PlanTaskList, PlanTaskModelAttemptReceipt, PlanTaskVerificationLog,
     PlanTaskVerificationReceipt, PlannedFileOperation, PlannerDispatchReceipt, PlannerHandoff,
     PlannerResponse, PrimitiveExecutionPlan, PrimitiveExecutionStep,
-    PrimitiveProofEnrichmentBinding, PrimitiveProofFamilyRequestBinding,
-    PrimitiveProofHarnessReceipt, PrimitiveProofTemplate, ProjectBrowserState,
-    ProjectPatchDiagnosis, ProjectSession, ProjectSpec, ProposedConstraintReceipt, RequestMode,
-    RequestPlan, RequestRecord, RetrySearchProofReceipt, RuntimeConfig, RuntimeModelCatalogReceipt,
-    RuntimeSmokeReceipt, TaskDecompositionInferenceReceipt, TaskDecompositionProposal,
+    PrimitiveProofHarnessReceipt, PrimitiveProofTemplate,
+    ProjectBrowserState,
+    ProjectPatchDiagnosis, ProjectSession, ProjectSpec,
+    ProposedConstraintReceipt, RequestMode, RequestPlan, RequestRecord, RetrySearchProofReceipt,
+    RuntimeConfig, RuntimeModelCatalogReceipt,
+    NextAttemptBuildSpec, NextAttemptReceipt, RuntimeSmokeReceipt, SubstrateKind, TaskDecompositionInferenceReceipt, TaskDecompositionProposal,
     TaskDecompositionReceipt, TriangulationAttempt, TriangulationSession,
 };
 use chatty_factory_families::{
-    apply_request_plan_enrichments, build_chattycog_chattyedu_native_window_module,
-    build_chattycog_native_window_module, build_chattycog_webview_module,
-    build_chattycog_workspace_module, build_chattyedu_native_window_module, build_python_cli_tool,
-    build_receipt, build_rust_cli_tool, build_static_web_dashboard,
+    apply_request_plan_enrichments, build_python_cli_seed, build_receipt, build_rust_cli_seed,
+    build_static_web_seed,
     candidate_acceptance_recipe_ids as registry_candidate_acceptance_recipe_ids,
     candidate_patch_recipe_ids as registry_candidate_patch_recipe_ids, dispatch_patch_request,
     patch_conflicting_anchor_markers, patch_expected_artifact_groups,
@@ -60,12 +60,10 @@ use chatty_factory_verify::{classify_failure, verify_acceptance_plan};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct CrossFamilyMonitoringComparisonReceipt {
+struct LegacyComparisonMonitoringReceipt {
     pub receipt_id: String,
     pub left_project_name: String,
-    pub left_family_id: Option<String>,
     pub right_project_name: String,
-    pub right_family_id: Option<String>,
     pub left_capability_classes: Vec<String>,
     pub right_capability_classes: Vec<String>,
     pub shared_capability_classes: Vec<String>,
@@ -115,13 +113,13 @@ struct ProofGovernanceRefreshStatus {
 struct CompositionGovernanceReceipt {
     pub receipt_id: String,
     pub entry_id: String,
-    pub family_id: Option<String>,
+    pub substrate_kind: Option<String>,
     pub tool_kind: Option<String>,
     pub patch_kind: Option<String>,
     pub unresolved_layers: Vec<String>,
     pub requested_capabilities: Vec<String>,
     pub source_stub_path: Option<String>,
-    pub scaffold_root: Option<String>,
+    pub attempt_bundle_root: Option<String>,
     pub acceptance_recipe_paths: Vec<String>,
     pub acceptance_contract_note: Option<String>,
     pub artifact_hashes: BTreeMap<String, String>,
@@ -148,12 +146,12 @@ struct CompositionGovernanceRefreshStatus {
 struct PatchGovernanceReceipt {
     pub receipt_id: String,
     pub entry_id: String,
-    pub family_id: Option<String>,
+    pub substrate_kind: Option<String>,
     pub tool_kind: Option<String>,
     pub patch_kind: Option<String>,
     pub requested_capabilities: Vec<String>,
     pub source_stub_path: Option<String>,
-    pub scaffold_root: Option<String>,
+    pub attempt_bundle_root: Option<String>,
     pub patch_recipe_path: Option<String>,
     pub acceptance_recipe_path: Option<String>,
     pub acceptance_contract_note: Option<String>,
@@ -189,9 +187,7 @@ struct ProjectHistoricalBlockerBundle {
 struct ProjectPatchReadinessReceipt {
     pub receipt_id: String,
     pub project_name: String,
-    pub family_id: Option<String>,
-    pub family_display_name: Option<String>,
-    pub family_ecosystem: Option<String>,
+    pub substrate_kind: Option<String>,
     pub tool_kind: Option<String>,
     pub request_summary: Option<String>,
     pub project_spec_path: String,
@@ -247,13 +243,13 @@ struct PatchDiagnosisPostcheckReceipt {
 struct HelperGovernanceReceipt {
     pub receipt_id: String,
     pub entry_id: String,
-    pub family_id: Option<String>,
+    pub substrate_kind: Option<String>,
     pub tool_kind: Option<String>,
     pub helper_lane_path: Option<String>,
     pub requested_capabilities: Vec<String>,
     pub missing_helper_primitive_kinds: Vec<String>,
     pub source_stub_path: Option<String>,
-    pub scaffold_root: Option<String>,
+    pub attempt_bundle_root: Option<String>,
     pub artifact_hashes: BTreeMap<String, String>,
     pub drift_status: String,
     pub drift_notes: Vec<String>,
@@ -278,13 +274,13 @@ struct HelperGovernanceRefreshStatus {
 struct BridgeGovernanceReceipt {
     pub receipt_id: String,
     pub entry_id: String,
-    pub family_id: Option<String>,
+    pub substrate_kind: Option<String>,
     pub tool_kind: Option<String>,
     pub bridge_lane_path: Option<String>,
     pub bridge_capabilities: Vec<String>,
     pub requested_capabilities: Vec<String>,
     pub source_stub_path: Option<String>,
-    pub scaffold_root: Option<String>,
+    pub attempt_bundle_root: Option<String>,
     pub artifact_hashes: BTreeMap<String, String>,
     pub drift_status: String,
     pub drift_notes: Vec<String>,
@@ -302,73 +298,6 @@ struct BridgeGovernanceRefreshStatus {
     pub status_id: String,
     pub refreshed_entries: usize,
     pub skipped_entries: usize,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct FamilyGovernanceReceipt {
-    pub receipt_id: String,
-    pub family_id: String,
-    pub family_display_name: String,
-    pub family_ecosystem: Option<String>,
-    pub manifest_path: Option<String>,
-    pub primary_substrate: String,
-    pub lifecycle_status: String,
-    pub lifecycle_notes: Vec<String>,
-    pub supported_tool_kinds: Vec<String>,
-    pub provided_build_primitive_classes: Vec<String>,
-    pub primitive_adapter_ids: Vec<String>,
-    pub artifact_hashes: BTreeMap<String, String>,
-    pub drift_status: String,
-    pub drift_notes: Vec<String>,
-    pub change_since_last_live_status: String,
-    pub change_since_last_live_notes: Vec<String>,
-    pub baseline_artifact_hashes: BTreeMap<String, String>,
-    pub created_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct FamilyGovernanceRefreshStatus {
-    pub status_id: String,
-    pub refreshed_entries: usize,
-    pub skipped_entries: usize,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct FamilyUsageEntry {
-    pub family_id: String,
-    pub family_display_name: String,
-    pub family_ecosystem: Option<String>,
-    pub project_count: usize,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct FamilyUsageSummaryReceipt {
-    pub summary_id: String,
-    pub total_projects: usize,
-    pub ecosystem_project_counts: BTreeMap<String, usize>,
-    pub families: Vec<FamilyUsageEntry>,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct StarterUsageEntry {
-    pub starter_id: String,
-    pub starter_label: String,
-    pub starter_lifecycle: String,
-    pub build_count: usize,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct StarterUsageSummaryReceipt {
-    pub summary_id: String,
-    pub total_build_receipts: usize,
-    pub explicit_override_builds: usize,
-    pub auto_routed_builds: usize,
-    pub matched_recommendation_builds: usize,
-    pub overridden_recommendation_builds: usize,
-    pub starters: Vec<StarterUsageEntry>,
     pub updated_at: String,
 }
 
@@ -393,47 +322,6 @@ struct TriangulationLoopSummaryReceipt {
     pub latest_model_ladder_posture: Option<String>,
     pub latest_model_ladder_attempted_models: Vec<String>,
     pub updated_at: String,
-}
-
-fn governance_family_display_name(family_id: &FamilyId) -> String {
-    match family_id {
-        FamilyId::ChattycogNativeWindowModule => "Chatty-Cog Rust Native Dashboard".into(),
-        FamilyId::ChattyeduNativeWindowModule => "Chatty-EDU Rust Native Dashboard".into(),
-        FamilyId::ChattycogChattyeduNativeWindowModule => {
-            "Chatty-Cog + Chatty-EDU Rust Native Dashboard".into()
-        }
-        FamilyId::ChattycogWebviewModule => "Chatty-Cog Webview Module".into(),
-        FamilyId::ChattycogWorkspaceModule => "Chatty-Cog Workspace Module".into(),
-        FamilyId::StaticWebDashboard => "Static Web Dashboard".into(),
-        FamilyId::RustCliTool => "Rust CLI Tool".into(),
-        FamilyId::PythonCliTool => "Python CLI Tool".into(),
-    }
-}
-
-fn governance_family_ecosystem(family_id: &FamilyId) -> Option<String> {
-    match family_id {
-        FamilyId::ChattycogNativeWindowModule
-        | FamilyId::ChattycogWebviewModule
-        | FamilyId::ChattycogWorkspaceModule => Some("Chatty-Cog".into()),
-        FamilyId::ChattyeduNativeWindowModule => Some("Chatty-EDU".into()),
-        FamilyId::ChattycogChattyeduNativeWindowModule => Some("Chatty-Cog + Chatty-EDU".into()),
-        _ => None,
-    }
-}
-
-fn starter_id_for_family_id(family_id: &FamilyId) -> &'static str {
-    match family_id {
-        FamilyId::ChattycogNativeWindowModule => "chattycog_native_window_module",
-        FamilyId::ChattyeduNativeWindowModule => "chattyedu_native_window_module",
-        FamilyId::ChattycogChattyeduNativeWindowModule => {
-            "chattycog_chattyedu_native_window_module"
-        }
-        FamilyId::ChattycogWebviewModule => "chattycog_webview_module",
-        FamilyId::ChattycogWorkspaceModule => "chattycog_workspace_module",
-        FamilyId::StaticWebDashboard => "static_web_dashboard",
-        FamilyId::RustCliTool => "rust_cli_tool",
-        FamilyId::PythonCliTool => "python_cli_tool",
-    }
 }
 
 fn desired_surface_label(surface: &DesiredSurface) -> &'static str {
@@ -475,11 +363,11 @@ fn normalized_failure_class_for_build_failure(
     } else if failure_mode.contains("composition_review_denied") {
         "task_too_broad".into()
     } else if failure_mode.contains("no_deterministic_family_match") {
-        "unsupported_family_capability".into()
-    } else if lower.contains("not supported by a deterministic rebuild family yet")
+        "unsupported_substrate_capability".into()
+    } else if lower.contains("not supported by a deterministic bounded substrate yet")
         || lower.contains("explicit stack")
     {
-        "unsupported_family_capability".into()
+        "unsupported_substrate_capability".into()
     } else {
         match failure_class {
             FailureClass::InvalidMetadata => "contract_mismatch".into(),
@@ -487,7 +375,7 @@ fn normalized_failure_class_for_build_failure(
             FailureClass::OperatorMismatch => "contract_mismatch".into(),
             FailureClass::DomEligibilityMismatch => "contract_mismatch".into(),
             FailureClass::PolicyViolation => "policy_violation".into(),
-            FailureClass::UnsupportedFamilyCapability => "unsupported_family_capability".into(),
+            FailureClass::UnsupportedFamilyCapability => "unsupported_substrate_capability".into(),
             FailureClass::ToolchainMismatch => "missing_dependency_or_toolchain".into(),
             FailureClass::StructuredCodeGenerationMismatch => "verification_failure".into(),
             FailureClass::HelperWiringFailure => "verification_failure".into(),
@@ -916,13 +804,13 @@ fn select_mechanical_next_action(
                 "host-owned truth says the current interpretation is not stable enough to execute honestly".into(),
             ],
         },
-        "unsupported_family_capability" => MechanicalNextAction {
+        "unsupported_substrate_capability" => MechanicalNextAction {
             action_id: "surface_requirement_gap_honestly".into(),
             recommended_next_step:
-                "surface the unmet requirement honestly and scaffold a bounded substrate attempt instead of coercing to the nearest known family"
+                "surface the unmet requirement honestly and prepare a bounded substrate attempt instead of coercing to the nearest known family"
                     .into(),
             rationale: vec![
-                "normalized failure class resolved to `unsupported_family_capability`".into(),
+                "normalized failure class resolved to `unsupported_substrate_capability`".into(),
                 "supported lanes are helpers, not laws, so the factory should record the gap rather than disguise it".into(),
             ],
         },
@@ -1020,7 +908,7 @@ fn select_mechanical_next_action(
                 format!(
                     "normalized failure class `{normalized_failure_class}` did not match a narrower mechanical route"
                 ),
-                "defaulting to evidence-first retry posture keeps the host scaffolded without silently giving up".into(),
+                "defaulting to evidence-first retry posture keeps the host mechanically grounded without silently giving up".into(),
             ],
         },
     }
@@ -1028,38 +916,39 @@ fn select_mechanical_next_action(
 
 fn explicit_stack_requirement_satisfied(
     explicit_stack: &str,
-    family_id: Option<&str>,
+    substrate_kind: Option<&str>,
     tool_kind: Option<&str>,
 ) -> bool {
     let stack = explicit_stack.to_ascii_lowercase();
-    let family = family_id.unwrap_or_default().to_ascii_lowercase();
+    let substrate = substrate_kind.unwrap_or_default().to_ascii_lowercase();
     let tool = tool_kind.unwrap_or_default().to_ascii_lowercase();
 
     match stack.as_str() {
         "rust" => {
-            family == "rust_cli_tool"
-                || family.contains("native_window_module")
+            substrate == "cli"
+                || substrate == "native_window"
+                || substrate == "workspace"
                 || tool.contains("rust")
-                || tool == "native_window_starter"
+                || tool == "dashboard"
         }
-        "python" => family == "python_cli_tool" || tool.contains("python"),
-        "golang" | "go" => family.contains("go") || tool.contains("go"),
-        "electron" => family.contains("electron") || tool.contains("electron"),
-        "flutter" => family.contains("flutter") || tool.contains("flutter"),
+        "python" => substrate == "cli" && tool.contains("python"),
+        "golang" | "go" => tool.contains("go"),
+        "electron" => tool.contains("electron"),
+        "flutter" => tool.contains("flutter"),
         "static_web" => {
-            family == "static_web_dashboard"
-                || family.contains("webview")
+            substrate == "static_web"
+                || substrate == "webview"
                 || tool == "dashboard"
                 || tool.contains("web")
         }
-        other => family.contains(other) || tool.contains(other),
+        other => substrate.contains(other) || tool.contains(other),
     }
 }
 
 fn classify_execution_outcome(
     kind: &str,
     freeze: Option<&BuildIntentFreeze>,
-    family_id: Option<&str>,
+    substrate_kind: Option<&str>,
     tool_kind: Option<&str>,
     acceptance_status: Option<&str>,
     route_notes: &[String],
@@ -1067,7 +956,7 @@ fn classify_execution_outcome(
     let mut notes = Vec::new();
     if let Some(freeze) = freeze {
         if let Some(stack) = freeze.explicit_stack.as_deref() {
-            if !explicit_stack_requirement_satisfied(stack, family_id, tool_kind) {
+            if !explicit_stack_requirement_satisfied(stack, substrate_kind, tool_kind) {
                 notes.push(format!(
                     "explicit stack requirement `{stack}` was not satisfied by the current bounded artifact"
                 ));
@@ -1095,10 +984,10 @@ fn classify_execution_outcome(
         .any(|note| note.contains("soft-review tolerance"))
     {
         notes.push(
-            "the artifact proceeded through bounded soft review and should be treated as a degraded scaffold-first result"
+            "the artifact proceeded through bounded soft review and should be treated as a degraded evidence-shaped next attempt"
                 .into(),
         );
-        return ("degraded_fallback".into(), notes);
+        return ("degraded_next_attempt".into(), notes);
     }
 
     match acceptance_status {
@@ -1111,17 +1000,17 @@ fn classify_execution_outcome(
     }
 }
 
-fn classify_fallback_outcome(
+fn classify_next_attempt_outcome(
     request: &RequestRecord,
     plan: &RequestPlan,
     summary: &str,
 ) -> (String, Vec<String>) {
     let mut notes = Vec::new();
     if let Some(stack) = request.explicit_stack.as_deref() {
-        if !plan.inferred_family_candidates.iter().any(|family_id| {
+        if !plan.inferred_substrate_candidates.iter().any(|substrate_kind| {
             explicit_stack_requirement_satisfied(
                 stack,
-                Some(family_id.as_str()),
+                Some(substrate_kind.as_str()),
                 plan.inferred_tool_kind.as_deref(),
             )
         }) {
@@ -1132,7 +1021,75 @@ fn classify_fallback_outcome(
         }
     }
     notes.push(summary.to_string());
-    ("degraded_fallback".into(), notes)
+    ("degraded_next_attempt".into(), notes)
+}
+
+enum BuilderExecutionBackend {
+    StaticWeb,
+    PythonCli,
+    RustCli,
+}
+
+fn select_builder_execution_backend(
+    substrate_kind: Option<&SubstrateKind>,
+    explicit_stack: Option<&str>,
+    tool_kind: Option<&str>,
+) -> Result<BuilderExecutionBackend> {
+    match substrate_kind {
+        Some(SubstrateKind::StaticWeb) | None => Ok(BuilderExecutionBackend::StaticWeb),
+        Some(SubstrateKind::Cli) => {
+            let stack = explicit_stack.unwrap_or_default().to_ascii_lowercase();
+            let tool = tool_kind.unwrap_or_default().to_ascii_lowercase();
+            if stack == "python" || tool.contains("python") || tool == "csv_report" {
+                Ok(BuilderExecutionBackend::PythonCli)
+            } else if stack == "rust" || tool.contains("rust") || tool == "log_summary" {
+                Ok(BuilderExecutionBackend::RustCli)
+            } else {
+                Ok(BuilderExecutionBackend::RustCli)
+            }
+        }
+        Some(other) => Err(anyhow!(
+            "selected substrate is not executable by the negative-lane host shell: {}",
+            other.as_str()
+        )),
+    }
+}
+
+fn project_spec_substrate_kind(spec: &ProjectSpec) -> Option<SubstrateKind> {
+    match spec.substrate.trim() {
+        "static_web" => Some(SubstrateKind::StaticWeb),
+        "python_cli" | "rust_cli" | "cli" => Some(SubstrateKind::Cli),
+        "webview" => Some(SubstrateKind::Webview),
+        "native_window" => Some(SubstrateKind::NativeWindow),
+        "workspace" => Some(SubstrateKind::Workspace),
+        _ => None,
+    }
+}
+
+fn project_spec_substrate_kind_ref(spec: &ProjectSpec) -> Option<SubstrateKind> {
+    project_spec_substrate_kind(spec)
+}
+
+fn project_spec_substrate_label(spec: &ProjectSpec) -> Option<&str> {
+    match spec.substrate.trim() {
+        "static_web" => Some("static_web"),
+        "python_cli" | "rust_cli" | "cli" => Some("cli"),
+        "webview" => Some("webview"),
+        "native_window" => Some("native_window"),
+        "workspace" => Some("workspace"),
+        _ => None,
+    }
+}
+
+fn parse_substrate_kind_label(value: &str) -> Option<SubstrateKind> {
+    match value.trim() {
+        "static_web" => Some(SubstrateKind::StaticWeb),
+        "python_cli" | "rust_cli" | "cli" => Some(SubstrateKind::Cli),
+        "webview" => Some(SubstrateKind::Webview),
+        "native_window" => Some(SubstrateKind::NativeWindow),
+        "workspace" => Some(SubstrateKind::Workspace),
+        _ => None,
+    }
 }
 
 fn execution_outcome_next_action(
@@ -1169,14 +1126,14 @@ fn execution_outcome_next_action(
                 ],
             }
         }
-        "degraded_fallback" => MechanicalNextAction {
-            action_id: "continue_from_degraded_scaffold".into(),
+        "degraded_next_attempt" => MechanicalNextAction {
+            action_id: "continue_from_degraded_attempt".into(),
             recommended_next_step:
-                "continue from the degraded scaffold or substrate attempt without presenting it as equivalent to the original hard requirement"
+                "continue from the degraded substrate attempt without presenting it as equivalent to the original hard requirement"
                     .into(),
             rationale: vec![
-                format!("execution outcome for `{kind}` classified as `degraded_fallback`"),
-                "the host should preserve the artifact as a bounded fallback while surfacing that it is not a clean full success".into(),
+                format!("execution outcome for `{kind}` classified as `degraded_next_attempt`"),
+                "the host should preserve the artifact as a bounded next attempt while surfacing that it is not a clean full success".into(),
             ],
         },
         "requirement_not_met" => MechanicalNextAction {
@@ -1219,27 +1176,29 @@ fn derive_build_plan_artifact(
     request: &RequestRecord,
     plan: &RequestPlan,
     route: &chatty_factory_core::RouteDecision,
-    inputs: &chatty_factory_core::ScaffoldInputs,
-    starter_override: Option<&BuildStarterOverride>,
-    recommended_starter_id: Option<&str>,
+    inputs: &chatty_factory_core::BuildSeedInputs,
+    _recommended_seed_id: Option<&str>,
 ) -> BuildPlanArtifact {
     let feature_slices = derive_build_feature_slices(request, plan, route, inputs);
+    let selected_substrate_kind = route
+        .selected_substrate_kind
+        .clone()
+        .or_else(|| plan.inferred_substrate_candidates.first().cloned());
     BuildPlanArtifact {
         build_plan_id: chatty_factory_core::timestamp_id("build-plan"),
         request_id: request.request_id.clone(),
         source_request_plan_id: plan.plan_id.clone(),
         source_build_intent_freeze_id: build_intent_freeze.freeze_id.clone(),
         project_name: inputs.project_name.clone(),
-        family_id: route.selected_family_id.clone(),
-        starter_override_id: starter_override.map(|value| value.family_id.as_str().to_string()),
-        recommended_starter_id: recommended_starter_id.map(str::to_string),
+        substrate_kind: selected_substrate_kind.clone(),
         desired_surface: request.desired_surface.clone(),
         exoskeleton_target: request.exoskeleton_target.clone(),
         tool_kind: plan.inferred_tool_kind.clone(),
         interpreted_goal: plan.interpreted_goal.clone(),
         feature_slices: feature_slices.clone(),
         planned_file_operations: planned_file_operations_for_build(
-            route.selected_family_id.as_ref(),
+            selected_substrate_kind.as_ref(),
+            plan.inferred_tool_kind.as_deref(),
             &feature_slices,
         ),
         acceptance_targets: acceptance_targets_for_build_plan(plan),
@@ -1257,9 +1216,8 @@ fn derive_build_intent_freeze(
     request: &RequestRecord,
     plan: &RequestPlan,
     route: &chatty_factory_core::RouteDecision,
-    inputs: &chatty_factory_core::ScaffoldInputs,
-    starter_override: Option<&BuildStarterOverride>,
-    recommended_starter_id: Option<&str>,
+    inputs: &chatty_factory_core::BuildSeedInputs,
+    recommended_seed_id: Option<&str>,
 ) -> BuildIntentFreeze {
     let mut hard_requirements = Vec::new();
     let mut preference_notes = Vec::new();
@@ -1292,33 +1250,26 @@ fn derive_build_intent_freeze(
     if let Some(tool_kind) = plan.inferred_tool_kind.as_deref() {
         preference_notes.push(format!("current bounded tool kind: {tool_kind}"));
     }
-    if !plan.inferred_family_candidates.is_empty() {
+    if !plan.inferred_substrate_candidates.is_empty() {
         preference_notes.push(format!(
-            "current bounded family candidates: {}",
-            plan.inferred_family_candidates
+            "current bounded substrate candidates: {}",
+            plan.inferred_substrate_candidates
                 .iter()
-                .map(FamilyId::as_str)
+                .map(chatty_factory_core::SubstrateKind::as_str)
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
     }
-
-    if let Some(selected_family_id) = route.selected_family_id.as_ref() {
+    if let Some(selected_substrate_kind) = route.selected_substrate_kind.as_ref() {
         freeze_notes.push(format!(
-            "selected bounded starter substrate: {}",
-            selected_family_id.as_str()
+            "selected bounded substrate: {}",
+            selected_substrate_kind.as_str()
         ));
     }
-    if let Some(starter_override) = starter_override {
-        freeze_notes.push(format!(
-            "starter override applied before build freeze: {}",
-            starter_override.family_id.as_str()
-        ));
-    }
-    if let Some(recommended_starter_id) = recommended_starter_id {
+    if let Some(recommended_seed_id) = recommended_seed_id {
         freeze_notes.push(format!(
             "normal routing recommendation at freeze time: {}",
-            recommended_starter_id
+            recommended_seed_id
         ));
     }
     if !plan.constraints.is_empty() {
@@ -1334,7 +1285,7 @@ fn derive_build_intent_freeze(
         ));
     }
     freeze_notes.push(format!(
-        "freeze bound interpreted goal `{}` to project scaffold `{}`",
+        "freeze bound interpreted goal `{}` to project seed `{}`",
         plan.interpreted_goal, inputs.project_name
     ));
 
@@ -1345,15 +1296,13 @@ fn derive_build_intent_freeze(
         mode: request.mode.clone(),
         raw_request: request.raw_request.clone(),
         project_name: inputs.project_name.clone(),
-        selected_family_id: route.selected_family_id.clone(),
-        starter_override_id: starter_override.map(|value| value.family_id.as_str().to_string()),
-        recommended_starter_id: recommended_starter_id.map(str::to_string),
+        target_substrate_kind: route.selected_substrate_kind.clone(),
         explicit_stack: request.explicit_stack.clone(),
         desired_surface: request.desired_surface.clone(),
         exoskeleton_target: request.exoskeleton_target.clone(),
         inferred_tool_kind: plan.inferred_tool_kind.clone(),
         interpreted_goal: plan.interpreted_goal.clone(),
-        candidate_family_ids: plan.inferred_family_candidates.clone(),
+        candidate_substrate_kinds: plan.inferred_substrate_candidates.clone(),
         requested_capabilities: request.requested_capabilities.clone(),
         hard_requirements,
         preference_notes,
@@ -1368,38 +1317,47 @@ fn derive_build_feature_slices(
     request: &RequestRecord,
     plan: &RequestPlan,
     route: &chatty_factory_core::RouteDecision,
-    inputs: &chatty_factory_core::ScaffoldInputs,
+    inputs: &chatty_factory_core::BuildSeedInputs,
 ) -> Vec<BuildFeatureSlice> {
-    let starter_seed_id = format!("{}:starter-seed", plan.plan_id);
-    let starter_label = route
-        .selected_family_id
+    let selected_substrate_kind = route
+        .selected_substrate_kind
+        .clone()
+        .or_else(|| plan.inferred_substrate_candidates.first().cloned());
+    let substrate_seed_id = format!("{}:substrate-seed", plan.plan_id);
+    let substrate_label = selected_substrate_kind
         .as_ref()
-        .map(FamilyId::as_str)
-        .unwrap_or("starter_substrate");
-    let starter_files = starter_contract_paths(route.selected_family_id.as_ref())
+        .map(SubstrateKind::as_str)
+        .unwrap_or("base_substrate");
+    let seed_files = substrate_contract_paths(
+        selected_substrate_kind.as_ref(),
+        plan.inferred_tool_kind.as_deref(),
+    )
         .into_iter()
         .map(str::to_string)
         .collect::<Vec<_>>();
     let mut slices = vec![BuildFeatureSlice {
-        slice_id: starter_seed_id.clone(),
-        slice_kind: "starter_seed".into(),
-        title: "starter substrate seed".into(),
+        slice_id: substrate_seed_id.clone(),
+        slice_kind: "substrate_seed".into(),
+        title: "substrate seed".into(),
         summary: format!(
             "seed `{}` as a stable substrate for `{}` before feature-specific build work",
-            starter_label, inputs.project_name
+            substrate_label, inputs.project_name
         ),
         why_it_exists: "establish the smallest governed substrate with contract files, acceptance baseline, and ecosystem compatibility surfaces before layering feature behavior".into(),
         requested_capabilities: request.requested_capabilities.clone(),
         planner_suggested_features: plan.planner_suggested_features.clone(),
         execution_steps: plan.execution_steps.clone(),
         acceptance_targets: acceptance_targets_for_build_plan(plan),
-        files_to_create: starter_files,
+        files_to_create: seed_files,
         files_to_update: Vec::new(),
-        expected_symbols: vec![format!("starter:{}", starter_label)],
+        expected_symbols: vec![format!("substrate:{}", substrate_label)],
         acceptance_markers: plan.planner_required_markers.clone(),
         dependencies: Vec::new(),
     }];
-    let feature_target_files = default_feature_target_files(route.selected_family_id.as_ref());
+    let feature_target_files = default_feature_target_files(
+        selected_substrate_kind.as_ref(),
+        plan.inferred_tool_kind.as_deref(),
+    );
     let requested_features = normalized_feature_slice_inputs(request, plan, inputs);
     for (index, feature_name) in requested_features.into_iter().enumerate() {
         slices.push(BuildFeatureSlice {
@@ -1407,14 +1365,14 @@ fn derive_build_feature_slices(
             slice_kind: "feature_layer".into(),
             title: feature_name.replace('_', " "),
             summary: format!(
-                "layer requested feature `{}` onto starter `{}` using host-reviewed file targets",
-                feature_name, starter_label
+                "layer requested feature `{}` onto substrate `{}` using host-reviewed file targets",
+                feature_name, substrate_label
             ),
-            why_it_exists: "translate user-requested behavior into a bounded feature slice that can later be reviewed, constrained, and executed without expanding the starter catalog".into(),
+            why_it_exists: "translate user-requested behavior into a bounded feature slice that can later be reviewed, constrained, and executed without expanding legacy compatibility catalogs".into(),
             requested_capabilities: vec![feature_name.clone()],
             planner_suggested_features: plan.planner_suggested_features.clone(),
             execution_steps: vec![
-                format!("refine `{}` into concrete file updates on the selected starter", feature_name),
+                format!("refine `{}` into concrete file updates on the selected substrate seed", feature_name),
                 "review anchors, ownership boundaries, and syntax-sensitive surfaces before applying code".into(),
                 "sync acceptance-critical contracts after feature insertion".into(),
             ],
@@ -1423,7 +1381,7 @@ fn derive_build_feature_slices(
             files_to_update: feature_target_files.clone(),
             expected_symbols: vec![format!("feature:{}", feature_name)],
             acceptance_markers: plan.planner_required_markers.clone(),
-            dependencies: vec![starter_seed_id.clone()],
+            dependencies: vec![substrate_seed_id.clone()],
         });
     }
     slices
@@ -1447,58 +1405,19 @@ fn acceptance_targets_for_build_plan(plan: &RequestPlan) -> Vec<String> {
 }
 
 fn planned_file_operations_for_build(
-    selected_family_id: Option<&FamilyId>,
+    substrate_kind: Option<&SubstrateKind>,
+    tool_kind: Option<&str>,
     feature_slices: &[BuildFeatureSlice],
 ) -> Vec<PlannedFileOperation> {
-    let mut paths = match selected_family_id {
-        Some(FamilyId::ChattycogNativeWindowModule) => vec![
-            "Cargo.toml",
-            "src/main.rs",
-            "manifest.json",
-            "visual_load.json",
-            "HANDSHAKE.md",
-            "ChattyCogModuleSpec.json",
-            "network_capabilities.json",
-            "README.md",
-            "STATE_TEMPLATE.md",
-            "ProjectSpec.json",
-            "AcceptancePlan.json",
-        ],
-        Some(FamilyId::ChattyeduNativeWindowModule) => vec![
-            "Cargo.toml",
-            "src/main.rs",
-            "manifest.json",
-            "visual_load.json",
-            "HANDSHAKE.md",
-            "ChattyEduModuleSpec.json",
-            "network_capabilities.json",
-            "README.md",
-            "STATE_TEMPLATE.md",
-            "ProjectSpec.json",
-            "AcceptancePlan.json",
-        ],
-        Some(FamilyId::ChattycogChattyeduNativeWindowModule) => vec![
-            "Cargo.toml",
-            "src/main.rs",
-            "manifest.json",
-            "visual_load.json",
-            "HANDSHAKE.md",
-            "ChattyCogModuleSpec.json",
-            "ChattyEduModuleSpec.json",
-            "network_capabilities.json",
-            "README.md",
-            "STATE_TEMPLATE.md",
-            "ProjectSpec.json",
-            "AcceptancePlan.json",
-        ],
-        Some(FamilyId::RustCliTool) => vec![
+    let mut paths = match (substrate_kind, tool_kind) {
+        (Some(SubstrateKind::Cli), Some("rust_cli")) => vec![
             "Cargo.toml",
             "src/main.rs",
             "README.md",
             "ProjectSpec.json",
             "AcceptancePlan.json",
         ],
-        Some(FamilyId::PythonCliTool) => vec![
+        (Some(SubstrateKind::Cli), Some("python_cli")) => vec![
             "main.py",
             "README.md",
             "ProjectSpec.json",
@@ -1518,16 +1437,16 @@ fn planned_file_operations_for_build(
         .into_iter()
         .enumerate()
         .map(|(index, path)| PlannedFileOperation {
-            operation_id: format!("starter-file-{}", index + 1),
+            operation_id: format!("substrate-file-{}", index + 1),
             path: path.into(),
             operation_kind: "emit_or_refresh".into(),
             rationale:
-                "starter substrate contract file expected during deterministic build emission"
+                "legacy substrate contract file expected during deterministic build emission"
                     .into(),
-            source: "family_starter_contract".into(),
-            content_source: "family_template_or_contract_renderer".into(),
+            source: "substrate_contract".into(),
+            content_source: "substrate_renderer".into(),
             target_anchor: None,
-            ownership_boundary: "starter_contract_boundary".into(),
+            ownership_boundary: "substrate_contract_boundary".into(),
             syntax_sensitive: path.ends_with(".rs")
                 || path.ends_with(".py")
                 || path.ends_with(".js")
@@ -1546,7 +1465,7 @@ fn planned_file_operations_for_build(
                 path: path.clone(),
                 operation_kind: feature_operation_kind_for_path(path).into(),
                 rationale: format!(
-                    "feature slice `{}` would extend this file as bounded post-starter work",
+                    "feature slice `{}` would extend this file as bounded post-seed work",
                     slice.title
                 ),
                 source: "build_feature_slice".into(),
@@ -1565,7 +1484,7 @@ fn planned_file_operations_for_build(
                 path: path.clone(),
                 operation_kind: "create_feature_file_candidate".into(),
                 rationale: format!(
-                    "feature slice `{}` may require a dedicated file beyond the starter substrate",
+                    "feature slice `{}` may require a dedicated file beyond the seeded substrate",
                     slice.title
                 ),
                 source: "build_feature_slice".into(),
@@ -1589,7 +1508,10 @@ fn review_build_plan_artifact(
     let original_feature_slice_count = reviewed.feature_slices.len();
     let original_file_operation_count = reviewed.planned_file_operations.len();
     let mut dropped_feature_slice_ids = Vec::new();
-    let substrate_capabilities = starter_substrate_capabilities(reviewed.family_id.as_ref());
+    let substrate_capabilities = seeded_substrate_capabilities(
+        reviewed.substrate_kind.as_ref(),
+        build_plan.tool_kind.as_deref(),
+    );
 
     reviewed.feature_slices = reviewed
         .feature_slices
@@ -1606,7 +1528,7 @@ fn review_build_plan_artifact(
             if removable {
                 dropped_feature_slice_ids.push(slice.slice_id.clone());
                 findings.push(format!(
-                    "self-review removed substrate-identity feature slice `{}` because the selected starter already provides: {}",
+                    "self-review removed substrate-identity feature slice `{}` because the selected substrate already provides: {}",
                     slice.slice_id,
                     slice.requested_capabilities.join(", ")
                 ));
@@ -1651,9 +1573,7 @@ fn review_build_plan_artifact(
         build_intent_freeze_id: build_plan.source_build_intent_freeze_id.clone(),
         source_build_plan_id: build_plan.build_plan_id.clone(),
         project_name: build_plan.project_name.clone(),
-        family_id: build_plan.family_id.clone(),
-        starter_override_id: build_plan.starter_override_id.clone(),
-        recommended_starter_id: build_plan.recommended_starter_id.clone(),
+        substrate_kind: build_plan.substrate_kind.clone(),
         decision: decision.into(),
         original_feature_slice_count,
         reviewed_feature_slice_count: reviewed.feature_slices.len(),
@@ -1673,67 +1593,27 @@ fn review_build_plan_constraints(
     build_plan: &BuildPlanArtifact,
     plan_review: &BuildPlanReview,
 ) -> BuildConstraintReviewReceipt {
-    let mut selected_constraints = Vec::new();
+    let selected_constraints = Vec::new();
     let violations = Vec::new();
     let blocked_methods = Vec::new();
-    let mut recommended_replacements = Vec::new();
+    let recommended_replacements = Vec::new();
     let mut findings = Vec::new();
-
-    if let (Some(selected), Some(recommended)) = (
-        build_plan.starter_override_id.as_deref(),
-        build_plan.recommended_starter_id.as_deref(),
-    ) {
-        if selected != recommended {
-            let selected_lifecycle = build_starter_lifecycle(selected);
-            let recommended_lifecycle = build_starter_lifecycle(recommended);
-            if selected_lifecycle.contains("frozen") && recommended_lifecycle.contains("active") {
-                selected_constraints.push(ImplementationConstraint {
-                    constraint_id: chatty_factory_core::timestamp_id("implementation-constraint"),
-                    constraint_scope: "starter_selection".into(),
-                    constraint_origin: "build_plan_constraint_review".into(),
-                    family_id: build_plan.family_id.clone(),
-                    tool_kind: build_plan.tool_kind.clone(),
-                    language_id: None,
-                    constraint_kind: "frozen_legacy_starter_override".into(),
-                    forbidden_method_summary: format!(
-                        "do not treat frozen legacy starter `{selected}` as the default forward path when active starter `{recommended}` is available"
-                    ),
-                    forbidden_markers: Vec::new(),
-                    required_markers: Vec::new(),
-                    forbidden_surface_groups: Vec::new(),
-                    violation_reason_template: format!(
-                        "selected starter `{selected}` is a frozen legacy substrate while `{recommended}` is the active forward starter"
-                    ),
-                    replacement_guidance: Some(format!(
-                        "prefer the active starter `{recommended}` unless the legacy substrate is intentionally required"
-                    )),
-                    severity: "warn".into(),
-                    active: true,
-                    created_at: Some(chatty_factory_core::timestamp_id("created")),
-                });
-                recommended_replacements.push(recommended.to_string());
-                findings.push(format!(
-                    "constraint review noted that starter override `{selected}` points to a frozen legacy starter while `{recommended}` is the active recommendation"
-                ));
-            }
-        }
-    }
 
     if build_plan
         .feature_slices
         .iter()
-        .all(|slice| slice.slice_kind == "starter_seed")
+        .all(|slice| slice.slice_kind == "substrate_seed")
     {
         findings.push(
-            "constraint review found no remaining feature-layer work beyond the starter substrate; the current plan is starter-only".into(),
+            "constraint review found no remaining feature-layer work beyond the seeded substrate; the current plan is compatibility-seed only".into(),
         );
     } else if plan_review.decision == "proceed_with_refined_plan" {
         findings.push(
-            "constraint review accepted the self-reviewed starter-plus-feature plan after substrate-only feature slices were removed".into(),
+            "constraint review accepted the self-reviewed seeded-substrate-plus-feature plan after substrate-only feature slices were removed".into(),
         );
     } else {
         findings.push(
-            "constraint review found no active forbidden build methods for the reviewed starter-plus-feature plan".into(),
+            "constraint review found no active forbidden build methods for the reviewed seeded-substrate-plus-feature plan".into(),
         );
     }
 
@@ -1742,7 +1622,7 @@ fn review_build_plan_constraints(
         request_id: build_plan.request_id.clone(),
         build_plan_id: build_plan.build_plan_id.clone(),
         project_name: build_plan.project_name.clone(),
-        family_id: build_plan.family_id.clone(),
+        substrate_kind: build_plan.substrate_kind.clone(),
         tool_kind: build_plan.tool_kind.clone(),
         review_subject: "build_plan_execution".into(),
         selected_constraints,
@@ -1785,9 +1665,8 @@ fn derive_build_execution_work_order(
         build_plan_review_id: plan_review.review_id.clone(),
         build_constraint_review_id: constraint_review.review_id.clone(),
         project_name: build_plan.project_name.clone(),
-        family_id: build_plan.family_id.clone(),
+        substrate_kind: build_plan.substrate_kind.clone(),
         tool_kind: build_plan.tool_kind.clone(),
-        starter_override_id: build_plan.starter_override_id.clone(),
         decision: if constraint_review.decision == "allow_current_plan" {
             "ready_for_future_host_execution_helpers".into()
         } else {
@@ -1966,7 +1845,7 @@ fn derive_plan_task_list(
                     task_summary: format!("{summary_hint} `{}`", slice.title),
                     dependencies: vec![format!("{slice_id}:host-sync")],
                     target_files: slice.files_to_update.clone(),
-                    allowed_boundaries: vec!["starter_extension_boundary".into()],
+                    allowed_boundaries: vec!["bounded_feature_slice_boundary".into()],
                     expected_symbols: vec![symbol.into()],
                     expected_markers: slice.acceptance_markers.clone(),
                     verification_steps: vec![
@@ -2005,7 +1884,7 @@ fn derive_plan_task_list(
                         task_summary: format!("{summary_hint} `{}`", slice.title),
                         dependencies: vec![format!("{slice_id}:host-sync")],
                         target_files: slice.files_to_update.clone(),
-                        allowed_boundaries: vec!["starter_extension_boundary".into()],
+                        allowed_boundaries: vec!["bounded_feature_slice_boundary".into()],
                         expected_symbols: vec![symbol.into()],
                         expected_markers: slice.acceptance_markers.clone(),
                         verification_steps: vec![
@@ -2046,7 +1925,7 @@ fn derive_plan_task_list(
                         task_summary: format!("{summary_hint} `{}`", slice.title),
                         dependencies: vec![format!("{slice_id}:host-sync")],
                         target_files: slice.files_to_update.clone(),
-                        allowed_boundaries: vec!["starter_extension_boundary".into()],
+                        allowed_boundaries: vec!["bounded_feature_slice_boundary".into()],
                         expected_symbols: vec![symbol.into()],
                         expected_markers: slice.acceptance_markers.clone(),
                         verification_steps: vec![
@@ -2074,7 +1953,7 @@ fn derive_plan_task_list(
                     ),
                     dependencies: vec![format!("{slice_id}:host-sync")],
                     target_files: slice.files_to_update.clone(),
-                    allowed_boundaries: vec!["starter_extension_boundary".into()],
+                    allowed_boundaries: vec!["bounded_feature_slice_boundary".into()],
                     expected_symbols: vec!["feature:action_toolbar_label_sentence".into()],
                     expected_markers: slice.acceptance_markers.clone(),
                     verification_steps: vec![
@@ -2102,7 +1981,7 @@ fn derive_plan_task_list(
                 ),
                 dependencies: vec![format!("{slice_id}:host-sync")],
                 target_files: slice.files_to_update.clone(),
-                allowed_boundaries: vec!["starter_extension_boundary".into()],
+                allowed_boundaries: vec!["bounded_feature_slice_boundary".into()],
                 expected_symbols: slice.expected_symbols.clone(),
                 expected_markers: slice.acceptance_markers.clone(),
                 verification_steps: vec![
@@ -2111,7 +1990,7 @@ fn derive_plan_task_list(
                     "acceptance_reverify".into(),
                 ],
                 replacement_guidance: Some(
-                    "keep scope to one small feature slice at a time; do not rewrite whole starter files".into(),
+                    "keep scope to one small feature slice at a time; do not rewrite whole seeded substrate files".into(),
                 ),
                 created_at: Some(chatty_factory_core::timestamp_id("created")),
             });
@@ -2155,7 +2034,7 @@ fn derive_plan_task_list(
         build_constraint_review_id: constraint_review.review_id.clone(),
         build_work_order_id: work_order.work_order_id.clone(),
         project_name: build_plan.project_name.clone(),
-        family_id: build_plan.family_id.clone(),
+        substrate_kind: build_plan.substrate_kind.clone(),
         tool_kind: build_plan.tool_kind.clone(),
         tasks,
         findings,
@@ -6027,7 +5906,7 @@ fn review_metric_card_context_clause_draft(
             || lowered.contains("module for")
         {
             findings.push(
-                "metric card context `subject` clause draft echoed project scaffolding instead of metric-specific meaning"
+                "metric card context `subject` clause draft echoed project setup boilerplate instead of metric-specific meaning"
                     .into(),
             );
         }
@@ -6661,7 +6540,7 @@ fn persist_constraint_promotion_candidate(
 fn derive_proposed_constraint_from_promotion_candidate(
     candidate: &ConstraintPromotionCandidate,
     task: &PlanTask,
-    task_list: &PlanTaskList,
+    _task_list: &PlanTaskList,
 ) -> ProposedConstraintReceipt {
     let subtype = candidate
         .task_subtype
@@ -6699,7 +6578,7 @@ fn derive_proposed_constraint_from_promotion_candidate(
             constraint_id,
             constraint_scope: format!("triangulated_task_shape:{shape}"),
             constraint_origin: "triangulated_task_failure".into(),
-            family_id: task_list.family_id.clone(),
+            substrate_kind: None,
             tool_kind: Some(task.task_kind.clone()),
             language_id: None,
             constraint_kind: candidate.failure_class.clone(),
@@ -7255,7 +7134,7 @@ fn sync_work_order_readme(
         .map(|operation| format!("- `{}` -> `{}`", operation.operation_kind, operation.path))
         .collect::<Vec<_>>();
     let execution_candidates = if execution_candidates.is_empty() {
-        "- starter-only work order".to_string()
+        "- seeded-substrate-only work order".to_string()
     } else {
         execution_candidates.join("\n")
     };
@@ -7300,17 +7179,14 @@ fn replace_or_append_marked_section(
     }
 }
 
-fn starter_substrate_capabilities(selected_family_id: Option<&FamilyId>) -> Vec<String> {
-    match selected_family_id {
-        Some(FamilyId::ChattycogNativeWindowModule) => {
-            vec!["rust".into(), "dashboard".into(), "module_wrapper".into()]
-        }
-        Some(FamilyId::ChattyeduNativeWindowModule) => vec!["rust".into(), "dashboard".into()],
-        Some(FamilyId::ChattycogChattyeduNativeWindowModule) => {
-            vec!["rust".into(), "dashboard".into(), "module_wrapper".into()]
-        }
-        Some(FamilyId::RustCliTool) => vec!["rust".into(), "cli".into()],
-        Some(FamilyId::PythonCliTool) => vec!["python".into(), "cli".into()],
+fn seeded_substrate_capabilities(
+    substrate_kind: Option<&SubstrateKind>,
+    tool_kind: Option<&str>,
+) -> Vec<String> {
+    match (substrate_kind, tool_kind) {
+        (Some(SubstrateKind::Cli), Some("rust_cli")) => vec!["rust".into(), "cli".into()],
+        (Some(SubstrateKind::Cli), Some("python_cli")) => vec!["python".into(), "cli".into()],
+        (Some(SubstrateKind::Cli), _) => vec!["cli".into()],
         _ => vec!["web".into(), "dashboard".into()],
     }
 }
@@ -7348,7 +7224,7 @@ fn feature_ownership_boundary_for_path(path: &str) -> &'static str {
     } else if path.ends_with("README.md") {
         "documentation_sync_boundary"
     } else {
-        "starter_extension_boundary"
+        "bounded_feature_slice_boundary"
     }
 }
 
@@ -7360,56 +7236,19 @@ fn is_syntax_sensitive_path(path: &str) -> bool {
         || path.ends_with(".css")
 }
 
-fn starter_contract_paths(selected_family_id: Option<&FamilyId>) -> Vec<&'static str> {
-    match selected_family_id {
-        Some(FamilyId::ChattycogNativeWindowModule) => vec![
-            "Cargo.toml",
-            "src/main.rs",
-            "manifest.json",
-            "visual_load.json",
-            "HANDSHAKE.md",
-            "ChattyCogModuleSpec.json",
-            "network_capabilities.json",
-            "README.md",
-            "STATE_TEMPLATE.md",
-            "ProjectSpec.json",
-            "AcceptancePlan.json",
-        ],
-        Some(FamilyId::ChattyeduNativeWindowModule) => vec![
-            "Cargo.toml",
-            "src/main.rs",
-            "manifest.json",
-            "visual_load.json",
-            "HANDSHAKE.md",
-            "ChattyEduModuleSpec.json",
-            "network_capabilities.json",
-            "README.md",
-            "STATE_TEMPLATE.md",
-            "ProjectSpec.json",
-            "AcceptancePlan.json",
-        ],
-        Some(FamilyId::ChattycogChattyeduNativeWindowModule) => vec![
-            "Cargo.toml",
-            "src/main.rs",
-            "manifest.json",
-            "visual_load.json",
-            "HANDSHAKE.md",
-            "ChattyCogModuleSpec.json",
-            "ChattyEduModuleSpec.json",
-            "network_capabilities.json",
-            "README.md",
-            "STATE_TEMPLATE.md",
-            "ProjectSpec.json",
-            "AcceptancePlan.json",
-        ],
-        Some(FamilyId::RustCliTool) => vec![
+fn substrate_contract_paths(
+    substrate_kind: Option<&SubstrateKind>,
+    tool_kind: Option<&str>,
+) -> Vec<&'static str> {
+    match (substrate_kind, tool_kind) {
+        (Some(SubstrateKind::Cli), Some("rust_cli")) => vec![
             "Cargo.toml",
             "src/main.rs",
             "README.md",
             "ProjectSpec.json",
             "AcceptancePlan.json",
         ],
-        Some(FamilyId::PythonCliTool) => vec![
+        (Some(SubstrateKind::Cli), Some("python_cli")) => vec![
             "main.py",
             "README.md",
             "ProjectSpec.json",
@@ -7426,23 +7265,18 @@ fn starter_contract_paths(selected_family_id: Option<&FamilyId>) -> Vec<&'static
     }
 }
 
-fn default_feature_target_files(selected_family_id: Option<&FamilyId>) -> Vec<String> {
-    match selected_family_id {
-        Some(FamilyId::ChattycogNativeWindowModule)
-        | Some(FamilyId::ChattyeduNativeWindowModule)
-        | Some(FamilyId::ChattycogChattyeduNativeWindowModule) => vec![
+fn default_feature_target_files(
+    substrate_kind: Option<&SubstrateKind>,
+    tool_kind: Option<&str>,
+) -> Vec<String> {
+    match (substrate_kind, tool_kind) {
+        (Some(SubstrateKind::Cli), Some("rust_cli")) => vec![
             "src/main.rs".into(),
             "ProjectSpec.json".into(),
             "AcceptancePlan.json".into(),
             "README.md".into(),
         ],
-        Some(FamilyId::RustCliTool) => vec![
-            "src/main.rs".into(),
-            "ProjectSpec.json".into(),
-            "AcceptancePlan.json".into(),
-            "README.md".into(),
-        ],
-        Some(FamilyId::PythonCliTool) => vec![
+        (Some(SubstrateKind::Cli), Some("python_cli")) => vec![
             "main.py".into(),
             "ProjectSpec.json".into(),
             "AcceptancePlan.json".into(),
@@ -7462,7 +7296,7 @@ fn default_feature_target_files(selected_family_id: Option<&FamilyId>) -> Vec<St
 fn normalized_feature_slice_inputs(
     request: &RequestRecord,
     plan: &RequestPlan,
-    inputs: &chatty_factory_core::ScaffoldInputs,
+    inputs: &chatty_factory_core::BuildSeedInputs,
 ) -> Vec<String> {
     let lower = request.raw_request.to_ascii_lowercase();
     let mut features = request.requested_capabilities.clone();
@@ -7477,136 +7311,6 @@ fn normalized_feature_slice_inputs(
     features.sort();
     features.dedup();
     features
-}
-
-fn derive_family_usage_summary(output_root: &Path) -> Result<FamilyUsageSummaryReceipt> {
-    let projects = discover_projects(output_root, None)?;
-    let mut family_counts: BTreeMap<String, FamilyUsageEntry> = BTreeMap::new();
-    let mut ecosystem_project_counts: BTreeMap<String, usize> = BTreeMap::new();
-
-    for project in projects {
-        let Some(family_id) = project.family_id else {
-            continue;
-        };
-        let family_key = family_id.as_str().to_string();
-        let display_name = governance_family_display_name(&family_id);
-        let ecosystem = governance_family_ecosystem(&family_id);
-        let entry = family_counts
-            .entry(family_key.clone())
-            .or_insert_with(|| FamilyUsageEntry {
-                family_id: family_key.clone(),
-                family_display_name: display_name.clone(),
-                family_ecosystem: ecosystem.clone(),
-                project_count: 0,
-            });
-        entry.project_count += 1;
-        if let Some(ecosystem) = ecosystem {
-            *ecosystem_project_counts.entry(ecosystem).or_insert(0) += 1;
-        }
-    }
-
-    let total_projects = family_counts
-        .values()
-        .map(|entry| entry.project_count)
-        .sum();
-    let mut families = family_counts.into_values().collect::<Vec<_>>();
-    families.sort_by(|left, right| {
-        right
-            .project_count
-            .cmp(&left.project_count)
-            .then_with(|| left.family_display_name.cmp(&right.family_display_name))
-    });
-
-    Ok(FamilyUsageSummaryReceipt {
-        summary_id: chatty_factory_core::timestamp_id("family-usage-summary"),
-        total_projects,
-        ecosystem_project_counts,
-        families,
-        updated_at: chatty_factory_core::timestamp_id("updated"),
-    })
-}
-
-fn derive_starter_usage_summary(runtime_root: &Path) -> Result<StarterUsageSummaryReceipt> {
-    let receipts_dir = runtime_root.join("build_receipts");
-    let Ok(entries) = fs::read_dir(receipts_dir) else {
-        return Ok(StarterUsageSummaryReceipt {
-            summary_id: chatty_factory_core::timestamp_id("starter-usage-summary"),
-            total_build_receipts: 0,
-            explicit_override_builds: 0,
-            auto_routed_builds: 0,
-            matched_recommendation_builds: 0,
-            overridden_recommendation_builds: 0,
-            starters: Vec::new(),
-            updated_at: chatty_factory_core::timestamp_id("updated"),
-        });
-    };
-
-    let mut starter_counts: BTreeMap<String, StarterUsageEntry> = BTreeMap::new();
-    let mut total_build_receipts = 0usize;
-    let mut explicit_override_builds = 0usize;
-    let mut auto_routed_builds = 0usize;
-    let mut matched_recommendation_builds = 0usize;
-    let mut overridden_recommendation_builds = 0usize;
-
-    for entry in entries {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let contents = match fs::read_to_string(entry.path()) {
-            Ok(contents) => contents,
-            Err(_) => continue,
-        };
-        let receipt = match serde_json::from_str::<chatty_factory_core::BuildReceipt>(&contents) {
-            Ok(receipt) => receipt,
-            Err(_) => continue,
-        };
-        total_build_receipts += 1;
-        match receipt.starter_recommendation_comparison.as_deref() {
-            Some("matched_normal_routing") | Some("auto_followed_normal_routing") => {
-                matched_recommendation_builds += 1;
-            }
-            Some("overrode_normal_routing") => {
-                overridden_recommendation_builds += 1;
-            }
-            _ => {}
-        }
-        let starter_id = if let Some(starter_id) = receipt.starter_override_id {
-            explicit_override_builds += 1;
-            starter_id
-        } else {
-            auto_routed_builds += 1;
-            "auto".to_string()
-        };
-        let entry = starter_counts
-            .entry(starter_id.clone())
-            .or_insert_with(|| StarterUsageEntry {
-                starter_id: starter_id.clone(),
-                starter_label: build_starter_label(&starter_id).to_string(),
-                starter_lifecycle: build_starter_lifecycle(&starter_id).to_string(),
-                build_count: 0,
-            });
-        entry.build_count += 1;
-    }
-
-    let mut starters = starter_counts.into_values().collect::<Vec<_>>();
-    starters.sort_by(|left, right| {
-        right
-            .build_count
-            .cmp(&left.build_count)
-            .then_with(|| left.starter_label.cmp(&right.starter_label))
-    });
-
-    Ok(StarterUsageSummaryReceipt {
-        summary_id: chatty_factory_core::timestamp_id("starter-usage-summary"),
-        total_build_receipts,
-        explicit_override_builds,
-        auto_routed_builds,
-        matched_recommendation_builds,
-        overridden_recommendation_builds,
-        starters,
-        updated_at: chatty_factory_core::timestamp_id("updated"),
-    })
 }
 
 fn derive_triangulation_loop_summary(
@@ -7797,51 +7501,10 @@ fn derive_triangulation_loop_summary(
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct TemplateGovernanceReceipt {
-    pub receipt_id: String,
-    pub template_bundle_id: String,
-    pub template_category: String,
-    pub template_root: Option<String>,
-    pub artifact_paths: Vec<String>,
-    pub artifact_hashes: BTreeMap<String, String>,
-    pub drift_status: String,
-    pub drift_notes: Vec<String>,
-    pub change_since_last_live_status: String,
-    pub change_since_last_live_notes: Vec<String>,
-    pub baseline_artifact_hashes: BTreeMap<String, String>,
-    pub created_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct TemplateGovernanceRefreshStatus {
-    pub status_id: String,
-    pub refreshed_entries: usize,
-    pub skipped_entries: usize,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone)]
-struct TemplateGovernanceBundle {
-    pub template_bundle_id: String,
-    pub template_category: String,
-    pub template_root: PathBuf,
-    pub artifact_paths: Vec<PathBuf>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HostPlannerOptions {
     pub auto_planner: bool,
     pub requested_model: Option<String>,
     pub requested_port: Option<u16>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BuildStarterOverride {
-    family_id: FamilyId,
-    desired_surface: DesiredSurface,
-    exoskeleton_target: ExoskeletonTarget,
-    tool_kind: &'static str,
-    rationale: &'static str,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -7864,12 +7527,7 @@ pub struct HostExecutionResult {
     pub outcome_notes: Vec<String>,
     pub recommended_next_action: Option<String>,
     pub recommended_next_step: String,
-    pub starter_override_id: Option<String>,
-    pub starter_override_summary: Option<String>,
-    pub recommended_starter_id: Option<String>,
-    pub recommended_starter_summary: Option<String>,
-    pub starter_recommendation_comparison: Option<String>,
-    pub family_id: Option<String>,
+    pub substrate_kind: Option<String>,
     pub tool_kind: Option<String>,
     pub patch_kind: Option<String>,
     pub composition_route_class: Option<String>,
@@ -7894,7 +7552,7 @@ pub struct HostExecutionResult {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct HostFallbackResult {
+pub struct HostNextAttemptResult {
     // Fallback results also need both outcome and continuation posture because
     // they explicitly surface a degraded/blocked route plus the next bounded move.
     pub request_id: String,
@@ -7907,27 +7565,31 @@ pub struct HostFallbackResult {
     pub question: String,
     pub interpreted_goal: String,
     pub reasons: Vec<String>,
-    pub candidate_family_ids: Vec<String>,
+    pub funnel_stage: String,
+    pub next_attempt_mechanics: Vec<String>,
+    pub evidence_receipt_paths: Vec<String>,
+    pub host_shape_substitution_forbidden: bool,
+    pub candidate_substrate_kinds: Vec<String>,
     pub requested_capabilities: Vec<String>,
     pub constraints: Vec<String>,
-    pub suggested_extension_kind: String,
-    pub suggested_family_id: Option<String>,
+    pub next_attempt_kind: String,
+    pub suggested_substrate_kind: Option<String>,
     pub suggested_tool_kind: Option<String>,
     pub suggested_patch_kind: Option<String>,
     pub suggested_bridge_capabilities: Vec<String>,
     pub suggested_hosting_mode: Option<String>,
     pub suggested_artifacts: Vec<String>,
-    pub missing_family_build_primitive_classes: Vec<String>,
+    pub missing_base_build_primitive_classes: Vec<String>,
     pub missing_patch_primitive_classes: Vec<String>,
     pub missing_helper_primitive_kinds: Vec<String>,
     pub acceptance_targets: Vec<String>,
     pub implementation_notes: Vec<String>,
-    pub suggested_proof_seed_template_id: Option<String>,
-    pub suggested_proof_seed_bundle_id: Option<String>,
+    pub comparison_seed_template_id: Option<String>,
+    pub comparison_seed_bundle_id: Option<String>,
     pub recommended_next_action: Option<String>,
     pub recommended_next_step: String,
-    pub pending_extension_ids: Vec<String>,
-    pub pending_extension_scaffold_roots: Vec<String>,
+    pub pending_attempt_ids: Vec<String>,
+    pub pending_attempt_bundle_roots: Vec<String>,
     pub chattycog_requested_hosting_mode: Option<String>,
     pub chattycog_valid_hosting_modes: Vec<String>,
     pub chattycog_requested_bridge_capabilities: Vec<String>,
@@ -7935,7 +7597,7 @@ pub struct HostFallbackResult {
     pub clarification_path: Option<String>,
     pub build_spec_path: Option<String>,
     pub planner_handoff_path: Option<String>,
-    pub stub_bundle_path: Option<String>,
+    pub attempt_bundle_path: Option<String>,
     pub build_failure_class: Option<String>,
     pub build_failure_mode: Option<String>,
     pub matched_approved_constraint_ids: Vec<String>,
@@ -7954,7 +7616,7 @@ pub struct HostActionResult {
     pub browser_state: Option<ProjectBrowserState>,
     pub runtime_refresh: Option<HostRuntimeRefreshResult>,
     pub execution_result: Option<HostExecutionResult>,
-    pub fallback_result: Option<HostFallbackResult>,
+    pub next_attempt_result: Option<HostNextAttemptResult>,
     pub followup_route: Option<FollowupRouteResult>,
     pub extension_registry: Option<HostExtensionRegistryView>,
 }
@@ -7975,295 +7637,21 @@ struct CompositionReviewDecision {
     review_receipt_path: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-struct AdapterScoredFamilyChoice {
-    family_id: FamilyId,
-    score: usize,
-    reasons: Vec<String>,
-}
-
-fn candidate_family_build_primitive_classes_for_composition(
-    selected_family_id: Option<&FamilyId>,
+fn candidate_base_build_primitive_classes_for_composition(
+    selected_substrate_kind: Option<&SubstrateKind>,
 ) -> Vec<String> {
-    selected_family_id
-        .map(build_primitive_classes_for_family)
-        .unwrap_or_default()
-}
-
-fn primitive_names_supported_by_adapters(
-    adapters: &[FamilyPrimitiveAdapter],
-    composition_layer: &str,
-    primitive_names: &[String],
-) -> usize {
-    primitive_names
-        .iter()
-        .filter(|primitive_name| {
-            adapters.iter().any(|adapter| {
-                adapter.composition_layer == composition_layer
-                    && adapter.primitive_name == primitive_name.as_str()
-            })
-        })
-        .count()
-}
-
-fn score_family_for_primitive_native_build(
-    request: &chatty_factory_core::RequestRecord,
-    plan: &chatty_factory_core::RequestPlan,
-    family_id: &FamilyId,
-    original_rank: usize,
-) -> AdapterScoredFamilyChoice {
-    let adapters = primitive_adapters_for_family(family_id);
-    let family_build_classes = build_primitive_classes_for_family(family_id);
-    let patch_kinds = derive_bounded_build_composition_patch_kinds(request, plan, Some(family_id));
-    let patch_classes = candidate_patch_primitive_classes_for_composition(
-        Some(family_id),
-        plan.inferred_tool_kind.as_deref(),
-        &patch_kinds,
-    );
-    let helper_kinds =
-        candidate_helper_primitive_kinds_for_composition(None, Some(family_id), &patch_kinds);
-    let composition_layers = derive_composition_layers(
-        &family_build_classes,
-        &patch_classes,
-        &helper_kinds,
-        &Vec::new(),
-    );
-
-    let matched_family_build =
-        primitive_names_supported_by_adapters(&adapters, "family_build", &family_build_classes);
-    let matched_patch = primitive_names_supported_by_adapters(&adapters, "patch", &patch_classes);
-    let matched_helper = primitive_names_supported_by_adapters(&adapters, "helper", &helper_kinds);
-
-    let helperish = request_looks_helper_or_service_shaped(request, plan);
-    let lower = request.raw_request.to_ascii_lowercase();
-    let progressish = lower.contains("progress") || lower.contains("banner");
-    let monitorish = lower.contains("monitor") || lower.contains("status");
-    let filterish = lower.contains("filter") || lower.contains("filtered");
-    let explicit_static_family =
-        lower.contains("static web dashboard") || lower.contains("static dashboard");
-    let explicit_chattycog_webview_family = lower.contains("webview module")
-        || lower.contains("chattycog webview")
-        || lower.contains("hosted webview");
-    let explicit_chattycog_workspace_family = lower.contains("workspace module")
-        || lower.contains("ui.json")
-        || lower.contains("notes module");
-    let explicit_chattycog_native_family = (lower.contains("chattycog")
-        || lower.contains("chatty-cog")
-        || lower.contains("native window")
-        || lower.contains("desktop module")
-        || lower.contains("rust dashboard"))
-        && !lower.contains("chattyedu")
-        && !lower.contains("chatty-edu")
-        && !explicit_chattycog_webview_family
-        && !explicit_chattycog_workspace_family;
-    let explicit_chattyedu_native_family =
-        lower.contains("chattyedu") || lower.contains("chatty-edu");
-    let explicit_dual_native_family = lower.contains("chattycog_chattyedu_native_window_module")
-        || ((lower.contains("chattycog") || lower.contains("chatty-cog"))
-            && (lower.contains("chattyedu") || lower.contains("chatty-edu"))
-            && contains_any(
-                &lower,
-                &[
-                    "both",
-                    "either",
-                    "dual host",
-                    "dual-host",
-                    "both hosts",
-                    "either host",
-                    "both exoskeletons",
-                    "either exoskeleton",
-                ],
-            ));
-
-    let mut score = 0usize;
-    score += matched_family_build * 4;
-    score += matched_patch * 5;
-    score += matched_helper * 5;
-    score += composition_layers.len() * 2;
-    if !patch_kinds.is_empty() {
-        score += 4;
-    }
-    if helperish && !helper_kinds.is_empty() {
-        score += 6;
-    }
-    if progressish && patch_kinds.iter().any(|kind| kind == "progress_banner") {
-        score += 6;
-    }
-    if monitorish && patch_classes.iter().any(|class| class == "status_chip") {
-        score += 3;
-    }
-    if filterish && helper_kinds.iter().any(|kind| kind == "file_filter") {
-        score += 4;
-    }
-    if explicit_static_family && matches!(family_id, FamilyId::StaticWebDashboard) {
-        score += 100;
-    }
-    if explicit_chattycog_webview_family && matches!(family_id, FamilyId::ChattycogWebviewModule) {
-        score += 100;
-    }
-    if explicit_chattycog_workspace_family
-        && matches!(family_id, FamilyId::ChattycogWorkspaceModule)
-    {
-        score += 100;
-    }
-    if explicit_chattycog_native_family
-        && matches!(family_id, FamilyId::ChattycogNativeWindowModule)
-    {
-        score += 100;
-    }
-    if explicit_chattyedu_native_family
-        && matches!(family_id, FamilyId::ChattyeduNativeWindowModule)
-    {
-        score += 100;
-    }
-    if explicit_dual_native_family
-        && matches!(family_id, FamilyId::ChattycogChattyeduNativeWindowModule)
-    {
-        score += 120;
-    }
-    score += plan
-        .inferred_family_candidates
-        .len()
-        .saturating_sub(original_rank);
-
-    let mut reasons = Vec::new();
-    if matched_family_build > 0 {
-        reasons.push(format!(
-            "family_build adapters matched {} declared primitive classes",
-            matched_family_build
-        ));
-    }
-    if matched_patch > 0 {
-        reasons.push(format!(
-            "patch adapters matched {} requested primitive classes",
-            matched_patch
-        ));
-    }
-    if matched_helper > 0 {
-        reasons.push(format!(
-            "helper adapters matched {} requested primitive kinds",
-            matched_helper
-        ));
-    }
-    if !patch_kinds.is_empty() {
-        reasons.push(format!(
-            "family can satisfy bounded composition patch bundle: {}",
-            patch_kinds.join(", ")
-        ));
-    }
-    if explicit_static_family && matches!(family_id, FamilyId::StaticWebDashboard) {
-        reasons.push("request explicitly named static dashboard family".into());
-    }
-    if explicit_chattycog_webview_family && matches!(family_id, FamilyId::ChattycogWebviewModule) {
-        reasons.push("request explicitly named ChattyCog webview family".into());
-    }
-    if explicit_chattycog_workspace_family
-        && matches!(family_id, FamilyId::ChattycogWorkspaceModule)
-    {
-        reasons.push("request explicitly named ChattyCog workspace family".into());
-    }
-    if explicit_chattycog_native_family
-        && matches!(family_id, FamilyId::ChattycogNativeWindowModule)
-    {
-        reasons
-            .push("request explicitly named or implied the primary ChattyCog native family".into());
-    }
-    if explicit_chattyedu_native_family
-        && matches!(family_id, FamilyId::ChattyeduNativeWindowModule)
-    {
-        reasons.push(
-            "request explicitly named or implied the primary Chatty-EDU native family".into(),
-        );
-    }
-    if explicit_dual_native_family
-        && matches!(family_id, FamilyId::ChattycogChattyeduNativeWindowModule)
-    {
-        reasons.push("request explicitly named or implied the dual-host native family".into());
-    }
-    if reasons.is_empty() {
-        reasons.push("family retained only by legacy route ranking".into());
-    }
-
-    AdapterScoredFamilyChoice {
-        family_id: family_id.clone(),
-        score,
-        reasons,
-    }
-}
-
-fn apply_adapter_aware_family_preference_for_build(
-    request: &chatty_factory_core::RequestRecord,
-    plan: &mut chatty_factory_core::RequestPlan,
-) {
-    if !matches!(
-        request.mode,
-        Some(chatty_factory_core::RequestMode::NewBuild)
-    ) {
-        return;
-    }
-    if plan.inferred_family_candidates.len() < 2 {
-        return;
-    }
-
-    let lower = request.raw_request.to_ascii_lowercase();
-    let helperish = request_looks_helper_or_service_shaped(request, plan)
-        || lower.contains("monitor")
-        || lower.contains("progress")
-        || lower.contains("banner")
-        || lower.contains("status")
-        || lower.contains("inbox")
-        || lower.contains("watch");
-    if !helperish {
-        return;
-    }
-
-    let scored = plan
-        .inferred_family_candidates
-        .iter()
-        .enumerate()
-        .map(|(index, family_id)| {
-            score_family_for_primitive_native_build(request, plan, family_id, index)
-        })
-        .collect::<Vec<_>>();
-    let mut reordered = scored.clone();
-    reordered.sort_by(|left, right| right.score.cmp(&left.score));
-
-    if reordered.first().map(|choice| &choice.family_id) != plan.inferred_family_candidates.first()
-    {
-        let summary = reordered
-            .iter()
-            .map(|choice| format!("{}={}", choice.family_id.as_str(), choice.score))
-            .collect::<Vec<_>>()
-            .join(", ");
-        if let Some(best) = reordered.first() {
-            plan.rationale.push(format!(
-                "adapter-aware primitive routing preferred family `{}` over legacy order [{}]",
-                best.family_id.as_str(),
-                summary
-            ));
-            plan.rationale.extend(
-                best.reasons
-                    .iter()
-                    .map(|reason| format!("adapter-aware-family-reason: {reason}")),
-            );
-        }
-    }
-
-    plan.inferred_family_candidates = reordered
-        .into_iter()
-        .map(|choice| choice.family_id)
-        .collect();
+    baseline_build_primitive_classes_for_context(selected_substrate_kind, None)
 }
 
 fn derive_composition_layers(
-    family_build_primitive_classes: &[String],
+    base_build_primitive_classes: &[String],
     patch_primitive_classes: &[String],
     helper_primitive_kinds: &[String],
     bridge_capabilities: &[String],
 ) -> Vec<String> {
     let mut layers = Vec::new();
-    if !family_build_primitive_classes.is_empty() {
-        layers.push("family_build".to_string());
+    if !base_build_primitive_classes.is_empty() {
+        layers.push("base_build".to_string());
     }
     if !patch_primitive_classes.is_empty() {
         layers.push("patch".to_string());
@@ -8286,8 +7674,8 @@ fn composition_work_order_kind(layers: &[String]) -> String {
         "helper_lane".into()
     } else if layers.iter().any(|layer| layer == "bridge") {
         "chattycog_bridge_lane".into()
-    } else if layers.iter().any(|layer| layer == "family_build") {
-        "family".into()
+    } else if layers.iter().any(|layer| layer == "base_build") {
+        "base_build".into()
     } else {
         "direct_lane".into()
     }
@@ -8332,19 +7720,20 @@ pub struct PendingExtensionEntry {
     pub extension_kind: String,
     #[serde(default)]
     pub unresolved_layers: Vec<String>,
-    pub family_id: Option<String>,
+    #[serde(default)]
+    pub substrate_kind: Option<String>,
     pub tool_kind: Option<String>,
     pub patch_kind: Option<String>,
     pub bridge_capabilities: Vec<String>,
     pub requested_capabilities: Vec<String>,
     #[serde(default)]
-    pub missing_family_build_primitive_classes: Vec<String>,
+    pub missing_base_build_primitive_classes: Vec<String>,
     #[serde(default)]
     pub missing_patch_primitive_classes: Vec<String>,
     #[serde(default)]
     pub missing_helper_primitive_kinds: Vec<String>,
     pub source_stub_path: String,
-    pub scaffold_root: String,
+    pub attempt_bundle_root: String,
     pub integrated_paths: Vec<String>,
     #[serde(default)]
     pub promotion_artifacts: Vec<String>,
@@ -8465,11 +7854,11 @@ impl HostBridge {
         }
     }
 
-    fn persist_cross_family_monitoring_receipt(
+    fn persist_legacy_comparison_monitoring_receipt(
         &self,
         left_project_name: &str,
         right_project_name: &str,
-    ) -> Result<(CrossFamilyMonitoringComparisonReceipt, PathBuf)> {
+    ) -> Result<(LegacyComparisonMonitoringReceipt, PathBuf)> {
         let comparison_bundle = capability_comparison_bundle_by_id(
             "bundle_helper_monitoring_equivalence",
         )
@@ -8478,19 +7867,19 @@ impl HostBridge {
                 "missing built-in capability comparison bundle bundle_helper_monitoring_equivalence"
             )
         })?;
-        self.persist_cross_family_capability_comparison_receipt(
+        self.persist_legacy_comparison_capability_comparison_receipt(
             left_project_name,
             right_project_name,
             &comparison_bundle,
         )
     }
 
-    fn persist_cross_family_capability_comparison_receipt(
+    fn persist_legacy_comparison_capability_comparison_receipt(
         &self,
         left_project_name: &str,
         right_project_name: &str,
         comparison_bundle: &chatty_factory_core::CapabilityComparisonBundle,
-    ) -> Result<(CrossFamilyMonitoringComparisonReceipt, PathBuf)> {
+    ) -> Result<(LegacyComparisonMonitoringReceipt, PathBuf)> {
         let left_project_dir = self.output_root.join(left_project_name);
         let right_project_dir = self.output_root.join(right_project_name);
         let left_spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(
@@ -8505,7 +7894,7 @@ impl HostBridge {
         let right_acceptance: chatty_factory_core::AcceptancePlan = serde_json::from_str(
             &fs::read_to_string(right_project_dir.join("AcceptancePlan.json"))?,
         )?;
-        let receipt = build_cross_family_capability_comparison_receipt(
+        let receipt = build_legacy_comparison_capability_receipt(
             left_project_name,
             &left_spec,
             &left_acceptance,
@@ -8515,11 +7904,11 @@ impl HostBridge {
             comparison_bundle,
         );
         let path =
-            persist_cross_family_capability_comparison_receipt(&self.runtime_root, &receipt)?;
+            persist_legacy_comparison_capability_receipt(&self.runtime_root, &receipt)?;
         Ok((receipt, path))
     }
 
-    pub fn run_cross_family_helper_monitoring_proof(
+    pub fn run_legacy_comparison_helper_monitoring_proof(
         &self,
         shared_request: &str,
         planner: &HostPlannerOptions,
@@ -8849,7 +8238,7 @@ impl HostBridge {
                 smoke: None,
             }),
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -8863,24 +8252,24 @@ impl HostBridge {
     ) -> Result<HostActionResult> {
         let shared_request = proof_template.shared_request_seed.clone();
         let template_kind = proof_template.template_kind.clone();
-        let left_family = proof_template
-            .target_family_ids
+        let left_substrate = proof_template
+            .target_substrate_kinds
             .first()
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("proof template missing left target family"))?;
-        let right_family = proof_template
-            .target_family_ids
+            .ok_or_else(|| anyhow::anyhow!("proof template missing left target substrate"))?;
+        let right_substrate = proof_template
+            .target_substrate_kinds
             .get(1)
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("proof template missing right target family"))?;
-        let left_request = proof_request_for_family(
+            .ok_or_else(|| anyhow::anyhow!("proof template missing right target substrate"))?;
+        let left_request = proof_request_for_substrate(
             &shared_request,
-            &left_family,
+            &left_substrate,
             &proof_template.execution_recipe,
         );
-        let right_request = proof_request_for_family(
+        let right_request = proof_request_for_substrate(
             &shared_request,
-            &right_family,
+            &right_substrate,
             &proof_template.execution_recipe,
         );
 
@@ -8903,7 +8292,7 @@ impl HostBridge {
 
         if let Some(updated_execution) = self.enrich_project_for_proof_baseline(
             &left_execution.project_name,
-            left_execution.family_id.as_deref(),
+            left_execution.substrate_kind.as_deref(),
             &proof_template.execution_recipe,
             planner,
         )? {
@@ -8911,7 +8300,7 @@ impl HostBridge {
         }
         if let Some(updated_execution) = self.enrich_project_for_proof_baseline(
             &right_execution.project_name,
-            right_execution.family_id.as_deref(),
+            right_execution.substrate_kind.as_deref(),
             &proof_template.execution_recipe,
             planner,
         )? {
@@ -8921,7 +8310,7 @@ impl HostBridge {
         let left_project_name = left_execution.project_name.clone();
         let right_project_name = right_execution.project_name.clone();
         let (comparison_receipt, comparison_receipt_path) = self
-            .persist_cross_family_capability_comparison_receipt(
+            .persist_legacy_comparison_capability_comparison_receipt(
                 &left_project_name,
                 &right_project_name,
                 &comparison_bundle,
@@ -8930,7 +8319,7 @@ impl HostBridge {
             paired_proof_next_action(comparison_receipt.equivalent_capability_fulfillment);
 
         let paired_receipt = PrimitiveProofHarnessReceipt {
-            receipt_id: chatty_factory_core::timestamp_id("cross-family-paired-proof"),
+            receipt_id: chatty_factory_core::timestamp_id("legacy-comparison-paired-proof"),
             proof_template_id: proof_template.template_id,
             proof_template_kind: proof_template.template_kind,
             proof_template_display_label: proof_template.display_label,
@@ -8938,12 +8327,12 @@ impl HostBridge {
             shared_request: shared_request.clone(),
             left_request,
             right_request,
-            target_family_ids: proof_template.target_family_ids.clone(),
+            target_substrate_kinds: proof_template.target_substrate_kinds.clone(),
             left_project_name: left_project_name.clone(),
-            left_family_id: left_execution
-                .family_id
+            left_substrate_kind: left_execution
+                .substrate_kind
                 .as_deref()
-                .and_then(parse_family_id_label),
+                .and_then(parse_substrate_kind_label),
             left_request_id: left_execution.request_id.clone(),
             left_composable_route_plan_path: left_execution.composable_route_plan_path.clone(),
             left_primitive_execution_plan_path: first_matching_runtime_artifact_path(
@@ -8951,10 +8340,10 @@ impl HostBridge {
                 "primitive_execution_plans",
             ),
             right_project_name: right_project_name.clone(),
-            right_family_id: right_execution
-                .family_id
+            right_substrate_kind: right_execution
+                .substrate_kind
                 .as_deref()
-                .and_then(parse_family_id_label),
+                .and_then(parse_substrate_kind_label),
             right_request_id: right_execution.request_id.clone(),
             right_composable_route_plan_path: right_execution.composable_route_plan_path.clone(),
             right_primitive_execution_plan_path: first_matching_runtime_artifact_path(
@@ -8990,7 +8379,7 @@ impl HostBridge {
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
         let paired_receipt_path =
-            persist_cross_family_paired_proof_receipt(&self.runtime_root, &paired_receipt)?;
+            persist_legacy_comparison_paired_proof_receipt(&self.runtime_root, &paired_receipt)?;
 
         Ok(HostActionResult {
             summary: format!(
@@ -9039,12 +8428,7 @@ impl HostBridge {
                 ],
                 recommended_next_action: None,
                 recommended_next_step: String::new(),
-                starter_override_id: None,
-                starter_override_summary: None,
-                recommended_starter_id: None,
-                recommended_starter_summary: None,
-                starter_recommendation_comparison: None,
-                family_id: None,
+                substrate_kind: None,
                 tool_kind: Some(template_kind),
                 patch_kind: None,
                 composition_route_class: Some("composition_bundle".into()),
@@ -9082,7 +8466,7 @@ impl HostBridge {
                             .unwrap_or("missing")
                     ),
                     format!(
-                        "cross-family comparison receipt: {}",
+                        "legacy comparison receipt: {}",
                         comparison_receipt_path.display()
                     ),
                     format!(
@@ -9118,37 +8502,37 @@ impl HostBridge {
                 helper_services: Vec::new(),
                 helper_runtime_receipts: Vec::new(),
             })),
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
     }
 
-    fn enrich_project_for_proof_baseline(
-        &self,
-        project_name: &str,
-        family_id: Option<&str>,
+fn enrich_project_for_proof_baseline(
+    &self,
+    project_name: &str,
+    substrate_kind: Option<&str>,
         execution_recipe: &chatty_factory_core::PrimitiveProofExecutionRecipe,
         planner: &HostPlannerOptions,
     ) -> Result<Option<HostExecutionResult>> {
-        let Some(family_id) = family_id.and_then(parse_family_id_label) else {
+        let Some(substrate_kind) = substrate_kind.and_then(parse_substrate_kind_label) else {
             return Ok(None);
         };
         let capabilities = self.proof_capabilities_for_project(project_name)?;
         let Some(binding) = execution_recipe
             .enrichment_bindings
             .iter()
-            .find(|binding| binding.family_id == family_id)
+            .find(|binding| binding.substrate_kind.as_ref() == Some(&substrate_kind))
         else {
             return match execution_recipe.enrichment_kind.as_str() {
                 "helper_monitoring" => self.enrich_project_for_helper_monitoring_baseline(
                     project_name,
-                    Some(family_id.as_str()),
+                    Some(&substrate_kind),
                     planner,
                 ),
                 "summary_reporting" => self.enrich_project_for_summary_reporting_baseline(
                     project_name,
-                    Some(family_id.as_str()),
+                    Some(&substrate_kind),
                     planner,
                 ),
                 _ => Ok(None),
@@ -9183,7 +8567,7 @@ impl HostBridge {
     fn enrich_project_for_helper_monitoring_baseline(
         &self,
         project_name: &str,
-        family_id: Option<&str>,
+        substrate_kind: Option<&SubstrateKind>,
         planner: &HostPlannerOptions,
     ) -> Result<Option<HostExecutionResult>> {
         let capabilities = self.proof_capabilities_for_project(project_name)?;
@@ -9191,7 +8575,7 @@ impl HostBridge {
             return Ok(None);
         }
         let mut latest_execution = None;
-        if family_id == Some("chattycog_webview_module")
+        if substrate_kind == Some(&SubstrateKind::Webview)
             && !capabilities
                 .iter()
                 .any(|capability| capability == "helper_preview_surface")
@@ -9207,12 +8591,12 @@ impl HostBridge {
     fn enrich_project_for_summary_reporting_baseline(
         &self,
         project_name: &str,
-        family_id: Option<&str>,
+        substrate_kind: Option<&SubstrateKind>,
         planner: &HostPlannerOptions,
     ) -> Result<Option<HostExecutionResult>> {
         let capabilities = self.proof_capabilities_for_project(project_name)?;
         let mut latest_execution = None;
-        if family_id == Some("rust_cli_tool")
+        if substrate_kind == Some(&SubstrateKind::Cli)
             && !capabilities
                 .iter()
                 .any(|capability| capability == "export_surface")
@@ -9220,7 +8604,7 @@ impl HostBridge {
             let json_output_result =
                 self.patch_request(project_name, "add json output", planner)?;
             latest_execution = json_output_result.execution_result;
-        } else if family_id == Some("static_web_dashboard")
+        } else if substrate_kind == Some(&SubstrateKind::StaticWeb)
             && !capabilities
                 .iter()
                 .any(|capability| capability == "status_surface")
@@ -9237,23 +8621,12 @@ impl HostBridge {
         fs::create_dir_all(&self.runtime_root)?;
         let _ = self.refresh_project_patch_readiness_registry()?;
         let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
-        let family_usage_summary_path =
-            refresh_family_usage_summary(&self.output_root, &self.runtime_root)?;
-        let starter_usage_summary_path = refresh_starter_usage_summary(&self.runtime_root)?;
         let triangulation_loop_summary_path =
             refresh_triangulation_loop_summary(&self.runtime_root)?;
         Ok(HostActionResult {
             summary: "Project browser refreshed".into(),
             details: vec![
                 format!("projects={}", browser_state.projects.len()),
-                format!(
-                    "family_usage_summary={}",
-                    family_usage_summary_path.display()
-                ),
-                format!(
-                    "starter_usage_summary={}",
-                    starter_usage_summary_path.display()
-                ),
                 format!(
                     "triangulation_loop_summary={}",
                     triangulation_loop_summary_path.display()
@@ -9262,7 +8635,7 @@ impl HostBridge {
             browser_state: Some(browser_state),
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -9285,7 +8658,7 @@ impl HostBridge {
             "active_project_sessions",
             &ProjectSession {
                 project_name: project_name.to_string(),
-                family_id: spec.family_id.clone(),
+                substrate: spec.substrate.clone(),
                 tool_kind: spec.tool_kind.clone(),
                 request_summary: spec.request_summary.clone(),
                 last_action: "select".into(),
@@ -9300,7 +8673,7 @@ impl HostBridge {
             "selected_project_sessions",
             &ProjectSession {
                 project_name: project_name.to_string(),
-                family_id: spec.family_id,
+                substrate: spec.substrate,
                 tool_kind: spec.tool_kind,
                 request_summary: spec.request_summary,
                 last_action: "select".into(),
@@ -9316,7 +8689,7 @@ impl HostBridge {
             browser_state: Some(browser_state),
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -9334,7 +8707,7 @@ impl HostBridge {
             desired_surface: None,
             requested_capabilities: spec.features.clone(),
             exoskeleton_target: None,
-            candidate_family_ids: spec.family_id.clone().into_iter().collect(),
+            candidate_substrate_kinds: project_spec_substrate_kind_ref(&spec).into_iter().collect(),
             ambiguity_flags: Vec::new(),
             created_at: Some(chatty_factory_core::timestamp_id("created")),
         };
@@ -9346,7 +8719,7 @@ impl HostBridge {
                 .request_summary
                 .clone()
                 .unwrap_or_else(|| format!("Reverify generated build `{project_name}`")),
-            inferred_family_candidates: spec.family_id.clone().into_iter().collect(),
+            inferred_substrate_candidates: project_spec_substrate_kind_ref(&spec).into_iter().collect(),
             inferred_tool_kind: spec.tool_kind.clone(),
             intended_patch_kind: None,
             available_patch_kinds: spec.supported_patch_kinds.clone(),
@@ -9401,17 +8774,15 @@ impl HostBridge {
                 &request,
                 &plan,
                 project_name,
-                spec.family_id.clone(),
+                project_spec_substrate_kind_ref(&spec),
                 spec.tool_kind.as_deref(),
-                spec.family_id
-                    .as_ref()
-                    .map(FamilyId::as_str)
+                project_spec_substrate_label(&spec)
                     .unwrap_or("deterministic_build"),
                 "acceptance_plan_failed_after_build",
                 "do not treat emitted build artifacts as shippable when acceptance verification fails",
                 &error.to_string(),
             );
-            return emit_fallback_result(
+            return emit_next_attempt_result(
                 &self.runtime_root,
                 &request,
                 &plan,
@@ -9432,17 +8803,15 @@ impl HostBridge {
                     &request,
                     &plan,
                     project_name,
-                    spec.family_id.clone(),
+                    project_spec_substrate_kind_ref(&spec),
                     spec.tool_kind.as_deref(),
-                    spec.family_id
-                        .as_ref()
-                        .map(FamilyId::as_str)
+                    project_spec_substrate_label(&spec)
                         .unwrap_or("deterministic_build"),
                     "execution_smoke_failed_after_build",
-                    "do not ship a generated build when execution smoke fails after scaffold emission",
+                    "do not ship a generated build when execution smoke fails after build-seed emission",
                     &error.to_string(),
                 );
-                return emit_fallback_result(
+                return emit_next_attempt_result(
                     &self.runtime_root,
                     &request,
                     &plan,
@@ -9458,18 +8827,15 @@ impl HostBridge {
             details: vec![
                 format!("project={project_name}"),
                 format!(
-                    "family={}",
-                    spec.family_id
-                        .as_ref()
-                        .map(FamilyId::as_str)
-                        .unwrap_or("unknown_family")
+                    "substrate={}",
+                    project_spec_substrate_label(&spec).unwrap_or("unknown_substrate")
                 ),
                 format!("execution_smoke={execution_status}"),
             ],
             browser_state: Some(browser_state),
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -9487,7 +8853,7 @@ impl HostBridge {
             browser_state: Some(browser_state),
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -9589,7 +8955,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -9654,7 +9020,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -9686,7 +9052,7 @@ impl HostBridge {
                 browser_state: None,
                 runtime_refresh: None,
                 execution_result: None,
-                fallback_result: None,
+                next_attempt_result: None,
                 followup_route: None,
                 extension_registry: None,
             });
@@ -9764,7 +9130,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -9794,7 +9160,7 @@ impl HostBridge {
                 browser_state: None,
                 runtime_refresh: None,
                 execution_result: None,
-                fallback_result: None,
+                next_attempt_result: None,
                 followup_route: None,
                 extension_registry: None,
             });
@@ -9857,7 +9223,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -9932,7 +9298,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -9979,12 +9345,7 @@ impl HostBridge {
                 outcome_notes: Vec::new(),
                 recommended_next_action: None,
                 recommended_next_step: String::new(),
-                starter_override_id: None,
-                starter_override_summary: None,
-                recommended_starter_id: None,
-                recommended_starter_summary: None,
-                starter_recommendation_comparison: None,
-                family_id: spec.family_id.clone().map(|id| id.as_str().to_string()),
+                substrate_kind: Some("static_web".into()),
                 tool_kind: spec.tool_kind.clone(),
                 patch_kind: None,
                 composition_route_class: None,
@@ -10010,7 +9371,7 @@ impl HostBridge {
                 helper_services: spec.helper_services.clone(),
                 helper_runtime_receipts,
             })),
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -10088,12 +9449,7 @@ impl HostBridge {
                 outcome_notes: Vec::new(),
                 recommended_next_action: None,
                 recommended_next_step: String::new(),
-                starter_override_id: None,
-                starter_override_summary: None,
-                recommended_starter_id: None,
-                recommended_starter_summary: None,
-                starter_recommendation_comparison: None,
-                family_id: spec.family_id.clone().map(|id| id.as_str().to_string()),
+                substrate_kind: Some(spec.substrate.clone()),
                 tool_kind: spec.tool_kind.clone(),
                 patch_kind: None,
                 composition_route_class: None,
@@ -10116,7 +9472,7 @@ impl HostBridge {
                 helper_services: spec.helper_services.clone(),
                 helper_runtime_receipts: receipts,
             })),
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -10141,7 +9497,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -10153,12 +9509,12 @@ impl HostBridge {
         right_project_name: &str,
     ) -> Result<HostActionResult> {
         let (receipt, receipt_path) =
-            self.persist_cross_family_monitoring_receipt(left_project_name, right_project_name)?;
+            self.persist_legacy_comparison_monitoring_receipt(left_project_name, right_project_name)?;
         let notes = receipt.notes.clone();
         let equivalent_capability_fulfillment = receipt.equivalent_capability_fulfillment;
 
         Ok(HostActionResult {
-            summary: "Cross-family helper monitoring comparison complete".into(),
+            summary: "Legacy comparison helper monitoring proof complete".into(),
             details: vec![
                 format!("left_project={left_project_name}"),
                 format!("right_project={right_project_name}"),
@@ -10174,7 +9530,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: Some(with_execution_outcome_posture(HostExecutionResult {
-                kind: "cross_family_helper_monitoring_compare".into(),
+                kind: "legacy_comparison_helper_monitoring_compare".into(),
                 request_id: receipt.receipt_id.clone(),
                 project_name: format!("{left_project_name},{right_project_name}"),
                 build_intent_freeze_path: None,
@@ -10186,12 +9542,7 @@ impl HostBridge {
                 outcome_notes: Vec::new(),
                 recommended_next_action: None,
                 recommended_next_step: String::new(),
-                starter_override_id: None,
-                starter_override_summary: None,
-                recommended_starter_id: None,
-                recommended_starter_summary: None,
-                starter_recommendation_comparison: None,
-                family_id: None,
+                substrate_kind: None,
                 tool_kind: Some("dashboard".into()),
                 patch_kind: None,
                 composition_route_class: None,
@@ -10207,7 +9558,7 @@ impl HostBridge {
                 } else {
                     "partial".into()
                 }),
-                route_notes: vec!["cross_family_helper_monitoring_compare".into()],
+                route_notes: vec!["legacy_comparison_helper_monitoring_compare".into()],
                 file_paths: vec![receipt_path.display().to_string()],
                 patch_lanes: Vec::new(),
                 acceptance_recipes: Vec::new(),
@@ -10218,403 +9569,10 @@ impl HostBridge {
                 helper_services: Vec::new(),
                 helper_runtime_receipts: Vec::new(),
             })),
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
-    }
-
-    pub fn scaffold_extension_from_stub(
-        &self,
-        stub_input: &Path,
-        integrate: bool,
-        promote: bool,
-    ) -> Result<HostActionResult> {
-        let spec_path = if stub_input.is_dir() {
-            stub_input.join("EXTENSION_SPEC.json")
-        } else {
-            stub_input.to_path_buf()
-        };
-        let mut build_spec: FallbackBuildSpec =
-            serde_json::from_str(&fs::read_to_string(&spec_path)?)?;
-        if build_spec.suggested_extension_kind == "proof_harness_bundle"
-            && (build_spec.suggested_proof_seed_template_id.is_none()
-                || build_spec.suggested_proof_seed_bundle_id.is_none())
-        {
-            if let Some((template_id, bundle_id)) = suggested_proof_seed_for_build_spec(&build_spec)
-            {
-                if build_spec.suggested_proof_seed_template_id.is_none() {
-                    build_spec.suggested_proof_seed_template_id = Some(template_id);
-                }
-                if build_spec.suggested_proof_seed_bundle_id.is_none() {
-                    build_spec.suggested_proof_seed_bundle_id = Some(bundle_id);
-                }
-            }
-        }
-        let bundle_name = spec_path
-            .parent()
-            .and_then(|path| path.file_name())
-            .and_then(|value| value.to_str())
-            .unwrap_or(build_spec.request_id.as_str());
-        let scaffold_root = self.workspace_root.join("extensions").join(bundle_name);
-        fs::create_dir_all(&scaffold_root)?;
-
-        let primary_file = scaffold_primary_file(&build_spec);
-        let unresolved_layers = unresolved_scaffold_layers(&build_spec);
-
-        let primary_payload = serde_json::json!({
-            "request_id": build_spec.request_id,
-            "extension_kind": build_spec.suggested_extension_kind,
-            "unresolved_layers": unresolved_layers,
-            "suggested_family_id": build_spec.suggested_family_id.as_ref().map(|id| id.as_str()),
-            "suggested_tool_kind": build_spec.suggested_tool_kind,
-            "suggested_patch_kind": build_spec.suggested_patch_kind,
-            "suggested_bridge_capabilities": build_spec.suggested_bridge_capabilities,
-            "suggested_hosting_mode": build_spec.suggested_hosting_mode,
-            "candidate_family_ids": build_spec.candidate_family_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
-            "requested_capabilities": build_spec.requested_capabilities,
-            "constraints": build_spec.constraints,
-            "suggested_proof_seed_template_id": build_spec.suggested_proof_seed_template_id,
-            "suggested_proof_seed_bundle_id": build_spec.suggested_proof_seed_bundle_id,
-            "missing_family_build_primitive_classes": build_spec.missing_family_build_primitive_classes,
-            "missing_patch_primitive_classes": build_spec.missing_patch_primitive_classes,
-            "missing_helper_primitive_kinds": build_spec.missing_helper_primitive_kinds,
-        });
-        persist_json_pretty(&scaffold_root.join(primary_file), &primary_payload)?;
-
-        if unresolved_layers.contains(&"proof_harness") {
-            let (proof_template, comparison_bundle) =
-                build_proof_harness_starter_manifests(&build_spec, bundle_name);
-            if primary_file != "proof_template_manifest.json" {
-                persist_json_pretty(
-                    &scaffold_root.join("proof_template_manifest.json"),
-                    &proof_template,
-                )?;
-            } else {
-                persist_json_pretty(&scaffold_root.join(primary_file), &proof_template)?;
-            }
-            persist_json_pretty(
-                &scaffold_root.join("comparison_bundle_manifest.json"),
-                &comparison_bundle,
-            )?;
-        }
-
-        if unresolved_layers.contains(&"family_build") && primary_file != "family_manifest.json" {
-            persist_json_pretty(
-                &scaffold_root.join("family_manifest.json"),
-                &serde_json::json!({
-                    "family_id": build_spec.suggested_family_id.as_ref().map(|id| id.as_str()),
-                    "tool_kind": build_spec.suggested_tool_kind,
-                    "missing_family_build_primitive_classes": build_spec.missing_family_build_primitive_classes,
-                    "requested_capabilities": build_spec.requested_capabilities,
-                }),
-            )?;
-        }
-        if unresolved_layers.contains(&"patch") && primary_file != "patch_recipe.json" {
-            persist_json_pretty(
-                &scaffold_root.join("patch_recipe.json"),
-                &serde_json::json!({
-                    "family_id": build_spec.suggested_family_id.as_ref().map(|id| id.as_str()),
-                    "tool_kind": build_spec.suggested_tool_kind,
-                    "patch_kind": build_spec.suggested_patch_kind,
-                    "missing_patch_primitive_classes": build_spec.missing_patch_primitive_classes,
-                    "requested_capabilities": build_spec.requested_capabilities,
-                }),
-            )?;
-        }
-        if unresolved_layers.contains(&"helper") && primary_file != "helper_lane.json" {
-            persist_json_pretty(
-                &scaffold_root.join("helper_lane.json"),
-                &serde_json::json!({
-                    "family_id": build_spec.suggested_family_id.as_ref().map(|id| id.as_str()),
-                    "tool_kind": build_spec.suggested_tool_kind,
-                    "missing_helper_primitive_kinds": build_spec.missing_helper_primitive_kinds,
-                    "requested_capabilities": build_spec.requested_capabilities,
-                }),
-            )?;
-        }
-        if unresolved_layers.contains(&"bridge") && primary_file != "bridge_lane.json" {
-            persist_json_pretty(
-                &scaffold_root.join("bridge_lane.json"),
-                &serde_json::json!({
-                    "hosting_mode": build_spec.suggested_hosting_mode,
-                    "suggested_bridge_capabilities": build_spec.suggested_bridge_capabilities,
-                    "requested_capabilities": build_spec.requested_capabilities,
-                }),
-            )?;
-        }
-
-        let acceptance_payload = serde_json::json!({
-            "request_id": build_spec.request_id,
-            "acceptance_targets": build_spec.acceptance_targets,
-            "notes": "Expand these into host-owned acceptance checks before wiring the new deterministic lane."
-        });
-        persist_json_pretty(
-            &scaffold_root.join("acceptance_targets.json"),
-            &acceptance_payload,
-        )?;
-
-        let notes = format!(
-            "# Extension Implementation Bundle\n\nRequest id: `{}`\n\nExtension kind: `{}`\n\nUnresolved layers:\n{}\n\nRecommended next step: {}\n\nSuggested family: `{}`\nSuggested tool kind: `{}`\nSuggested patch kind: `{}`\nSuggested hosting mode: `{}`\nSuggested proof seed template: `{}`\nSuggested proof seed bundle: `{}`\n\nRequested capabilities:\n{}\n\nConstraints:\n{}\n\nImplementation notes:\n{}\n",
-            build_spec.request_id,
-            build_spec.suggested_extension_kind,
-            unresolved_layers
-                .iter()
-                .map(|item| format!("- {item}"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            build_spec.recommended_next_step,
-            build_spec.suggested_family_id.as_ref().map(|id| id.as_str()).unwrap_or("none"),
-            build_spec.suggested_tool_kind.as_deref().unwrap_or("none"),
-            build_spec.suggested_patch_kind.as_deref().unwrap_or("none"),
-            build_spec.suggested_hosting_mode.as_deref().unwrap_or("none"),
-            build_spec
-                .suggested_proof_seed_template_id
-                .as_deref()
-                .unwrap_or("none"),
-            build_spec
-                .suggested_proof_seed_bundle_id
-                .as_deref()
-                .unwrap_or("none"),
-            build_spec.requested_capabilities.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n"),
-            build_spec.constraints.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n"),
-            build_spec.implementation_notes.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n"),
-        );
-        fs::write(scaffold_root.join("IMPLEMENTATION_NOTES.md"), notes)?;
-
-        fs::create_dir_all(scaffold_root.join("templates"))?;
-        fs::write(
-            scaffold_root.join("templates").join("README.md"),
-            "Put family or patch-lane template assets here when you implement this deterministic lane.\n",
-        )?;
-
-        fs::create_dir_all(scaffold_root.join("src"))?;
-        fs::write(
-            scaffold_root.join("src").join("README.md"),
-            "Put any Rust-side registry, handler, or contract notes for this lane here.\n",
-        )?;
-
-        let mut details = vec![
-            format!("source_stub={}", spec_path.display()),
-            format!("scaffold_root={}", scaffold_root.display()),
-            format!(
-                "primary_file={}",
-                scaffold_root.join(primary_file).display()
-            ),
-        ];
-        if integrate {
-            let integrated_paths = self.integrate_extension_scaffold(&build_spec, bundle_name)?;
-            for path in &integrated_paths {
-                details.push(format!("integrated={}", path.display()));
-            }
-            if promote {
-                let registry_path = self.promote_pending_extension(
-                    &build_spec,
-                    &spec_path,
-                    &scaffold_root,
-                    &integrated_paths,
-                )?;
-                details.push(format!("pending_registry={}", registry_path.display()));
-            }
-        }
-
-        Ok(HostActionResult {
-            summary: "Extension scaffold generated".into(),
-            details,
-            browser_state: None,
-            runtime_refresh: None,
-            execution_result: None,
-            fallback_result: None,
-            followup_route: None,
-            extension_registry: None,
-        })
-    }
-
-    fn integrate_extension_scaffold(
-        &self,
-        build_spec: &FallbackBuildSpec,
-        bundle_name: &str,
-    ) -> Result<Vec<PathBuf>> {
-        let slug = extension_slug(build_spec, bundle_name);
-        let mut created = Vec::new();
-        let unresolved_layers = unresolved_scaffold_layers(build_spec);
-
-        if unresolved_layers.contains(&"proof_harness") {
-            let template_dir = self.workspace_root.join("proof_harness").join("templates");
-            let bundle_dir = self.workspace_root.join("proof_harness").join("bundles");
-            fs::create_dir_all(&template_dir)?;
-            fs::create_dir_all(&bundle_dir)?;
-            let (proof_template, comparison_bundle) =
-                build_proof_harness_starter_manifests(build_spec, bundle_name);
-            let template_path = template_dir.join(format!("{slug}.json"));
-            let bundle_path = bundle_dir.join(format!("{}.json", comparison_bundle.bundle_id));
-            persist_json_pretty(&template_path, &proof_template)?;
-            persist_json_pretty(&bundle_path, &comparison_bundle)?;
-            created.extend([template_path, bundle_path]);
-            return Ok(created);
-        }
-
-        if unresolved_layers.contains(&"patch") {
-            let patch_dir = self
-                .workspace_root
-                .join("operator_registry")
-                .join("patch_recipes");
-            let acceptance_dir = self
-                .workspace_root
-                .join("operator_registry")
-                .join("acceptance_recipes");
-            let template_dir = self
-                .workspace_root
-                .join("templates")
-                .join("patches")
-                .join(&slug);
-            fs::create_dir_all(&patch_dir)?;
-            fs::create_dir_all(&acceptance_dir)?;
-            fs::create_dir_all(&template_dir)?;
-
-            let patch_path = patch_dir.join(format!("{slug}.json"));
-            let acceptance_path = acceptance_dir.join(format!("{slug}.json"));
-            let template_path = template_dir.join("README.md");
-            persist_json_pretty(
-                &patch_path,
-                &serde_json::json!({
-                    "recipe_id": slug,
-                    "family_id": build_spec.suggested_family_id.as_ref().map(|id| id.as_str()),
-                    "tool_kind": build_spec.suggested_tool_kind,
-                    "patch_kind": build_spec.suggested_patch_kind,
-                    "missing_patch_primitive_classes": build_spec.missing_patch_primitive_classes,
-                    "requested_capabilities": build_spec.requested_capabilities,
-                    "implementation_notes": build_spec.implementation_notes,
-                }),
-            )?;
-            persist_json_pretty(
-                &acceptance_path,
-                &serde_json::json!({
-                    "recipe_id": format!("{slug}_acceptance"),
-                    "targets": build_spec.acceptance_targets,
-                    "notes": build_spec.implementation_notes,
-                }),
-            )?;
-            fs::write(
-                &template_path,
-                "Put patch-lane template fragments or fixture notes here.\n",
-            )?;
-            created.extend([patch_path, acceptance_path, template_path]);
-        }
-        if unresolved_layers.contains(&"bridge") {
-            let bridge_dir = self
-                .workspace_root
-                .join("operator_registry")
-                .join("bridge_lanes");
-            let template_dir = self
-                .workspace_root
-                .join("templates")
-                .join("wrappers")
-                .join("chattycog")
-                .join(&slug);
-            fs::create_dir_all(&bridge_dir)?;
-            fs::create_dir_all(&template_dir)?;
-            let bridge_path = bridge_dir.join(format!("{slug}.json"));
-            let template_path = template_dir.join("README.md");
-            persist_json_pretty(
-                &bridge_path,
-                &serde_json::json!({
-                    "bridge_lane_id": slug,
-                    "hosting_mode": build_spec.suggested_hosting_mode,
-                    "bridge_capabilities": build_spec.suggested_bridge_capabilities,
-                    "unresolved_layers": unresolved_layers,
-                    "acceptance_targets": build_spec.acceptance_targets,
-                }),
-            )?;
-            fs::write(
-                &template_path,
-                "Put ChattyCog bridge lane emitted-file notes here.\n",
-            )?;
-            created.extend([bridge_path, template_path]);
-        }
-        if unresolved_layers.contains(&"helper") {
-            let helper_dir = self
-                .workspace_root
-                .join("operator_registry")
-                .join("helper_lanes");
-            let template_dir = self
-                .workspace_root
-                .join("templates")
-                .join("helpers")
-                .join(&slug);
-            fs::create_dir_all(&helper_dir)?;
-            fs::create_dir_all(&template_dir)?;
-            let helper_path = helper_dir.join(format!("{slug}.json"));
-            let template_path = template_dir.join("README.md");
-            persist_json_pretty(
-                &helper_path,
-                &serde_json::json!({
-                    "helper_lane_id": slug,
-                    "missing_helper_primitive_kinds": build_spec.missing_helper_primitive_kinds,
-                    "requested_capabilities": build_spec.requested_capabilities,
-                    "constraints": build_spec.constraints,
-                    "acceptance_targets": build_spec.acceptance_targets,
-                }),
-            )?;
-            fs::write(
-                &template_path,
-                "Put helper-lane template assets or protocol notes here.\n",
-            )?;
-            created.extend([helper_path, template_path]);
-        }
-        if unresolved_layers.contains(&"family_build") {
-            let manifest_path = self
-                .workspace_root
-                .join("families")
-                .join("manifests")
-                .join(format!("{slug}.json"));
-            let family_doc_path = self
-                .workspace_root
-                .join("families")
-                .join(format!("{slug}.md"));
-            let template_dir = self
-                .workspace_root
-                .join("templates")
-                .join("families")
-                .join(&slug);
-            fs::create_dir_all(template_dir.as_path())?;
-            persist_json_pretty(
-                &manifest_path,
-                &serde_json::json!({
-                    "family_id": slug,
-                    "primary_substrate": "unknown",
-                    "supports_chattycog_wrapper": false,
-                    "supported_stack_ids": [],
-                    "provided_build_primitive_classes": build_spec.missing_family_build_primitive_classes,
-                    "explicit_stack_keywords": [],
-                    "route_keywords": build_spec.requested_capabilities,
-                    "supported_tool_kinds": build_spec.suggested_tool_kind.iter().cloned().collect::<Vec<_>>(),
-                    "forbids_capabilities": [],
-                    "requires_helper_for": [],
-                }),
-            )?;
-            fs::write(
-                &family_doc_path,
-                format!(
-                    "# {}\n\nGoal: {}\n\nAcceptance targets:\n{}\n",
-                    slug,
-                    build_spec.interpreted_goal,
-                    build_spec
-                        .acceptance_targets
-                        .iter()
-                        .map(|item| format!("- {item}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ),
-            )?;
-            let template_path = template_dir.join("README.md");
-            fs::write(
-                &template_path,
-                "Put starter family templates here as this deterministic lane is implemented.\n",
-            )?;
-            created.extend([manifest_path, family_doc_path, template_path]);
-        }
-        Ok(created)
     }
 
     pub fn pending_extensions(&self) -> Result<HostActionResult> {
@@ -10676,11 +9634,11 @@ impl HostBridge {
         ];
         for entry in registry.entries.iter().take(10) {
             let mut line = format!(
-                "entry={} status={} kind={} family={} tool={} patch={}",
+                "entry={} status={} kind={} surface={} tool={} patch={}",
                 entry.entry_id,
                 entry.status,
                 entry.extension_kind,
-                entry.family_id.as_deref().unwrap_or("none"),
+                entry.substrate_kind.as_deref().unwrap_or("unknown_surface"),
                 entry.tool_kind.as_deref().unwrap_or("none"),
                 entry.patch_kind.as_deref().unwrap_or("none")
             );
@@ -10695,7 +9653,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
@@ -10761,7 +9719,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
@@ -10820,7 +9778,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
@@ -10879,7 +9837,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
@@ -10924,9 +9882,6 @@ impl HostBridge {
         let refresh_status_path =
             persist_project_patch_readiness_refresh_status(&self.runtime_root, &refresh_status)?;
         let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
-        let family_usage_summary_path =
-            refresh_family_usage_summary(&self.output_root, &self.runtime_root)?;
-        let starter_usage_summary_path = refresh_starter_usage_summary(&self.runtime_root)?;
         let triangulation_loop_summary_path =
             refresh_triangulation_loop_summary(&self.runtime_root)?;
         let blocker_project_counts =
@@ -10943,14 +9898,6 @@ impl HostBridge {
         ));
         details.push(format!("refresh_status={}", refresh_status_path.display()));
         details.push(format!(
-            "family_usage_summary={}",
-            family_usage_summary_path.display()
-        ));
-        details.push(format!(
-            "starter_usage_summary={}",
-            starter_usage_summary_path.display()
-        ));
-        details.push(format!(
             "triangulation_loop_summary={}",
             triangulation_loop_summary_path.display()
         ));
@@ -10960,7 +9907,7 @@ impl HostBridge {
             browser_state: Some(browser_state),
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -11019,7 +9966,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
@@ -11078,152 +10025,9 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
-        })
-    }
-
-    pub fn refresh_family_governance_registry(&self) -> Result<HostActionResult> {
-        let mut refreshed = 0usize;
-        let mut skipped = 0usize;
-        let mut details = vec![format!(
-            "manifests_root={}",
-            self.workspace_root
-                .join("families")
-                .join("manifests")
-                .display()
-        )];
-
-        for manifest in chatty_factory_core::built_in_family_manifests() {
-            match validate_family_governance_artifacts(&self.workspace_root, &manifest) {
-                Ok(blockers) if blockers.is_empty() => {
-                    refresh_family_manifest_governance(
-                        &self.workspace_root,
-                        &self.runtime_root,
-                        &manifest,
-                    )?;
-                    refreshed += 1;
-                }
-                Ok(blockers) => {
-                    skipped += 1;
-                    details.push(format!(
-                        "skipped={} reason={}",
-                        manifest.family_id.as_str(),
-                        blockers.join("; ")
-                    ));
-                }
-                Err(error) => {
-                    skipped += 1;
-                    details.push(format!(
-                        "skipped={} reason={error}",
-                        manifest.family_id.as_str()
-                    ));
-                }
-            }
-        }
-
-        let refresh_status = FamilyGovernanceRefreshStatus {
-            status_id: chatty_factory_core::timestamp_id("family-governance-refresh"),
-            refreshed_entries: refreshed,
-            skipped_entries: skipped,
-            updated_at: chatty_factory_core::timestamp_id("updated"),
-        };
-        let refresh_status_path =
-            persist_family_governance_refresh_status(&self.runtime_root, &refresh_status)?;
-        let usage_summary = derive_family_usage_summary(&self.output_root)?;
-        let usage_summary_path = persist_family_usage_summary(&self.runtime_root, &usage_summary)?;
-        let starter_usage_summary_path = refresh_starter_usage_summary(&self.runtime_root)?;
-        let triangulation_loop_summary_path =
-            refresh_triangulation_loop_summary(&self.runtime_root)?;
-        details.push(format!("refreshed_entries={refreshed}"));
-        details.push(format!("skipped_entries={skipped}"));
-        details.push(format!("refresh_status={}", refresh_status_path.display()));
-        details.push(format!(
-            "family_usage_summary={}",
-            usage_summary_path.display()
-        ));
-        details.push(format!(
-            "starter_usage_summary={}",
-            starter_usage_summary_path.display()
-        ));
-        details.push(format!(
-            "triangulation_loop_summary={}",
-            triangulation_loop_summary_path.display()
-        ));
-        details.push(format!(
-            "family_usage_projects={}",
-            usage_summary.total_projects
-        ));
-        Ok(HostActionResult {
-            summary: "Family governance registry refreshed".into(),
-            details,
-            browser_state: None,
-            runtime_refresh: None,
-            execution_result: None,
-            fallback_result: None,
-            followup_route: None,
-            extension_registry: None,
-        })
-    }
-
-    pub fn refresh_template_governance_registry(&self) -> Result<HostActionResult> {
-        let bundles = discover_template_governance_bundles(&self.workspace_root)?;
-        let mut refreshed = 0usize;
-        let mut skipped = 0usize;
-        let mut details = vec![format!(
-            "templates_root={}",
-            self.workspace_root.join("templates").display()
-        )];
-
-        for bundle in bundles {
-            match validate_template_governance_bundle(&bundle) {
-                Ok(blockers) if blockers.is_empty() => {
-                    refresh_template_bundle_governance(
-                        &self.workspace_root,
-                        &self.runtime_root,
-                        &bundle,
-                    )?;
-                    refreshed += 1;
-                }
-                Ok(blockers) => {
-                    skipped += 1;
-                    details.push(format!(
-                        "skipped={} reason={}",
-                        bundle.template_bundle_id,
-                        blockers.join("; ")
-                    ));
-                }
-                Err(error) => {
-                    skipped += 1;
-                    details.push(format!(
-                        "skipped={} reason={error}",
-                        bundle.template_bundle_id
-                    ));
-                }
-            }
-        }
-
-        let refresh_status = TemplateGovernanceRefreshStatus {
-            status_id: chatty_factory_core::timestamp_id("template-governance-refresh"),
-            refreshed_entries: refreshed,
-            skipped_entries: skipped,
-            updated_at: chatty_factory_core::timestamp_id("updated"),
-        };
-        let refresh_status_path =
-            persist_template_governance_refresh_status(&self.runtime_root, &refresh_status)?;
-        details.push(format!("refreshed_entries={refreshed}"));
-        details.push(format!("skipped_entries={skipped}"));
-        details.push(format!("refresh_status={}", refresh_status_path.display()));
-        Ok(HostActionResult {
-            summary: "Template governance registry refreshed".into(),
-            details,
-            browser_state: None,
-            runtime_refresh: None,
-            execution_result: None,
-            fallback_result: None,
-            followup_route: None,
-            extension_registry: None,
         })
     }
 
@@ -11278,7 +10082,7 @@ impl HostBridge {
             template_path.display().to_string(),
             bundle_path.display().to_string(),
         ];
-        let scaffold_root = self
+        let attempt_bundle_root = self
             .workspace_root
             .join("proof_harness")
             .display()
@@ -11295,7 +10099,7 @@ impl HostBridge {
             entry.requested_capabilities = requested_capabilities.clone();
             entry.integrated_paths = integrated_paths.clone();
             entry.source_stub_path = source_stub_path.clone();
-            entry.scaffold_root = scaffold_root.clone();
+            entry.attempt_bundle_root = attempt_bundle_root.clone();
             entry.proof_seed_template_id = None;
             entry.proof_seed_bundle_id = None;
             let (quality_status, quality_notes) = evaluate_proof_harness_quality(
@@ -11328,16 +10132,16 @@ impl HostBridge {
                 status: "pending_implementation".into(),
                 extension_kind: "proof_harness_bundle".into(),
                 unresolved_layers: vec!["proof_harness".into()],
-                family_id: None,
+                substrate_kind: None,
                 tool_kind: Some(template.template_kind.clone()),
                 patch_kind: Some(template.template_id.clone()),
                 bridge_capabilities: Vec::new(),
                 requested_capabilities,
-                missing_family_build_primitive_classes: Vec::new(),
+                missing_base_build_primitive_classes: Vec::new(),
                 missing_patch_primitive_classes: Vec::new(),
                 missing_helper_primitive_kinds: Vec::new(),
                 source_stub_path,
-                scaffold_root,
+                attempt_bundle_root,
                 integrated_paths,
                 promotion_artifacts: Vec::new(),
                 apply_patch_artifacts: Vec::new(),
@@ -11413,7 +10217,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
@@ -11447,7 +10251,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
@@ -11490,7 +10294,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
@@ -11513,9 +10317,9 @@ impl HostBridge {
                         entry_id
                     );
                 }
-                let scaffold_root = PathBuf::from(&entry.scaffold_root);
-                if !scaffold_root.exists() {
-                    missing_paths.push(scaffold_root.display().to_string());
+                let attempt_bundle_root = PathBuf::from(&entry.attempt_bundle_root);
+                if !attempt_bundle_root.exists() {
+                    missing_paths.push(attempt_bundle_root.display().to_string());
                 }
                 let source_stub = PathBuf::from(&entry.source_stub_path);
                 if !source_stub.exists() {
@@ -11581,7 +10385,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
@@ -11605,8 +10409,8 @@ impl HostBridge {
                     );
                 }
                 let slug = pending_entry_slug(entry);
-                let scaffold_root = PathBuf::from(&entry.scaffold_root);
-                let promotion_root = scaffold_root.join("rust_registry_promotion");
+                let attempt_bundle_root = PathBuf::from(&entry.attempt_bundle_root);
+                let promotion_root = attempt_bundle_root.join("rust_registry_promotion");
                 fs::create_dir_all(&promotion_root)?;
 
                 if entry.extension_kind == "proof_harness_bundle" {
@@ -11683,7 +10487,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
@@ -11708,7 +10512,7 @@ impl HostBridge {
                 }
                 if entry.extension_kind == "proof_harness_bundle" {
                     let promotion_root =
-                        PathBuf::from(&entry.scaffold_root).join("rust_registry_promotion");
+                        PathBuf::from(&entry.attempt_bundle_root).join("rust_registry_promotion");
                     fs::create_dir_all(&promotion_root)?;
                     let note_path = promotion_root.join("proof_harness.apply_patch.txt");
                     fs::write(
@@ -11721,7 +10525,7 @@ impl HostBridge {
                     continue;
                 }
                 let promotion_root =
-                    PathBuf::from(&entry.scaffold_root).join("rust_registry_promotion");
+                    PathBuf::from(&entry.attempt_bundle_root).join("rust_registry_promotion");
                 fs::create_dir_all(&promotion_root)?;
                 let slug = pending_entry_slug(entry);
                 let registry_patch_path = promotion_root.join("registry.apply_patch.txt");
@@ -11761,7 +10565,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
@@ -11860,7 +10664,7 @@ impl HostBridge {
                 browser_state: None,
                 runtime_refresh: None,
                 execution_result: None,
-                fallback_result: None,
+                next_attempt_result: None,
                 followup_route: None,
                 extension_registry: Some(build_extension_registry_view(&registry)),
             });
@@ -11911,7 +10715,7 @@ impl HostBridge {
                 browser_state: None,
                 runtime_refresh: None,
                 execution_result: None,
-                fallback_result: None,
+                next_attempt_result: None,
                 followup_route: None,
                 extension_registry: Some(build_extension_registry_view(&registry)),
             });
@@ -11963,7 +10767,7 @@ impl HostBridge {
                 browser_state: None,
                 runtime_refresh: None,
                 execution_result: None,
-                fallback_result: None,
+                next_attempt_result: None,
                 followup_route: None,
                 extension_registry: Some(build_extension_registry_view(&registry)),
             });
@@ -12015,7 +10819,7 @@ impl HostBridge {
                 browser_state: None,
                 runtime_refresh: None,
                 execution_result: None,
-                fallback_result: None,
+                next_attempt_result: None,
                 followup_route: None,
                 extension_registry: Some(build_extension_registry_view(&registry)),
             });
@@ -12129,7 +10933,7 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
@@ -12239,7 +11043,7 @@ impl HostBridge {
                 browser_state: None,
                 runtime_refresh: None,
                 execution_result: None,
-                fallback_result: None,
+                next_attempt_result: None,
                 followup_route: None,
                 extension_registry: Some(build_extension_registry_view(&registry)),
             });
@@ -12280,7 +11084,7 @@ impl HostBridge {
                 browser_state: None,
                 runtime_refresh: None,
                 execution_result: None,
-                fallback_result: None,
+                next_attempt_result: None,
                 followup_route: None,
                 extension_registry: Some(build_extension_registry_view(&registry)),
             });
@@ -12322,7 +11126,7 @@ impl HostBridge {
                 browser_state: None,
                 runtime_refresh: None,
                 execution_result: None,
-                fallback_result: None,
+                next_attempt_result: None,
                 followup_route: None,
                 extension_registry: Some(build_extension_registry_view(&registry)),
             });
@@ -12364,7 +11168,7 @@ impl HostBridge {
                 browser_state: None,
                 runtime_refresh: None,
                 execution_result: None,
-                fallback_result: None,
+                next_attempt_result: None,
                 followup_route: None,
                 extension_registry: Some(build_extension_registry_view(&registry)),
             });
@@ -12442,197 +11246,10 @@ impl HostBridge {
             browser_state: None,
             runtime_refresh: None,
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: Some(build_extension_registry_view(&registry)),
         })
-    }
-
-    fn promote_pending_extension(
-        &self,
-        build_spec: &FallbackBuildSpec,
-        spec_path: &Path,
-        scaffold_root: &Path,
-        integrated_paths: &[PathBuf],
-    ) -> Result<PathBuf> {
-        let registry_path = self
-            .workspace_root
-            .join("operator_registry")
-            .join("pending_lanes.json");
-        let mut registry = load_pending_extension_registry(&registry_path)?;
-        let unresolved_layers = unresolved_scaffold_layers(build_spec)
-            .into_iter()
-            .map(str::to_string)
-            .collect::<Vec<_>>();
-        let family_id = build_spec
-            .suggested_family_id
-            .as_ref()
-            .map(|id| id.as_str().to_string());
-        let tool_kind = build_spec.suggested_tool_kind.clone();
-        let patch_kind = build_spec.suggested_patch_kind.clone();
-        let source_stub_path = spec_path.display().to_string();
-        let scaffold_root = scaffold_root.display().to_string();
-        let integrated_paths = integrated_paths
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>();
-
-        if let Some(entry) = registry.entries.iter_mut().find(|entry| {
-            entry.status == "pending_implementation"
-                && entry.family_id == family_id
-                && entry.tool_kind == tool_kind
-                && entry.patch_kind == patch_kind
-                && entry.unresolved_layers == unresolved_layers
-                && entry.missing_family_build_primitive_classes
-                    == build_spec.missing_family_build_primitive_classes
-                && entry.missing_patch_primitive_classes
-                    == build_spec.missing_patch_primitive_classes
-                && entry.missing_helper_primitive_kinds == build_spec.missing_helper_primitive_kinds
-        }) {
-            entry.extension_kind = build_spec.suggested_extension_kind.clone();
-            entry.bridge_capabilities = build_spec.suggested_bridge_capabilities.clone();
-            entry.requested_capabilities = build_spec.requested_capabilities.clone();
-            entry.proof_seed_template_id = build_spec.suggested_proof_seed_template_id.clone();
-            entry.proof_seed_bundle_id = build_spec.suggested_proof_seed_bundle_id.clone();
-            entry.source_stub_path = source_stub_path;
-            entry.scaffold_root = scaffold_root;
-            entry.integrated_paths = integrated_paths;
-            entry.archived_reason = None;
-            if entry.extension_kind == "proof_harness_bundle" {
-                if let Ok((template, bundle)) = load_proof_harness_bundle_manifests(entry) {
-                    let (quality_status, quality_notes) = evaluate_proof_harness_quality(
-                        &self.workspace_root,
-                        &template,
-                        &bundle,
-                        entry.proof_seed_template_id.as_deref(),
-                        entry.proof_seed_bundle_id.as_deref(),
-                    );
-                    entry.proof_quality_status = Some(quality_status);
-                    entry.proof_quality_notes = quality_notes;
-                    refresh_proof_harness_lineage(
-                        &self.workspace_root,
-                        &self.runtime_root,
-                        entry,
-                        &template,
-                        &bundle,
-                    )?;
-                }
-            }
-            normalize_pending_extension_entry(entry);
-        } else {
-            let (proof_quality_status, proof_quality_notes) =
-                if build_spec.suggested_extension_kind == "proof_harness_bundle" {
-                    let template_path = integrated_paths
-                        .iter()
-                        .find(|path| path.contains("proof_harness") && path.contains("templates"))
-                        .map(PathBuf::from);
-                    let bundle_path = integrated_paths
-                        .iter()
-                        .find(|path| path.contains("proof_harness") && path.contains("bundles"))
-                        .map(PathBuf::from);
-                    if let (Some(template_path), Some(bundle_path)) = (template_path, bundle_path) {
-                        let template: PrimitiveProofTemplate =
-                            serde_json::from_str(&fs::read_to_string(&template_path)?)?;
-                        let bundle: CapabilityComparisonBundle =
-                            serde_json::from_str(&fs::read_to_string(&bundle_path)?)?;
-                        let (status, notes) = evaluate_proof_harness_quality(
-                            &self.workspace_root,
-                            &template,
-                            &bundle,
-                            build_spec.suggested_proof_seed_template_id.as_deref(),
-                            build_spec.suggested_proof_seed_bundle_id.as_deref(),
-                        );
-                        (Some(status), notes)
-                    } else {
-                        (None, Vec::new())
-                    }
-                } else {
-                    (None, Vec::new())
-                };
-            registry.entries.push(PendingExtensionEntry {
-                entry_id: chatty_factory_core::timestamp_id("pending-lane"),
-                status: "pending_implementation".into(),
-                extension_kind: build_spec.suggested_extension_kind.clone(),
-                unresolved_layers,
-                family_id,
-                tool_kind,
-                patch_kind,
-                bridge_capabilities: build_spec.suggested_bridge_capabilities.clone(),
-                requested_capabilities: build_spec.requested_capabilities.clone(),
-                missing_family_build_primitive_classes: build_spec
-                    .missing_family_build_primitive_classes
-                    .clone(),
-                missing_patch_primitive_classes: build_spec.missing_patch_primitive_classes.clone(),
-                missing_helper_primitive_kinds: build_spec.missing_helper_primitive_kinds.clone(),
-                source_stub_path,
-                scaffold_root,
-                integrated_paths,
-                promotion_artifacts: Vec::new(),
-                apply_patch_artifacts: Vec::new(),
-                proof_seed_template_id: build_spec.suggested_proof_seed_template_id.clone(),
-                proof_seed_bundle_id: build_spec.suggested_proof_seed_bundle_id.clone(),
-                proof_quality_status,
-                proof_quality_notes,
-                proof_lineage_receipt_path: None,
-                proof_drift_status: None,
-                proof_drift_notes: Vec::new(),
-                proof_normalized_failure_class: None,
-                proof_recommended_next_action: None,
-                proof_recommended_next_step: None,
-                proof_change_since_last_pass_status: None,
-                proof_change_since_last_pass_notes: Vec::new(),
-                composition_lineage_receipt_path: None,
-                composition_drift_status: None,
-                composition_drift_notes: Vec::new(),
-                composition_normalized_failure_class: None,
-                composition_recommended_next_action: None,
-                composition_recommended_next_step: None,
-                composition_change_since_last_live_status: None,
-                composition_change_since_last_live_notes: Vec::new(),
-                patch_lineage_receipt_path: None,
-                patch_drift_status: None,
-                patch_drift_notes: Vec::new(),
-                patch_normalized_failure_class: None,
-                patch_recommended_next_action: None,
-                patch_recommended_next_step: None,
-                patch_change_since_last_live_status: None,
-                patch_change_since_last_live_notes: Vec::new(),
-                helper_lineage_receipt_path: None,
-                helper_drift_status: None,
-                helper_drift_notes: Vec::new(),
-                helper_normalized_failure_class: None,
-                helper_recommended_next_action: None,
-                helper_recommended_next_step: None,
-                helper_change_since_last_live_status: None,
-                helper_change_since_last_live_notes: Vec::new(),
-                bridge_lineage_receipt_path: None,
-                bridge_drift_status: None,
-                bridge_drift_notes: Vec::new(),
-                bridge_normalized_failure_class: None,
-                bridge_recommended_next_action: None,
-                bridge_recommended_next_step: None,
-                bridge_change_since_last_live_status: None,
-                bridge_change_since_last_live_notes: Vec::new(),
-                archived_reason: None,
-                created_at: chatty_factory_core::timestamp_id("created"),
-            });
-            if let Some(entry) = registry.entries.last_mut() {
-                if entry.extension_kind == "proof_harness_bundle" {
-                    if let Ok((template, bundle)) = load_proof_harness_bundle_manifests(entry) {
-                        refresh_proof_harness_lineage(
-                            &self.workspace_root,
-                            &self.runtime_root,
-                            entry,
-                            &template,
-                            &bundle,
-                        )?;
-                    }
-                }
-            }
-        }
-        registry.updated_at = chatty_factory_core::timestamp_id("updated");
-        persist_json_pretty(&registry_path, &registry)?;
-        Ok(registry_path)
     }
 
     pub fn refresh_runtime(&self, planner: &HostPlannerOptions) -> Result<HostActionResult> {
@@ -12678,7 +11295,7 @@ impl HostBridge {
                 smoke: None,
             }),
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -12745,7 +11362,7 @@ impl HostBridge {
                 smoke: Some(smoke),
             }),
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -12822,7 +11439,7 @@ impl HostBridge {
                 smoke: None,
             }),
             execution_result: None,
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -12849,30 +11466,6 @@ impl HostBridge {
         }
         result.followup_route = Some(followup_route);
         Ok(result)
-    }
-
-    pub fn build_request_with_starter_override(
-        &self,
-        raw_request: &str,
-        starter_override_id: Option<&str>,
-        planner: &HostPlannerOptions,
-    ) -> Result<HostActionResult> {
-        let starter_override = match starter_override_id {
-            Some(value) => Some(resolve_build_starter_override(value).ok_or_else(|| {
-                let known = build_starter_choices()
-                    .iter()
-                    .map(|choice| choice.id)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                anyhow::anyhow!(
-                    "unknown build starter '{}'; known starters: {}",
-                    value,
-                    known
-                )
-            })?),
-            None => None,
-        };
-        self.build_request_inner(raw_request, starter_override, planner)
     }
 
     pub fn resolve_followup_route(
@@ -12959,7 +11552,7 @@ impl HostBridge {
             interpreted_goal:
                 "Choose whether this short follow-up should start a new build or patch an existing project"
                     .into(),
-            inferred_family_candidates: seed_request.candidate_family_ids.clone(),
+            inferred_substrate_candidates: seed_request.candidate_substrate_kinds.clone(),
             inferred_tool_kind: None,
             available_patch_kinds: Vec::new(),
             candidate_request_modes: vec![
@@ -12975,7 +11568,7 @@ impl HostBridge {
             candidate_patch_recipe_ids: Vec::new(),
             candidate_composition_patch_kinds: Vec::new(),
             candidate_composition_patch_primitive_classes: Vec::new(),
-            candidate_composition_family_build_primitive_classes: Vec::new(),
+            candidate_composition_base_build_primitive_classes: Vec::new(),
             candidate_composition_layers: Vec::new(),
             candidate_composition_adapter_semantics: Vec::new(),
             candidate_composition_helper_primitive_ids: Vec::new(),
@@ -13078,38 +11671,16 @@ impl HostBridge {
         raw_request: &str,
         planner: &HostPlannerOptions,
     ) -> Result<HostActionResult> {
-        self.build_request_inner(raw_request, None, planner)
+        self.build_request_inner(raw_request, planner)
     }
 
     fn build_request_inner(
         &self,
         raw_request: &str,
-        starter_override: Option<BuildStarterOverride>,
         planner: &HostPlannerOptions,
     ) -> Result<HostActionResult> {
         let control = ControlPlane::milestone_one();
-        let mut request = normalize_request(raw_request);
-        let recommendation_request = request.clone();
-        let mut recommended_plan = derive_request_plan(&recommendation_request, None);
-        apply_adapter_aware_family_preference_for_build(
-            &recommendation_request,
-            &mut recommended_plan,
-        );
-        let recommended_starter_id = recommended_plan
-            .inferred_family_candidates
-            .first()
-            .map(starter_id_for_family_id)
-            .map(str::to_string);
-        let recommended_starter_summary = recommended_starter_id.as_ref().map(|starter_id| {
-            format!(
-                "normal routing would choose: {} [{}]",
-                build_starter_label(starter_id),
-                starter_id
-            )
-        });
-        if let Some(starter_override) = starter_override.as_ref() {
-            apply_build_starter_override(&mut request, starter_override.clone());
-        }
+        let request = normalize_request(raw_request);
         persist_json_pretty(
             &self
                 .runtime_root
@@ -13119,13 +11690,9 @@ impl HostBridge {
         )?;
 
         let mut plan = derive_request_plan(&request, None);
-        if let Some(starter_override) = starter_override.as_ref() {
-            apply_build_starter_override_to_plan(&mut plan, starter_override.clone());
-        }
         if plan.needs_llm_review {
             self.maybe_run_auto_planner(&request, &mut plan, None, planner)?;
         }
-        apply_adapter_aware_family_preference_for_build(&request, &mut plan);
         let proceed_with_soft_review = should_continue_build_with_soft_review(&plan);
         persist_json_pretty(
             &self
@@ -13134,17 +11701,17 @@ impl HostBridge {
                 .join(format!("{}.json", plan.plan_id)),
             &plan,
         )?;
-        if plan.inferred_family_candidates.is_empty() {
-            return emit_fallback_result(
+        if plan.inferred_substrate_candidates.is_empty() {
+            return emit_next_attempt_result(
                 &self.runtime_root,
                 &request,
                 &plan,
                 None,
-                "No deterministic build family matched this request yet",
+                "No bounded deterministic substrate matched this request yet",
             );
         }
         if plan.needs_llm_review && !proceed_with_soft_review {
-            return emit_fallback_result(
+            return emit_next_attempt_result(
                 &self.runtime_root,
                 &request,
                 &plan,
@@ -13154,7 +11721,7 @@ impl HostBridge {
         }
 
         let route = control.choose_milestone_one_route(&request, &plan);
-        let inputs = derive_scaffold_inputs(&request, &plan, &route);
+        let inputs = derive_build_seed_inputs(&request, &plan, &route);
         persist_json_pretty(
             &self
                 .runtime_root
@@ -13165,7 +11732,7 @@ impl HostBridge {
         persist_json_pretty(
             &self
                 .runtime_root
-                .join("scaffold_inputs")
+                .join("build_seed_inputs")
                 .join(format!("{}-inputs.json", request.request_id)),
             &inputs,
         )?;
@@ -13174,8 +11741,7 @@ impl HostBridge {
             &plan,
             &route,
             &inputs,
-            starter_override.as_ref(),
-            recommended_starter_id.as_deref(),
+            None,
         );
         let build_intent_freeze_path =
             persist_build_intent_freeze(&self.runtime_root, &build_intent_freeze)?;
@@ -13185,8 +11751,7 @@ impl HostBridge {
             &plan,
             &route,
             &inputs,
-            starter_override.as_ref(),
-            recommended_starter_id.as_deref(),
+            None,
         );
         let build_plan_artifact_path = self
             .runtime_root
@@ -13216,14 +11781,16 @@ impl HostBridge {
         );
         let plan_task_list_path = persist_plan_task_list(&self.runtime_root, &plan_task_list)?;
         persist_json_pretty(&build_plan_artifact_path, &reviewed_build_plan_artifact)?;
+        let selected_substrate_kind = route.selected_substrate_kind.as_ref();
+        let selected_tool_kind = plan.inferred_tool_kind.as_deref();
         let mut composition_patch_kinds = derive_bounded_build_composition_patch_kinds(
             &request,
             &plan,
-            route.selected_family_id.as_ref(),
+            selected_substrate_kind,
         );
         let candidate_helper_primitive_ids = candidate_helper_primitive_ids_for_composition(
             None,
-            route.selected_family_id.as_ref(),
+            selected_substrate_kind,
             &composition_patch_kinds,
         );
         let mut composition_review_notes = Vec::new();
@@ -13233,7 +11800,8 @@ impl HostBridge {
                 &request,
                 &plan,
                 None,
-                route.selected_family_id.as_ref(),
+                selected_substrate_kind,
+                selected_tool_kind,
                 &composition_patch_kinds,
                 &candidate_helper_primitive_ids,
                 planner,
@@ -13247,7 +11815,7 @@ impl HostBridge {
             }
             composition_review_receipt_path = review.review_receipt_path.clone();
             if planner.auto_planner && !review.approved {
-                return emit_fallback_result(
+                return emit_next_attempt_result(
                     &self.runtime_root,
                     &request,
                     &plan,
@@ -13275,42 +11843,40 @@ impl HostBridge {
         let composable_route_plan_path =
             persist_composable_route_plan(&self.runtime_root, &composable_route_plan)?;
 
-        let artifacts = match route.selected_family_id {
-            Some(FamilyId::ChattycogWebviewModule) => {
-                build_chattycog_webview_module(&self.output_root, &inputs)?
+        let execution_backend = select_builder_execution_backend(
+            route.selected_substrate_kind.as_ref(),
+            request.explicit_stack.as_deref(),
+            plan.inferred_tool_kind.as_deref(),
+        )?;
+        let artifacts = match execution_backend {
+            BuilderExecutionBackend::PythonCli => {
+                build_python_cli_seed(&self.output_root, &inputs)?
             }
-            Some(FamilyId::ChattycogNativeWindowModule) => {
-                build_chattycog_native_window_module(&self.output_root, &inputs)?
+            BuilderExecutionBackend::RustCli => build_rust_cli_seed(&self.output_root, &inputs)?,
+            BuilderExecutionBackend::StaticWeb => {
+                build_static_web_seed(&self.output_root, &inputs)?
             }
-            Some(FamilyId::ChattyeduNativeWindowModule) => {
-                build_chattyedu_native_window_module(&self.output_root, &inputs)?
-            }
-            Some(FamilyId::ChattycogChattyeduNativeWindowModule) => {
-                build_chattycog_chattyedu_native_window_module(&self.output_root, &inputs)?
-            }
-            Some(FamilyId::ChattycogWorkspaceModule) => {
-                build_chattycog_workspace_module(&self.output_root, &inputs)?
-            }
-            Some(FamilyId::PythonCliTool) => build_python_cli_tool(&self.output_root, &inputs)?,
-            Some(FamilyId::RustCliTool) => build_rust_cli_tool(&self.output_root, &inputs)?,
-            _ => build_static_web_dashboard(&self.output_root, &inputs)?,
         };
         persist_composition_step_receipt(
             &self.runtime_root,
             &composable_route_plan.composition_plan_id,
             0,
-            "family_seed",
-            route
-                .selected_family_id
-                .as_ref()
-                .map(FamilyId::as_str)
-                .unwrap_or("static_web_dashboard"),
+            "substrate_seed",
+            match execution_backend {
+                BuilderExecutionBackend::PythonCli => "cli:python",
+                BuilderExecutionBackend::RustCli => "cli:rust",
+                BuilderExecutionBackend::StaticWeb => "static_web",
+            },
             &serde_json::json!({
                 "composition_plan_id": composable_route_plan.composition_plan_id,
                 "request_id": request.request_id,
                 "step_index": 0,
-                "step_kind": "family_seed",
-                "primitive_id": route.selected_family_id.as_ref().map(FamilyId::as_str).unwrap_or("static_web_dashboard"),
+                "step_kind": "substrate_seed",
+                "primitive_id": match execution_backend {
+                    BuilderExecutionBackend::PythonCli => "cli:python",
+                    BuilderExecutionBackend::RustCli => "cli:rust",
+                    BuilderExecutionBackend::StaticWeb => "static_web",
+                },
                 "project_name": inputs.project_name,
                 "project_dir": artifacts.project_dir,
                 "status": "seeded",
@@ -13378,23 +11944,21 @@ impl HostBridge {
                     &request,
                     &plan,
                     &inputs.project_name,
-                    refreshed_spec.family_id.clone(),
+                    project_spec_substrate_kind_ref(&refreshed_spec),
                     refreshed_spec.tool_kind.as_deref(),
-                    route
-                        .selected_family_id
-                        .as_ref()
-                        .map(FamilyId::as_str)
+                    selected_substrate_kind
+                        .map(SubstrateKind::as_str)
                         .unwrap_or("deterministic_build"),
                     "execution_smoke_failed_after_build",
-                    "do not ship a generated build when execution smoke fails after scaffold emission",
+                    "do not ship a generated build when execution smoke fails after build-seed emission",
                     &error.to_string(),
                 );
-                return emit_fallback_result(
+                return emit_next_attempt_result(
                     &self.runtime_root,
                     &request,
                     &plan,
                     None,
-                    "Deterministic build execution smoke failed after scaffold emission",
+                    "Deterministic build execution smoke failed after build-seed emission",
                 );
             }
         };
@@ -13452,12 +12016,10 @@ impl HostBridge {
             proof_capability_classes(&refreshed_spec, &monitoring_acceptance);
         let auto_monitoring_compare =
             if helper_monitoring_baseline_satisfied(&monitoring_capabilities) {
-                if let Some(counterpart_project_name) = find_counterpart_monitoring_project(
-                    &self.output_root,
-                    &inputs.project_name,
-                    refreshed_spec.family_id.as_ref(),
-                )? {
-                    Some(self.persist_cross_family_monitoring_receipt(
+                if let Some(counterpart_project_name) =
+                    find_counterpart_monitoring_project(&self.output_root, &inputs.project_name)?
+                {
+                    Some(self.persist_legacy_comparison_monitoring_receipt(
                         &inputs.project_name,
                         &counterpart_project_name,
                     )?)
@@ -13484,53 +12046,24 @@ impl HostBridge {
                 &request,
                 &plan,
                 &inputs.project_name,
-                refreshed_spec.family_id.clone(),
+                project_spec_substrate_kind_ref(&refreshed_spec),
                 refreshed_spec.tool_kind.as_deref(),
-                route
-                    .selected_family_id
-                    .as_ref()
-                    .map(FamilyId::as_str)
+                selected_substrate_kind
+                    .map(SubstrateKind::as_str)
                     .unwrap_or("deterministic_build"),
                 "acceptance_plan_failed_after_build",
                 "do not treat emitted build artifacts as shippable when acceptance verification fails",
                 &error.to_string(),
             );
-            return emit_fallback_result(
+            return emit_next_attempt_result(
                 &self.runtime_root,
                 &request,
                 &plan,
                 None,
-                "Deterministic build verification failed after scaffold emission",
+                "Deterministic build verification failed after build-seed emission",
             );
         }
-        let starter_override_summary = starter_override
-            .as_ref()
-            .map(build_starter_override_summary);
-        let starter_recommendation_comparison = match (
-            starter_override
-                .as_ref()
-                .map(|value| value.family_id.as_str()),
-            recommended_starter_id.as_deref(),
-        ) {
-            (Some(selected), Some(recommended)) if selected == recommended => {
-                Some("matched_normal_routing".to_string())
-            }
-            (Some(_), Some(_)) => Some("overrode_normal_routing".to_string()),
-            (None, Some(_)) => Some("auto_followed_normal_routing".to_string()),
-            _ => None,
-        };
-        let receipt = build_receipt(
-            &request.request_id,
-            &inputs,
-            &artifacts,
-            starter_override
-                .as_ref()
-                .map(|value| value.family_id.as_str().to_string()),
-            starter_override_summary.clone(),
-            recommended_starter_id.clone(),
-            recommended_starter_summary.clone(),
-            starter_recommendation_comparison.clone(),
-        );
+        let receipt = build_receipt(&request.request_id, &inputs, &artifacts);
         persist_json_pretty(
             &self
                 .runtime_root
@@ -13544,7 +12077,7 @@ impl HostBridge {
             "active_project_sessions",
             &ProjectSession {
                 project_name: receipt.project_name.clone(),
-                family_id: receipt.family_id.clone(),
+                substrate: receipt.substrate.clone(),
                 tool_kind: receipt.tool_kind.clone(),
                 request_summary: Some(inputs.summary.clone()),
                 last_action: "build".into(),
@@ -13559,16 +12092,13 @@ impl HostBridge {
             &receipt.project_name,
         );
         let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
-        let family_usage_summary_path =
-            refresh_family_usage_summary(&self.output_root, &self.runtime_root)?;
-        let starter_usage_summary_path = refresh_starter_usage_summary(&self.runtime_root)?;
         let triangulation_loop_summary_path =
             refresh_triangulation_loop_summary(&self.runtime_root)?;
         let acceptance_status = load_acceptance_status(&self.runtime_root, &request.request_id);
         let (outcome_class, outcome_notes) = classify_execution_outcome(
             "build",
             Some(&build_intent_freeze),
-            receipt.family_id.as_ref().map(FamilyId::as_str),
+            Some(receipt.substrate.as_str()),
             receipt.tool_kind.as_deref(),
             acceptance_status.as_deref(),
             &{
@@ -13582,17 +12112,13 @@ impl HostBridge {
                 notes
             },
         );
-        let family = receipt
-            .family_id
-            .as_ref()
-            .map(FamilyId::as_str)
-            .unwrap_or("unknown_family");
+        let substrate = receipt.substrate.as_str();
         Ok(HostActionResult {
             summary: "Build request finished".into(),
             details: {
-                let mut details = vec![
+                let details = vec![
                     format!("project={}", receipt.project_name),
-                    format!("family={family}"),
+                    format!("substrate={substrate}"),
                     format!(
                         "composition_route_class={}",
                         composition_route_class_label(&composition_route_class)
@@ -13644,27 +12170,10 @@ impl HostBridge {
                         }
                     ),
                     format!(
-                        "family_usage_summary={}",
-                        family_usage_summary_path.display()
-                    ),
-                    format!(
-                        "starter_usage_summary={}",
-                        starter_usage_summary_path.display()
-                    ),
-                    format!(
                         "triangulation_loop_summary={}",
                         triangulation_loop_summary_path.display()
                     ),
                 ];
-                if let Some(summary) = &starter_override_summary {
-                    details.push(format!("starter_override={summary}"));
-                }
-                if let Some(summary) = &recommended_starter_summary {
-                    details.push(format!("starter_recommendation={summary}"));
-                }
-                if let Some(comparison) = &starter_recommendation_comparison {
-                    details.push(format!("starter_recommendation_comparison={comparison}"));
-                }
                 details
             },
             browser_state: Some(browser_state),
@@ -13678,14 +12187,7 @@ impl HostBridge {
                 outcome_notes,
                 recommended_next_action: None,
                 recommended_next_step: String::new(),
-                starter_override_id: starter_override
-                    .as_ref()
-                    .map(|value| value.family_id.as_str().to_string()),
-                starter_override_summary: starter_override_summary.clone(),
-                recommended_starter_id: recommended_starter_id.clone(),
-                recommended_starter_summary: recommended_starter_summary.clone(),
-                starter_recommendation_comparison: starter_recommendation_comparison.clone(),
-                family_id: receipt.family_id.map(|id| id.as_str().to_string()),
+                substrate_kind: Some(substrate.to_string()),
                 tool_kind: receipt.tool_kind,
                 patch_kind: None,
                 composition_route_class: Some(composition_route_class_label(
@@ -13714,15 +12216,6 @@ impl HostBridge {
                         }
                     }
                     notes.extend(composition_notes);
-                    if let Some(summary) = &starter_override_summary {
-                        notes.push(summary.clone());
-                    }
-                    if let Some(summary) = &recommended_starter_summary {
-                        notes.push(summary.clone());
-                    }
-                    if let Some(comparison) = &starter_recommendation_comparison {
-                        notes.push(format!("starter recommendation comparison: {comparison}"));
-                    }
                     notes.push(format!(
                         "build intent freeze persisted: {}",
                         build_intent_freeze_path.display()
@@ -13802,11 +12295,11 @@ impl HostBridge {
                     }
                     if let Some((receipt, path)) = &auto_monitoring_compare {
                         notes.push(format!(
-                            "cross-family helper monitoring receipt emitted: {}",
+                            "legacy comparison helper monitoring receipt emitted: {}",
                             path.display()
                         ));
                         notes.push(format!(
-                            "cross-family equivalent capability fulfillment={}",
+                            "legacy comparison equivalent capability fulfillment={}",
                             receipt.equivalent_capability_fulfillment
                         ));
                     }
@@ -13838,7 +12331,7 @@ impl HostBridge {
                 helper_services: refreshed_spec.helper_services,
                 helper_runtime_receipts,
             })),
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -13874,17 +12367,17 @@ impl HostBridge {
                 .join(format!("{}.json", plan.plan_id)),
             &plan,
         )?;
-        if plan.inferred_family_candidates.is_empty() {
-            return emit_fallback_result(
+        if plan.inferred_substrate_candidates.is_empty() {
+            return emit_next_attempt_result(
                 &self.runtime_root,
                 &request,
                 &plan,
                 Some(&spec),
-                "Patch request could not be grounded to a deterministic family lane",
+                "Patch request could not be grounded to a bounded deterministic substrate lane",
             );
         }
         if plan.needs_llm_review && !proceed_with_soft_review {
-            return emit_fallback_result(
+            return emit_next_attempt_result(
                 &self.runtime_root,
                 &request,
                 &plan,
@@ -14029,7 +12522,7 @@ impl HostBridge {
         }
         let candidate_helper_primitive_ids = candidate_helper_primitive_ids_for_composition(
             Some(&spec),
-            spec.family_id.as_ref(),
+            project_spec_substrate_kind(&spec).as_ref(),
             &composition_patch_kinds,
         );
         let mut composition_review_notes = Vec::new();
@@ -14062,7 +12555,8 @@ impl HostBridge {
                 &request,
                 &plan,
                 Some(&spec),
-                spec.family_id.as_ref(),
+                project_spec_substrate_kind(&spec).as_ref(),
+                spec.tool_kind.as_deref().or(plan.inferred_tool_kind.as_deref()),
                 &composition_patch_kinds,
                 &candidate_helper_primitive_ids,
                 planner,
@@ -14076,7 +12570,7 @@ impl HostBridge {
             }
             composition_review_receipt_path = review.review_receipt_path.clone();
             if planner.auto_planner && !review.approved {
-                return emit_fallback_result(
+                return emit_next_attempt_result(
                     &self.runtime_root,
                     &request,
                     &plan,
@@ -14168,7 +12662,7 @@ impl HostBridge {
             )?;
             persist_primitive_execution_plan(&self.runtime_root, &primitive_execution_plan)?;
             let Some(artifacts) = outcome.final_artifacts else {
-                return emit_fallback_result(
+                return emit_next_attempt_result(
                     &self.runtime_root,
                     &request,
                     &plan,
@@ -14177,7 +12671,7 @@ impl HostBridge {
                 );
             };
             let Some(receipt) = outcome.final_receipt else {
-                return emit_fallback_result(
+                return emit_next_attempt_result(
                     &self.runtime_root,
                     &request,
                     &plan,
@@ -14241,7 +12735,7 @@ impl HostBridge {
         )) = patch_execution
         else {
             if reviewed_patch_intent_freeze.intended_patch_kind.is_none() {
-                let substrate_bundle = prepare_patch_substrate_attempt(
+                let substrate_bundle = prepare_patch_next_attempt(
                     &self.runtime_root,
                     &self.workspace_root,
                     &project_dir,
@@ -14250,7 +12744,7 @@ impl HostBridge {
                     &spec,
                     planner,
                 )?;
-                return emit_patch_substrate_attempt_result(
+                return emit_patch_next_attempt_result(
                     &self.runtime_root,
                     &self.output_root,
                     &request,
@@ -14265,7 +12759,7 @@ impl HostBridge {
                     &soft_review_patch_notes,
                 );
             }
-            return emit_fallback_result(
+            return emit_next_attempt_result(
                 &self.runtime_root,
                 &request,
                 &plan,
@@ -14313,7 +12807,7 @@ impl HostBridge {
             "active_project_sessions",
             &ProjectSession {
                 project_name: receipt.project_name.clone(),
-                family_id: receipt.family_id.clone(),
+                substrate: receipt.substrate.clone(),
                 tool_kind: spec.tool_kind.clone(),
                 request_summary: Some(receipt.request_summary.clone()),
                 last_action: "patch".into(),
@@ -14324,16 +12818,14 @@ impl HostBridge {
         )?;
         let browser_state = persist_project_browser_state(&self.output_root, &self.runtime_root)?;
         let acceptance_status = load_acceptance_status(&self.runtime_root, &request.request_id);
-        let family = receipt
-            .family_id
-            .as_ref()
-            .map(FamilyId::as_str)
-            .unwrap_or("unknown_family");
+        let substrate = receipt
+            .substrate
+            .as_str();
         Ok(HostActionResult {
             summary: "Patch request finished".into(),
             details: vec![
                 format!("project={}", receipt.project_name),
-                format!("family={family}"),
+                format!("substrate={substrate}"),
                 format!("patch_kind={}", receipt.patch_kind),
                 format!(
                     "composition_route_class={}",
@@ -14392,12 +12884,7 @@ impl HostBridge {
                 ],
                 recommended_next_action: None,
                 recommended_next_step: String::new(),
-                starter_override_id: None,
-                starter_override_summary: None,
-                recommended_starter_id: None,
-                recommended_starter_summary: None,
-                starter_recommendation_comparison: None,
-                family_id: receipt.family_id.map(|id| id.as_str().to_string()),
+                substrate_kind: Some(spec.substrate.clone()),
                 tool_kind: spec.tool_kind,
                 patch_kind: Some(receipt.patch_kind),
                 composition_route_class: Some(composition_route_class_label(
@@ -14456,7 +12943,7 @@ impl HostBridge {
                 helper_services: refreshed_spec.helper_services,
                 helper_runtime_receipts,
             })),
-            fallback_result: None,
+            next_attempt_result: None,
             followup_route: None,
             extension_registry: None,
         })
@@ -14543,7 +13030,8 @@ impl HostBridge {
         request: &chatty_factory_core::RequestRecord,
         plan: &chatty_factory_core::RequestPlan,
         active_spec: Option<&ProjectSpec>,
-        selected_family_id: Option<&FamilyId>,
+        selected_substrate_kind: Option<&SubstrateKind>,
+        selected_tool_kind: Option<&str>,
         candidate_patch_kinds: &[String],
         candidate_helper_primitive_ids: &[String],
         planner: &HostPlannerOptions,
@@ -14554,28 +13042,29 @@ impl HostBridge {
         if !planner.auto_planner {
             let rationale =
                 vec!["auto planner disabled; host used bounded composition candidate list".into()];
-            let candidate_family_build_primitive_classes =
-                candidate_family_build_primitive_classes_for_composition(selected_family_id);
+            let candidate_base_build_primitive_classes =
+                candidate_base_build_primitive_classes_for_composition(selected_substrate_kind);
             let candidate_patch_primitive_classes =
                 candidate_patch_primitive_classes_for_composition(
-                    selected_family_id,
-                    plan.inferred_tool_kind.as_deref(),
+                    selected_substrate_kind,
+                    selected_tool_kind,
                     candidate_patch_kinds,
                 );
             let candidate_helper_primitive_kinds = candidate_helper_primitive_kinds_for_composition(
                 active_spec,
-                selected_family_id,
+                selected_substrate_kind,
                 candidate_patch_kinds,
             );
             let candidate_composition_layers = derive_composition_layers(
-                &candidate_family_build_primitive_classes,
+                &candidate_base_build_primitive_classes,
                 &candidate_patch_primitive_classes,
                 &candidate_helper_primitive_kinds,
                 &Vec::new(),
             );
             let candidate_composition_adapter_semantics = composition_adapter_semantics_for_review(
-                selected_family_id,
-                &candidate_family_build_primitive_classes,
+                selected_substrate_kind,
+                selected_tool_kind,
+                &candidate_base_build_primitive_classes,
                 &candidate_patch_primitive_classes,
                 &candidate_helper_primitive_kinds,
             );
@@ -14591,9 +13080,9 @@ impl HostBridge {
                 candidate_patch_kinds,
                 candidate_patch_kinds,
                 candidate_patch_kinds,
-                &candidate_family_build_primitive_classes,
-                &candidate_family_build_primitive_classes,
-                &candidate_family_build_primitive_classes,
+                &candidate_base_build_primitive_classes,
+                &candidate_base_build_primitive_classes,
+                &candidate_base_build_primitive_classes,
                 &candidate_patch_primitive_classes,
                 &candidate_patch_primitive_classes,
                 &candidate_patch_primitive_classes,
@@ -14651,12 +13140,12 @@ impl HostBridge {
             "Review and refine bounded composition patch primitives for host-owned execution"
                 .into();
         handoff.candidate_composition_patch_kinds = candidate_patch_kinds.to_vec();
-        handoff.candidate_composition_family_build_primitive_classes =
-            candidate_family_build_primitive_classes_for_composition(selected_family_id);
+        handoff.candidate_composition_base_build_primitive_classes =
+            candidate_base_build_primitive_classes_for_composition(selected_substrate_kind);
         handoff.candidate_composition_patch_primitive_classes =
             candidate_patch_primitive_classes_for_composition(
-                selected_family_id,
-                plan.inferred_tool_kind.as_deref(),
+                selected_substrate_kind,
+                selected_tool_kind,
                 candidate_patch_kinds,
             );
         handoff.candidate_composition_helper_primitive_ids =
@@ -14664,17 +13153,18 @@ impl HostBridge {
         handoff.candidate_composition_helper_primitive_kinds =
             candidate_helper_primitive_kinds_for_composition(
                 active_spec,
-                selected_family_id,
+                selected_substrate_kind,
                 candidate_patch_kinds,
             );
         handoff.candidate_composition_adapter_semantics = composition_adapter_semantics_for_review(
-            selected_family_id,
-            &handoff.candidate_composition_family_build_primitive_classes,
+            selected_substrate_kind,
+            selected_tool_kind,
+            &handoff.candidate_composition_base_build_primitive_classes,
             &handoff.candidate_composition_patch_primitive_classes,
             &handoff.candidate_composition_helper_primitive_kinds,
         );
         handoff.candidate_composition_layers = derive_composition_layers(
-            &handoff.candidate_composition_family_build_primitive_classes,
+            &handoff.candidate_composition_base_build_primitive_classes,
             &handoff.candidate_composition_patch_primitive_classes,
             &handoff.candidate_composition_helper_primitive_kinds,
             &Vec::new(),
@@ -14718,8 +13208,8 @@ impl HostBridge {
             .is_empty()
         {
             candidate_patch_primitive_classes_for_composition(
-                selected_family_id,
-                plan.inferred_tool_kind.as_deref(),
+                selected_substrate_kind,
+                selected_tool_kind,
                 candidate_patch_kinds,
             )
         } else {
@@ -14734,20 +13224,20 @@ impl HostBridge {
                 .cloned()
                 .collect::<Vec<_>>()
         };
-        let reviewed_family_build_primitive_classes = if response
-            .recommended_composition_family_build_primitive_classes
+        let reviewed_base_build_primitive_classes = if response
+            .recommended_composition_base_build_primitive_classes
             .is_empty()
         {
             handoff
-                .candidate_composition_family_build_primitive_classes
+                .candidate_composition_base_build_primitive_classes
                 .clone()
         } else {
             response
-                .recommended_composition_family_build_primitive_classes
+                .recommended_composition_base_build_primitive_classes
                 .iter()
                 .filter(|class| {
                     handoff
-                        .candidate_composition_family_build_primitive_classes
+                        .candidate_composition_base_build_primitive_classes
                         .contains(*class)
                 })
                 .cloned()
@@ -14782,7 +13272,7 @@ impl HostBridge {
         {
             candidate_helper_primitive_kinds_for_composition(
                 active_spec,
-                selected_family_id,
+                selected_substrate_kind,
                 candidate_patch_kinds,
             )
         } else {
@@ -14805,10 +13295,10 @@ impl HostBridge {
                 reviewed_patch_primitive_classes.join(", ")
             ));
         }
-        if !reviewed_family_build_primitive_classes.is_empty() {
+        if !reviewed_base_build_primitive_classes.is_empty() {
             rationale.push(format!(
-                "planner reviewed base family build classes: {}",
-                reviewed_family_build_primitive_classes.join(", ")
+                "planner reviewed base build primitives: {}",
+                reviewed_base_build_primitive_classes.join(", ")
             ));
         }
         if !reviewed_helper_primitive_ids.is_empty() {
@@ -14836,11 +13326,13 @@ impl HostBridge {
             ));
         }
         let initial_features: Vec<String> = Vec::new();
+        let primary_substrate_kind = selected_substrate_kind
+            .or_else(|| plan.inferred_substrate_candidates.first());
         if !selected_patch_kinds.is_empty() {
             let (reconciled_patch_kinds, restored_patch_kinds) =
                 restore_composition_required_primitives(
-                    plan.inferred_family_candidates.first(),
-                    plan.inferred_tool_kind.as_deref(),
+                    primary_substrate_kind,
+                    selected_tool_kind,
                     &initial_features,
                     candidate_patch_kinds,
                     &selected_patch_kinds,
@@ -14854,38 +13346,39 @@ impl HostBridge {
             }
         } else {
             selected_patch_kinds = order_composition_patch_kinds_by_dependencies(
-                plan.inferred_family_candidates.first(),
-                plan.inferred_tool_kind.as_deref(),
+                primary_substrate_kind,
+                selected_tool_kind,
                 &initial_features,
                 candidate_patch_kinds,
             );
         }
         let final_helper_primitive_ids = candidate_helper_primitive_ids_for_composition(
             active_spec,
-            selected_family_id,
+            selected_substrate_kind,
             &selected_patch_kinds,
         );
         let final_patch_primitive_classes = candidate_patch_primitive_classes_for_composition(
-            selected_family_id,
-            plan.inferred_tool_kind.as_deref(),
+            selected_substrate_kind,
+            selected_tool_kind,
             &selected_patch_kinds,
         );
-        let final_family_build_primitive_classes =
-            candidate_family_build_primitive_classes_for_composition(selected_family_id);
+        let final_base_build_primitive_classes =
+            candidate_base_build_primitive_classes_for_composition(selected_substrate_kind);
         let final_helper_primitive_kinds = candidate_helper_primitive_kinds_for_composition(
             active_spec,
-            selected_family_id,
+            selected_substrate_kind,
             &selected_patch_kinds,
         );
         let final_composition_layers = derive_composition_layers(
-            &final_family_build_primitive_classes,
+            &final_base_build_primitive_classes,
             &final_patch_primitive_classes,
             &final_helper_primitive_kinds,
             &Vec::new(),
         );
         let final_composition_adapter_semantics = composition_adapter_semantics_for_review(
-            selected_family_id,
-            &final_family_build_primitive_classes,
+            selected_substrate_kind,
+            selected_tool_kind,
+            &final_base_build_primitive_classes,
             &final_patch_primitive_classes,
             &final_helper_primitive_kinds,
         );
@@ -14912,9 +13405,9 @@ impl HostBridge {
             candidate_patch_kinds,
             &reviewed_patch_kinds,
             &selected_patch_kinds,
-            &handoff.candidate_composition_family_build_primitive_classes,
-            &reviewed_family_build_primitive_classes,
-            &final_family_build_primitive_classes,
+            &handoff.candidate_composition_base_build_primitive_classes,
+            &reviewed_base_build_primitive_classes,
+            &final_base_build_primitive_classes,
             &handoff.candidate_composition_patch_primitive_classes,
             &reviewed_patch_primitive_classes,
             &final_patch_primitive_classes,
@@ -14958,7 +13451,7 @@ fn run_planner_with_model_fallback(
     let mut attempted_model_paths = Vec::new();
     let mut run_receipt_paths = Vec::new();
     let mut dispatch_notes = Vec::new();
-    let mut fallback_used = false;
+    let mut model_retry_used = false;
     let mut degraded_response_used = false;
 
     for model_path in model_candidates {
@@ -14979,7 +13472,7 @@ fn run_planner_with_model_fallback(
                     .join("planner_runs")
                     .join(format!("{}.json", receipt.execution_id));
                 if planner_response_needs_retry(&planner_response) && requested_model.is_none() {
-                    fallback_used = true;
+                    model_retry_used = true;
                     degraded_response_used = true;
                     receipt.notes.push(
                         "planner response was recovered from incomplete text; escalating model tier"
@@ -15005,7 +13498,7 @@ fn run_planner_with_model_fallback(
                     requested_model_selector: requested_model.map(str::to_string),
                     attempted_model_paths,
                     successful_model_path: Some(model_path),
-                    fallback_used,
+                    model_retry_used,
                     degraded_response_used,
                     final_response_path: Some(
                         runtime_root
@@ -15035,7 +13528,7 @@ fn run_planner_with_model_fallback(
             requested_model_selector: requested_model.map(str::to_string),
             attempted_model_paths,
             successful_model_path: config.default_model_path.clone(),
-            fallback_used: true,
+            model_retry_used: true,
             degraded_response_used: true,
             final_response_path: Some(
                 runtime_root
@@ -15201,7 +13694,9 @@ fn candidate_patch_recipe_ids(
     active_spec: Option<&ProjectSpec>,
 ) -> Vec<String> {
     registry_candidate_patch_recipe_ids(
-        plan.inferred_family_candidates.first(),
+        plan.inferred_substrate_candidates
+            .first()
+            .map(chatty_factory_core::SubstrateKind::as_str),
         plan.inferred_tool_kind.as_deref(),
         active_spec
             .map(|spec| spec.features.as_slice())
@@ -15210,16 +13705,19 @@ fn candidate_patch_recipe_ids(
 }
 
 fn candidate_operator_bundle_ids(plan: &chatty_factory_core::RequestPlan) -> Vec<String> {
-    plan.inferred_family_candidates
-        .first()
-        .map(FamilyId::as_str)
-        .map(candidate_operator_bundle_ids_for)
-        .unwrap_or_default()
+    chatty_factory_core::candidate_operator_bundle_ids_for_context(
+        plan.inferred_substrate_candidates
+            .first()
+            .map(chatty_factory_core::SubstrateKind::as_str),
+        plan.inferred_tool_kind.as_deref(),
+    )
 }
 
 fn candidate_acceptance_recipe_ids(plan: &chatty_factory_core::RequestPlan) -> Vec<String> {
     registry_candidate_acceptance_recipe_ids(
-        plan.inferred_family_candidates.first(),
+        plan.inferred_substrate_candidates
+            .first()
+            .map(chatty_factory_core::SubstrateKind::as_str),
         plan.inferred_tool_kind.as_deref(),
     )
 }
@@ -15227,7 +13725,7 @@ fn candidate_acceptance_recipe_ids(plan: &chatty_factory_core::RequestPlan) -> V
 fn derive_bounded_build_composition_patch_kinds(
     request: &chatty_factory_core::RequestRecord,
     plan: &chatty_factory_core::RequestPlan,
-    selected_family_id: Option<&FamilyId>,
+    selected_substrate_kind: Option<&SubstrateKind>,
 ) -> Vec<String> {
     if !matches!(
         request.mode,
@@ -15236,7 +13734,7 @@ fn derive_bounded_build_composition_patch_kinds(
         return Vec::new();
     }
     let lower = request.raw_request.to_ascii_lowercase();
-    if matches!(selected_family_id, Some(FamilyId::StaticWebDashboard)) {
+    if matches!(selected_substrate_kind, Some(SubstrateKind::StaticWeb)) {
         let helperish = request_looks_helper_or_service_shaped(request, plan)
             || lower.contains("inbox")
             || lower.contains("watch")
@@ -15251,9 +13749,9 @@ fn derive_bounded_build_composition_patch_kinds(
         }
         return Vec::new();
     }
-    let Some(FamilyId::ChattycogWebviewModule) = selected_family_id else {
+    if !matches!(selected_substrate_kind, Some(SubstrateKind::StaticWeb)) {
         return Vec::new();
-    };
+    }
     let helperish = request_looks_helper_or_service_shaped(request, plan)
         || lower.contains("monitor")
         || lower.contains("status")
@@ -15302,9 +13800,9 @@ fn derive_bounded_patch_composition_patch_kinds(
     if !matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch)) {
         return Vec::new();
     }
-    let Some(FamilyId::ChattycogWebviewModule) = active_spec.family_id.as_ref() else {
+    if project_spec_substrate_kind(active_spec) != Some(SubstrateKind::StaticWeb) {
         return Vec::new();
-    };
+    }
     let lower = request.raw_request.to_ascii_lowercase();
     let available_patch_kinds: Vec<String> = active_spec
         .patch_lanes
@@ -15382,12 +13880,16 @@ fn request_prefers_bounded_patch_composition(
 }
 
 fn composition_primitive_dependencies(
-    family_id: Option<&FamilyId>,
+    substrate_kind: Option<&SubstrateKind>,
     tool_kind: Option<&str>,
     project_features: &[String],
     patch_kinds: &[String],
 ) -> Vec<CompositionPrimitiveDependency> {
-    registry_patch_lane_statuses(family_id, tool_kind, project_features)
+    registry_patch_lane_statuses(
+        substrate_kind.map(SubstrateKind::as_str),
+        tool_kind,
+        project_features,
+    )
         .into_iter()
         .filter(|status| patch_kinds.contains(&status.patch_kind))
         .map(|status| CompositionPrimitiveDependency {
@@ -15451,13 +13953,17 @@ fn enforce_composition_exclusive_groups(
 }
 
 fn order_composition_patch_kinds_by_dependencies(
-    family_id: Option<&FamilyId>,
+    substrate_kind: Option<&SubstrateKind>,
     tool_kind: Option<&str>,
     project_features: &[String],
     patch_kinds: &[String],
 ) -> Vec<String> {
-    let dependency_specs =
-        composition_primitive_dependencies(family_id, tool_kind, project_features, patch_kinds);
+    let dependency_specs = composition_primitive_dependencies(
+        substrate_kind,
+        tool_kind,
+        project_features,
+        patch_kinds,
+    );
     if dependency_specs.is_empty() {
         return patch_kinds.to_vec();
     }
@@ -15503,14 +14009,14 @@ fn order_composition_patch_kinds_by_dependencies(
 }
 
 fn restore_composition_required_primitives(
-    family_id: Option<&FamilyId>,
+    substrate_kind: Option<&SubstrateKind>,
     tool_kind: Option<&str>,
     project_features: &[String],
     candidate_patch_kinds: &[String],
     selected_patch_kinds: &[String],
 ) -> (Vec<String>, Vec<String>) {
     let dependency_specs = composition_primitive_dependencies(
-        family_id,
+        substrate_kind,
         tool_kind,
         project_features,
         candidate_patch_kinds,
@@ -15527,15 +14033,6 @@ fn restore_composition_required_primitives(
         if spec.composition_role == "required" && !restored.contains(&spec.patch_kind) {
             restored.push(spec.patch_kind.clone());
             restored_notes.push(spec.patch_kind.clone());
-        }
-    }
-
-    for semantic_restore in
-        adapter_semantic_patch_restores(family_id, tool_kind, candidate_patch_kinds, &restored)
-    {
-        if !restored.contains(&semantic_restore) {
-            restored.push(semantic_restore.clone());
-            restored_notes.push(semantic_restore);
         }
     }
 
@@ -15590,7 +14087,7 @@ fn restore_composition_required_primitives(
     }
 
     restored = order_composition_patch_kinds_by_dependencies(
-        family_id,
+        substrate_kind,
         tool_kind,
         project_features,
         &restored,
@@ -15629,13 +14126,7 @@ fn verify_build_artifacts(
             )?;
             Ok(())
         }
-        Err(err) => persist_failure(
-            runtime_root,
-            request_id,
-            artifacts.project_dir.clone(),
-            acceptance_plan.family_id.clone(),
-            err,
-        ),
+        Err(err) => persist_failure(runtime_root, request_id, artifacts.project_dir.clone(), err),
     }
 }
 
@@ -16709,7 +15200,8 @@ fn run_execution_safety(
         request_id,
         output_root,
         project_dir,
-        spec.family_id.as_ref(),
+        project_spec_substrate_kind_ref(&spec).as_ref(),
+        spec.tool_kind.as_deref(),
         &spec.entrypoints,
     )?;
     persist_json_pretty(
@@ -16835,7 +15327,6 @@ fn derive_project_patch_diagnosis(
         diagnosis_id: chatty_factory_core::timestamp_id("patch-diagnosis"),
         request_id: request.request_id.clone(),
         project_name: spec.project_name.clone(),
-        family_id: spec.family_id.clone(),
         tool_kind: spec.tool_kind.clone(),
         substrate: spec.substrate.clone(),
         request_summary: plan.interpreted_goal.clone(),
@@ -16946,7 +15437,7 @@ fn derive_patch_intent_freeze(
         freeze_id: chatty_factory_core::timestamp_id("patch-intent-freeze"),
         request_id: request.request_id.clone(),
         project_name: spec.project_name.clone(),
-        family_id: spec.family_id.clone(),
+        substrate: spec.substrate.clone(),
         tool_kind: spec.tool_kind.clone(),
         interpreted_goal: plan.interpreted_goal.clone(),
         intended_patch_kind: plan.intended_patch_kind.clone(),
@@ -17200,7 +15691,7 @@ fn derive_patch_implementation_constraints(
             constraint_id: chatty_factory_core::timestamp_id("implementation-constraint"),
             constraint_scope: "family".into(),
             constraint_origin: constraint_origin.clone(),
-            family_id: spec.family_id.clone(),
+            substrate_kind: project_spec_substrate_kind_ref(spec),
             tool_kind: spec.tool_kind.clone(),
             language_id: Some(spec.substrate.clone()),
             constraint_kind: "stale_structural_shape".into(),
@@ -17225,7 +15716,7 @@ fn derive_patch_implementation_constraints(
             constraint_id: chatty_factory_core::timestamp_id("implementation-constraint"),
             constraint_scope: "family".into(),
             constraint_origin,
-            family_id: spec.family_id.clone(),
+            substrate_kind: project_spec_substrate_kind_ref(spec),
             tool_kind: spec.tool_kind.clone(),
             language_id: Some(spec.substrate.clone()),
             constraint_kind: "missing_required_legacy_anchor".into(),
@@ -17344,7 +15835,7 @@ fn review_patch_implementation_constraints(
         review_id: chatty_factory_core::timestamp_id("constraint-review"),
         request_id: freeze.request_id.clone(),
         project_name: freeze.project_name.clone(),
-        family_id: spec.family_id.clone(),
+        substrate_kind: project_spec_substrate_kind_ref(spec),
         tool_kind: spec.tool_kind.clone(),
         review_subject: freeze
             .intended_patch_kind
@@ -17448,7 +15939,7 @@ fn redirect_replacement_patch_kind(
         return None;
     }
     let replacement_required_markers = patch_required_anchor_markers(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         &replacement_patch_kind,
     );
@@ -17497,7 +15988,7 @@ fn reviewed_replacement_patch_bundle(
             return None;
         }
         let replacement_required_markers = patch_required_anchor_markers(
-            spec.family_id.as_ref(),
+            project_spec_substrate_label(spec),
             spec.tool_kind.as_deref(),
             replacement_patch_kind,
         );
@@ -17542,7 +16033,7 @@ fn retarget_reviewed_freeze_to_patch_kind(
     freeze.intended_patch_kind = Some(patch_kind.to_string());
 
     let declared_surface_groups = patch_expected_artifact_groups(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     );
@@ -17557,7 +16048,7 @@ fn retarget_reviewed_freeze_to_patch_kind(
         .collect();
 
     let required_anchor_markers = patch_required_anchor_markers(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     );
@@ -17566,7 +16057,7 @@ fn retarget_reviewed_freeze_to_patch_kind(
         present_anchor_markers_for_patch_diagnosis(project_dir, &required_anchor_markers);
 
     let conflicting_anchor_markers = patch_conflicting_anchor_markers(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     );
@@ -17575,7 +16066,7 @@ fn retarget_reviewed_freeze_to_patch_kind(
         present_anchor_markers_for_patch_diagnosis(project_dir, &conflicting_anchor_markers);
 
     freeze.declared_ownership_boundaries = patch_ownership_boundaries(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     );
@@ -17614,7 +16105,7 @@ fn patch_surgical_maturity_for_plan(
         return project_spec_maturity;
     }
     chatty_factory_families::patch_surgical_maturity(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     )
@@ -17631,7 +16122,7 @@ fn patch_surgical_maturity_for_kind(spec: &ProjectSpec, patch_kind: &str) -> Opt
         return project_spec_maturity;
     }
     chatty_factory_families::patch_surgical_maturity(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     )
@@ -17639,19 +16130,19 @@ fn patch_surgical_maturity_for_kind(spec: &ProjectSpec, patch_kind: &str) -> Opt
 
 fn structural_guard_source_for_patch_kind(spec: &ProjectSpec, patch_kind: &str) -> Option<String> {
     let has_required = !patch_required_anchor_markers(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     )
     .is_empty();
     let has_conflicting = !patch_conflicting_anchor_markers(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     )
     .is_empty();
     let has_surface_groups = !patch_expected_artifact_groups(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     )
@@ -17659,10 +16150,7 @@ fn structural_guard_source_for_patch_kind(spec: &ProjectSpec, patch_kind: &str) 
     if has_required || has_conflicting || has_surface_groups {
         Some(format!(
             "patch_recipe_structural_guard:{}:{}",
-            spec.family_id
-                .as_ref()
-                .map(FamilyId::as_str)
-                .unwrap_or("unknown_family"),
+            project_spec_substrate_label(spec).unwrap_or("unknown_substrate"),
             patch_kind
         ))
     } else {
@@ -17837,7 +16325,7 @@ fn patch_kind_specific_structural_conflict_reason(
 ) -> Option<String> {
     let patch_kind = intended_patch_kind?;
     let conflicting_markers = patch_conflicting_anchor_markers(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     );
@@ -17878,14 +16366,10 @@ fn emit_patch_freeze_skip_result(
         );
     }
     let browser_state = persist_project_browser_state(output_root, runtime_root)?;
-    let family = spec
-        .family_id
-        .as_ref()
-        .map(FamilyId::as_str)
-        .unwrap_or("unknown_family");
+    let substrate = project_spec_substrate_label(spec).unwrap_or("unknown_substrate");
     let mut details = vec![
         format!("project={}", spec.project_name),
-        format!("family={family}"),
+        format!("substrate={substrate}"),
         format!("reason={reason}"),
         format!("patch_diagnosis={}", patch_diagnosis_path.display()),
         format!("patch_plan_review={}", patch_plan_review_path.display()),
@@ -17978,12 +16462,7 @@ fn emit_patch_freeze_skip_result(
             },
             recommended_next_action: None,
             recommended_next_step: String::new(),
-            starter_override_id: None,
-            starter_override_summary: None,
-            recommended_starter_id: None,
-            recommended_starter_summary: None,
-            starter_recommendation_comparison: None,
-            family_id: spec.family_id.as_ref().map(|id| id.as_str().to_string()),
+            substrate_kind: Some(spec.substrate.clone()),
             tool_kind: spec.tool_kind.clone(),
             patch_kind: patch_intent_freeze.intended_patch_kind.clone(),
             composition_route_class: Some("direct_deterministic_lane".into()),
@@ -18011,13 +16490,13 @@ fn emit_patch_freeze_skip_result(
             helper_services: spec.helper_services.clone(),
             helper_runtime_receipts: Vec::new(),
         })),
-        fallback_result: None,
+        next_attempt_result: None,
         followup_route: None,
         extension_registry: None,
     })
 }
 
-fn patch_substrate_feature_tokens(
+fn next_attempt_substrate_feature_tokens(
     request: &chatty_factory_core::RequestRecord,
     plan: &chatty_factory_core::RequestPlan,
 ) -> Vec<String> {
@@ -18053,7 +16532,7 @@ struct PatchSubstrateAttemptBundle {
     notes: Vec<String>,
 }
 
-fn prepare_patch_substrate_attempt(
+fn prepare_patch_next_attempt(
     runtime_root: &Path,
     workspace_root: &Path,
     project_dir: &Path,
@@ -18062,12 +16541,10 @@ fn prepare_patch_substrate_attempt(
     spec: &ProjectSpec,
     planner: &HostPlannerOptions,
 ) -> Result<PatchSubstrateAttemptBundle> {
-    let selected_family_id = spec
-        .family_id
-        .clone()
-        .or_else(|| plan.inferred_family_candidates.first().cloned());
+    let selected_substrate_kind = project_spec_substrate_kind(spec)
+        .or_else(|| plan.inferred_substrate_candidates.first().cloned());
     let (selected_operator_ids, selected_wrapper_ids) = infer_route_hints(request);
-    let mut decision_reasons = vec!["patch_substrate_attempt_from_active_project".into()];
+    let mut decision_reasons = vec!["patch_next_attempt_from_active_project".into()];
     if let Some(tool_kind) = plan
         .inferred_tool_kind
         .clone()
@@ -18075,22 +16552,21 @@ fn prepare_patch_substrate_attempt(
     {
         decision_reasons.push(format!("tool_kind={tool_kind}"));
     }
-    decision_reasons.push("no_direct_patch_lane_match_prepare_task_scaffold".into());
+    decision_reasons.push("no_direct_patch_lane_match_prepare_task_bundle".into());
     let route = chatty_factory_core::RouteDecision {
         route_id: chatty_factory_core::timestamp_id("route"),
         request_id: request.request_id.clone(),
-        selected_family_id: selected_family_id.clone(),
+        selected_substrate_kind,
         selected_operator_ids,
         selected_wrapper_ids,
         selected_behavior_kind: None,
         capability_transition: Some(chatty_factory_core::CapabilityTransition::None),
         decision_reasons,
-        fallback_level: Some("patch_substrate".into()),
+        next_attempt_level: Some("patch_substrate".into()),
         needs_llm_review: plan.needs_llm_review,
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
-    let inputs = chatty_factory_core::ScaffoldInputs {
-        family_id: selected_family_id.clone(),
+    let inputs = chatty_factory_core::BuildSeedInputs {
         project_name: spec.project_name.clone(),
         title: format!("{} follow-up", spec.project_name.replace('_', " ")),
         summary: format!(
@@ -18102,21 +16578,19 @@ fn prepare_patch_substrate_attempt(
             .iter()
             .map(|op| op.0.clone())
             .collect(),
-        feature_tokens: patch_substrate_feature_tokens(request, plan),
+        feature_tokens: next_attempt_substrate_feature_tokens(request, plan),
         style_preset: Some("factory_default".into()),
         wrapper_target: request.exoskeleton_target.clone(),
         entrypoint_config: Vec::new(),
         fixture_config: Vec::new(),
     };
-    let build_intent_freeze =
-        derive_build_intent_freeze(request, plan, &route, &inputs, None, None);
+    let build_intent_freeze = derive_build_intent_freeze(request, plan, &route, &inputs, None);
     let build_plan_artifact = derive_build_plan_artifact(
         &build_intent_freeze,
         request,
         plan,
         &route,
         &inputs,
-        None,
         None,
     );
     let build_intent_freeze_path = runtime_root.join("build_intent_freezes").join(format!(
@@ -18172,13 +16646,12 @@ fn prepare_patch_substrate_attempt(
     persist_json_pretty(&plan_task_list_path, &plan_task_list)?;
     let notes = vec![
         format!(
-            "prepared substrate-first patch work order using starter `{}`",
-            build_starter_label(
-                selected_family_id
-                    .as_ref()
-                    .map(starter_id_for_family_id)
-                    .unwrap_or("static_web_dashboard")
-            )
+            "prepared substrate-first patch work order for substrate `{}`",
+            route
+                .selected_substrate_kind
+                .as_ref()
+                .map(SubstrateKind::as_str)
+                .unwrap_or("unknown")
         ),
         format!(
             "prepared feature slices: {}",
@@ -18261,7 +16734,7 @@ fn prepare_patch_substrate_attempt(
     })
 }
 
-fn emit_patch_substrate_attempt_result(
+fn emit_patch_next_attempt_result(
     runtime_root: &Path,
     output_root: &Path,
     request: &chatty_factory_core::RequestRecord,
@@ -18284,14 +16757,10 @@ fn emit_patch_substrate_attempt_result(
         );
     }
     let browser_state = persist_project_browser_state(output_root, runtime_root)?;
-    let family = spec
-        .family_id
-        .as_ref()
-        .map(FamilyId::as_str)
-        .unwrap_or("unknown_family");
+    let substrate = project_spec_substrate_label(spec).unwrap_or("unknown_substrate");
     let mut details = vec![
         format!("project={}", spec.project_name),
-        format!("family={family}"),
+        format!("substrate={substrate}"),
         "reason=no direct deterministic patch lane matched; prepared a substrate-first patch attempt".into(),
         format!(
             "build_intent_freeze={}",
@@ -18310,7 +16779,7 @@ fn emit_patch_substrate_attempt_result(
         &substrate_bundle.plan_task_execution_log_path,
         &substrate_bundle.plan_task_verification_log_path,
     ] {
-        details.push(format!("patch_substrate_artifact={}", path.display()));
+        details.push(format!("patch_next_attempt_artifact={}", path.display()));
     }
     let mut route_notes = vec![
         "no direct deterministic patch lane matched; prepared a substrate-first patch attempt"
@@ -18361,18 +16830,13 @@ fn emit_patch_substrate_attempt_result(
             },
             recommended_next_action: None,
             recommended_next_step: String::new(),
-            starter_override_id: None,
-            starter_override_summary: None,
-            recommended_starter_id: None,
-            recommended_starter_summary: None,
-            starter_recommendation_comparison: None,
-            family_id: spec.family_id.as_ref().map(|id| id.as_str().to_string()),
+            substrate_kind: Some(spec.substrate.clone()),
             tool_kind: plan
                 .inferred_tool_kind
                 .clone()
                 .or_else(|| spec.tool_kind.clone()),
             patch_kind: patch_intent_freeze.intended_patch_kind.clone(),
-            composition_route_class: Some("patch_substrate_attempt".into()),
+            composition_route_class: Some("patch_next_attempt".into()),
             composable_route_plan_path: None,
             composition_review_receipt_path: None,
             followup_request_mode: None,
@@ -18427,7 +16891,7 @@ fn emit_patch_substrate_attempt_result(
             helper_services: spec.helper_services.clone(),
             helper_runtime_receipts: Vec::new(),
         })),
-        fallback_result: None,
+        next_attempt_result: None,
         followup_route: None,
         extension_registry: None,
     })
@@ -18464,10 +16928,12 @@ fn run_patch_diagnosis_postcheck(
     let out_of_contract_modified_files =
         out_of_contract_modified_files_for_postcheck(diagnosis, &relative_modified_files);
 
-    if post_patch_spec.family_id == pre_patch_spec.family_id {
-        verified_invariants.push("family id remained stable".into());
+    if project_spec_substrate_kind_ref(&post_patch_spec)
+        == project_spec_substrate_kind_ref(&pre_patch_spec)
+    {
+        verified_invariants.push("substrate remained stable".into());
     } else {
-        warnings.push("family id changed after patch".into());
+        warnings.push("substrate changed after patch".into());
     }
 
     if post_patch_spec.tool_kind == pre_patch_spec.tool_kind {
@@ -18763,7 +17229,7 @@ fn candidate_target_files_for_patch_diagnosis(
     let mut files = spec.entrypoints.clone();
     files.extend(spec.expected_files.clone());
 
-    if spec.family_id.as_ref() == Some(&FamilyId::StaticWebDashboard) {
+    if project_spec_substrate_kind(spec) == Some(SubstrateKind::StaticWeb) {
         files.extend(
             ["index.html", "styles.css", "app.js"]
                 .into_iter()
@@ -18779,12 +17245,6 @@ fn candidate_target_files_for_patch_diagnosis(
         {
             files.push("app.js".into());
         }
-    } else if spec.family_id.as_ref() == Some(&FamilyId::ChattycogWebviewModule) {
-        files.extend(
-            ["index.html", "styles.css", "app.js"]
-                .into_iter()
-                .map(str::to_string),
-        );
     } else if spec.tool_kind.as_deref() == Some("python_cli") {
         files.extend(["main.py", "README.md"].into_iter().map(str::to_string));
     } else if spec.tool_kind.as_deref() == Some("rust_cli") {
@@ -18857,11 +17317,8 @@ fn candidate_insertion_points_for_patch_diagnosis(
     }
     if points.is_empty() {
         points.push(format!(
-            "family `{}` -> extend declared entrypoints without changing ownership boundaries",
-            spec.family_id
-                .as_ref()
-                .map(FamilyId::as_str)
-                .unwrap_or("unknown_family")
+            "substrate `{}` -> extend declared entrypoints without changing ownership boundaries",
+            project_spec_substrate_label(spec).unwrap_or("unknown_substrate")
         ));
     }
     points
@@ -18875,7 +17332,7 @@ fn declared_surface_groups_for_patch_diagnosis(
         return Vec::new();
     };
     patch_expected_artifact_groups(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     )
@@ -18889,7 +17346,7 @@ fn declared_ownership_boundaries_for_patch_diagnosis(
         return Vec::new();
     };
     patch_ownership_boundaries(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     )
@@ -18962,7 +17419,7 @@ fn conflicting_anchor_markers_for_patch_diagnosis(
         return Vec::new();
     };
     patch_conflicting_anchor_markers(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     )
@@ -18974,13 +17431,13 @@ fn structural_guard_source_for_patch_diagnosis(
 ) -> Option<String> {
     let patch_kind = plan.intended_patch_kind.as_deref()?;
     let has_required = !patch_required_anchor_markers(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     )
     .is_empty();
     let has_conflicts = !patch_conflicting_anchor_markers(
-        spec.family_id.as_ref(),
+        project_spec_substrate_label(spec),
         spec.tool_kind.as_deref(),
         patch_kind,
     )
@@ -18988,13 +17445,9 @@ fn structural_guard_source_for_patch_diagnosis(
     if !(has_required || has_conflicts) {
         return None;
     }
-    let family = spec
-        .family_id
-        .as_ref()
-        .map(FamilyId::as_str)
-        .unwrap_or("unknown_family");
+    let substrate = project_spec_substrate_label(spec).unwrap_or("unknown_substrate");
     Some(format!(
-        "patch_recipe_structural_guard:{family}:{patch_kind}"
+        "patch_recipe_structural_guard:{substrate}:{patch_kind}"
     ))
 }
 
@@ -19016,7 +17469,7 @@ fn expected_anchor_markers_for_patch_kind(
 ) -> Vec<String> {
     if let Some(patch_kind) = intended_patch_kind {
         let declarative = patch_required_anchor_markers(
-            spec.family_id.as_ref(),
+            project_spec_substrate_label(spec),
             spec.tool_kind.as_deref(),
             patch_kind,
         );
@@ -19042,11 +17495,7 @@ fn expected_anchor_markers_for_patch_kind(
                 .iter()
                 .any(|path| path == "index.html")
             {
-                if spec.family_id.as_ref() == Some(&FamilyId::ChattycogWebviewModule) {
-                    markers.push("index.html::<section class=\"module-panel\">".into());
-                } else {
-                    markers.push("index.html::results-panel".into());
-                }
+                markers.push("index.html::results-panel".into());
             }
         }
         Some("metric_strip") => {
@@ -19084,7 +17533,7 @@ fn expected_anchor_markers_for_patch_kind(
             }
         }
         _ => {
-            if spec.family_id.as_ref() == Some(&FamilyId::StaticWebDashboard)
+            if project_spec_substrate_kind(spec) == Some(SubstrateKind::StaticWeb)
                 && candidate_target_files
                     .iter()
                     .any(|path| path == "index.html")
@@ -19119,7 +17568,7 @@ fn preserve_invariants_for_patch_diagnosis(spec: &ProjectSpec) -> Vec<String> {
     let mut invariants = vec![
         "ProjectSpec.json remains present".into(),
         "AcceptancePlan.json remains present".into(),
-        "family id remains stable".into(),
+        "substrate remains stable".into(),
         "tool kind remains stable".into(),
     ];
     if !spec.entrypoints.is_empty() {
@@ -19177,12 +17626,7 @@ fn project_structure_notes_for_patch_diagnosis(
         ));
     }
     notes.extend(declared_ownership_boundaries.iter().cloned());
-    if spec.family_id.as_ref() == Some(&FamilyId::ChattycogWebviewModule) {
-        notes.push(
-            "chattycog module patches should preserve wrapper-owned UI and bridge boundaries"
-                .into(),
-        );
-    } else if spec.family_id.as_ref() == Some(&FamilyId::StaticWebDashboard) {
+    if project_spec_substrate_kind(spec) == Some(SubstrateKind::StaticWeb) {
         notes.push(
             "static dashboard patches should preserve index/app/style ownership split".into(),
         );
@@ -19302,7 +17746,7 @@ fn derive_composition_route_class(
     request: &chatty_factory_core::RequestRecord,
     plan: &chatty_factory_core::RequestPlan,
     active_spec: Option<&ProjectSpec>,
-    fallback_shape: Option<&ChattyCogFallbackShape>,
+    next_attempt_shape: Option<&ChattyCogNextAttemptShape>,
     direct_lane: bool,
 ) -> CompositionRouteClass {
     if direct_lane {
@@ -19311,7 +17755,7 @@ fn derive_composition_route_class(
     let helper_present = active_spec
         .map(|spec| !spec.helper_services.is_empty())
         .unwrap_or(false);
-    let supported_bridge_overlap = fallback_shape
+    let supported_bridge_overlap = next_attempt_shape
         .map(|shape| {
             !shape.requested_bridge_capabilities.is_empty()
                 && shape
@@ -19321,7 +17765,7 @@ fn derive_composition_route_class(
         })
         .unwrap_or(false);
     if (helper_present || supported_bridge_overlap)
-        && !plan.inferred_family_candidates.is_empty()
+        && !plan.inferred_substrate_candidates.is_empty()
         && request.mode == Some(chatty_factory_core::RequestMode::Patch)
     {
         return CompositionRouteClass::BoundedCompositionCandidate;
@@ -19340,10 +17784,10 @@ fn derive_composable_route_plan(
     route_class: CompositionRouteClass,
     selected_patch_kinds: &[String],
 ) -> ComposableRoutePlan {
-    let target_family_id = selected_spec
-        .and_then(|spec| spec.family_id.clone())
-        .or_else(|| active_spec.and_then(|spec| spec.family_id.clone()))
-        .or_else(|| plan.inferred_family_candidates.first().cloned());
+    let target_substrate_kind = selected_spec
+        .and_then(project_spec_substrate_kind)
+        .or_else(|| active_spec.and_then(project_spec_substrate_kind))
+        .or_else(|| plan.inferred_substrate_candidates.first().cloned());
     let helper_ids = active_spec
         .map(|spec| {
             spec.helper_services
@@ -19354,27 +17798,32 @@ fn derive_composable_route_plan(
         .unwrap_or_default();
     let helper_primitive_ids = candidate_helper_primitive_ids_for_composition(
         active_spec,
-        plan.inferred_family_candidates.first(),
+        target_substrate_kind.as_ref(),
         selected_patch_kinds,
     );
+    let composition_substrate_kind = selected_spec
+        .and_then(project_spec_substrate_kind_ref)
+        .or_else(|| active_spec.and_then(project_spec_substrate_kind_ref))
+        .or_else(|| target_substrate_kind.clone());
     let patch_primitive_classes = candidate_patch_primitive_classes_for_composition(
-        selected_spec
-            .and_then(|spec| spec.family_id.as_ref())
-            .or_else(|| active_spec.and_then(|spec| spec.family_id.as_ref()))
-            .or_else(|| plan.inferred_family_candidates.first()),
+        composition_substrate_kind.as_ref(),
         selected_spec
             .and_then(|spec| spec.tool_kind.as_deref())
             .or_else(|| active_spec.and_then(|spec| spec.tool_kind.as_deref()))
             .or_else(|| plan.inferred_tool_kind.as_deref()),
         selected_patch_kinds,
     );
-    let family_build_primitive_classes = target_family_id
-        .as_ref()
-        .map(build_primitive_classes_for_family)
-        .unwrap_or_default();
+    let base_build_primitive_classes =
+        baseline_build_primitive_classes_for_context(
+            composition_substrate_kind.as_ref(),
+            selected_spec
+                .and_then(|spec| spec.tool_kind.as_deref())
+                .or_else(|| active_spec.and_then(|spec| spec.tool_kind.as_deref()))
+                .or_else(|| plan.inferred_tool_kind.as_deref()),
+        );
     let helper_primitive_kinds = candidate_helper_primitive_kinds_for_composition(
         active_spec,
-        plan.inferred_family_candidates.first(),
+        composition_substrate_kind.as_ref(),
         selected_patch_kinds,
     );
     let bridge_capabilities = active_spec
@@ -19396,10 +17845,15 @@ fn derive_composable_route_plan(
         .map(helper_primitive_kinds_from_spec)
         .unwrap_or_else(|| helper_primitive_kinds.clone());
     let selected_patch_primitive_classes = patch_primitive_classes.clone();
-    let selected_family_build_primitive_classes = selected_spec
-        .and_then(|spec| spec.family_id.as_ref())
-        .map(build_primitive_classes_for_family)
-        .unwrap_or_else(|| family_build_primitive_classes.clone());
+    let selected_base_build_primitive_classes = selected_spec
+        .and_then(project_spec_substrate_kind_ref)
+        .map(|substrate_kind| {
+            baseline_build_primitive_classes_for_context(
+                Some(&substrate_kind),
+                selected_spec.and_then(|spec| spec.tool_kind.as_deref()),
+            )
+        })
+        .unwrap_or_else(|| base_build_primitive_classes.clone());
     let selected_bridge_capabilities = selected_spec
         .and_then(|spec| spec.chattycog_bridge_capabilities.as_ref())
         .map(bridge_capability_ids)
@@ -19423,13 +17877,13 @@ fn derive_composable_route_plan(
         })
         .unwrap_or_default();
     let composition_layers = derive_composition_layers(
-        &family_build_primitive_classes,
+        &base_build_primitive_classes,
         &patch_primitive_classes,
         &helper_primitive_kinds,
         &bridge_capabilities,
     );
     let selected_composition_layers = derive_composition_layers(
-        &selected_family_build_primitive_classes,
+        &selected_base_build_primitive_classes,
         &selected_patch_primitive_classes,
         &selected_helper_primitive_kinds,
         &selected_bridge_capabilities,
@@ -19511,10 +17965,10 @@ fn derive_composable_route_plan(
         mode: request.mode.clone(),
         active_project: request.active_project.clone(),
         interpreted_goal,
-        target_family_id,
+        target_substrate_kind,
         target_tool_kind: plan.inferred_tool_kind.clone(),
         target_patch_kind,
-        candidate_family_ids: plan.inferred_family_candidates.clone(),
+        candidate_substrate_kinds: plan.inferred_substrate_candidates.clone(),
         helper_ids,
         helper_primitive_ids,
         helper_primitive_kinds,
@@ -19523,7 +17977,7 @@ fn derive_composable_route_plan(
         acceptance_recipe_ids: plan.planner_acceptance_recipe_ids.clone(),
         selected_patch_kinds: selected_patch_kinds.to_vec(),
         patch_primitive_classes,
-        family_build_primitive_classes,
+        base_build_primitive_classes,
         composition_layers,
         composition_work_order_kind: composition_work_order_kind(&selected_composition_layers),
         selected_helper_ids,
@@ -19533,7 +17987,7 @@ fn derive_composable_route_plan(
         selected_operator_bundle_ids,
         selected_acceptance_recipe_ids,
         selected_patch_primitive_classes,
-        selected_family_build_primitive_classes,
+        selected_base_build_primitive_classes,
         selected_composition_layers,
         runtime_requirements: plan.constraints.clone(),
         notes,
@@ -19550,7 +18004,7 @@ fn enrich_composable_route_plan(
 ) {
     route_plan.selected_patch_kinds = selected_patch_kinds.to_vec();
     route_plan.patch_primitive_classes = candidate_patch_primitive_classes_for_composition(
-        selected_spec.family_id.as_ref(),
+        project_spec_substrate_kind(selected_spec).as_ref(),
         selected_spec.tool_kind.as_deref(),
         selected_patch_kinds,
     );
@@ -19573,17 +18027,17 @@ fn enrich_composable_route_plan(
         .map(|bundle| bundle.bundle_id.clone())
         .collect();
     route_plan.selected_patch_primitive_classes = candidate_patch_primitive_classes_for_composition(
-        selected_spec.family_id.as_ref(),
+        project_spec_substrate_kind(selected_spec).as_ref(),
         selected_spec.tool_kind.as_deref(),
         selected_patch_kinds,
     );
-    route_plan.selected_family_build_primitive_classes = selected_spec
-        .family_id
-        .as_ref()
-        .map(build_primitive_classes_for_family)
-        .unwrap_or_default();
+    route_plan.selected_base_build_primitive_classes =
+        baseline_build_primitive_classes_for_context(
+            project_spec_substrate_kind(selected_spec).as_ref(),
+            selected_spec.tool_kind.as_deref(),
+        );
     route_plan.selected_composition_layers = derive_composition_layers(
-        &route_plan.selected_family_build_primitive_classes,
+        &route_plan.selected_base_build_primitive_classes,
         &route_plan.selected_patch_primitive_classes,
         &route_plan.selected_helper_primitive_kinds,
         &route_plan.selected_bridge_capabilities,
@@ -19624,18 +18078,15 @@ fn helper_primitive_kinds_from_spec(spec: &ProjectSpec) -> Vec<String> {
 
 fn candidate_helper_primitive_ids_for_composition(
     active_spec: Option<&ProjectSpec>,
-    selected_family_id: Option<&FamilyId>,
+    selected_substrate_kind: Option<&SubstrateKind>,
     selected_patch_kinds: &[String],
 ) -> Vec<String> {
     let mut primitive_ids = active_spec
         .map(helper_primitive_ids_from_spec)
         .unwrap_or_default();
 
-    let helper_family = matches!(
-        selected_family_id,
-        Some(FamilyId::ChattycogWebviewModule | FamilyId::StaticWebDashboard)
-    );
-    if primitive_ids.is_empty() && helper_family && !selected_patch_kinds.is_empty() {
+    let helper_surface = matches!(selected_substrate_kind, Some(SubstrateKind::StaticWeb));
+    if primitive_ids.is_empty() && helper_surface && !selected_patch_kinds.is_empty() {
         primitive_ids.extend([
             "module_assets_inbox_lane".to_string(),
             "local_inbox_processed_output".to_string(),
@@ -19665,12 +18116,16 @@ fn candidate_helper_primitive_ids_for_composition(
 }
 
 fn candidate_patch_primitive_classes_for_composition(
-    family_id: Option<&FamilyId>,
+    selected_substrate_kind: Option<&SubstrateKind>,
     tool_kind: Option<&str>,
     selected_patch_kinds: &[String],
 ) -> Vec<String> {
     let registry_classes =
-        registry_patch_primitive_classes(family_id, tool_kind, selected_patch_kinds);
+        registry_patch_primitive_classes(
+            selected_substrate_kind.map(SubstrateKind::as_str),
+            tool_kind,
+            selected_patch_kinds,
+        );
     if !registry_classes.is_empty() {
         return registry_classes;
     }
@@ -19679,18 +18134,15 @@ fn candidate_patch_primitive_classes_for_composition(
 
 fn candidate_helper_primitive_kinds_for_composition(
     active_spec: Option<&ProjectSpec>,
-    selected_family_id: Option<&FamilyId>,
+    selected_substrate_kind: Option<&SubstrateKind>,
     selected_patch_kinds: &[String],
 ) -> Vec<String> {
     let mut primitive_kinds = active_spec
         .map(helper_primitive_kinds_from_spec)
         .unwrap_or_default();
 
-    let helper_family = matches!(
-        selected_family_id,
-        Some(FamilyId::ChattycogWebviewModule | FamilyId::StaticWebDashboard)
-    );
-    if primitive_kinds.is_empty() && helper_family && !selected_patch_kinds.is_empty() {
+    let helper_surface = matches!(selected_substrate_kind, Some(SubstrateKind::StaticWeb));
+    if primitive_kinds.is_empty() && helper_surface && !selected_patch_kinds.is_empty() {
         primitive_kinds.extend([
             "inbox_lane".to_string(),
             "processed_output".to_string(),
@@ -19782,58 +18234,83 @@ fn desired_helper_primitive_kinds_from_request(
     dedup_strings(kinds)
 }
 
-fn family_default_helper_primitive_kinds(family_id: Option<&FamilyId>) -> Vec<String> {
-    match family_id {
-        Some(FamilyId::ChattycogWebviewModule | FamilyId::StaticWebDashboard) => vec![
-            "inbox_lane".to_string(),
-            "processed_output".to_string(),
-            "summary_emitter".to_string(),
-            "status_reporter".to_string(),
+fn baseline_build_primitive_classes_for_context(
+    substrate_kind: Option<&chatty_factory_core::SubstrateKind>,
+    tool_kind: Option<&str>,
+) -> Vec<String> {
+    match (substrate_kind, tool_kind) {
+        (Some(SubstrateKind::StaticWeb), _) => vec![
+            "entrypoint_surface".into(),
+            "style_surface".into(),
+            "interaction_surface".into(),
         ],
-        _ => Vec::new(),
+        (Some(SubstrateKind::Cli), Some("rust_cli")) => {
+            vec!["cli_entrypoint".into(), "cargo_manifest".into()]
+        }
+        (Some(SubstrateKind::Cli), Some("python_cli")) => {
+            vec!["cli_entrypoint".into(), "python_module".into()]
+        }
+        (Some(SubstrateKind::Cli), _) => vec!["cli_entrypoint".into()],
+        (Some(SubstrateKind::Webview), _) => vec!["entrypoint_surface".into()],
+        (Some(SubstrateKind::NativeWindow), _) => vec!["entrypoint_surface".into()],
+        (Some(SubstrateKind::Workspace), _) => vec!["workspace_entrypoint".into()],
+        (None, _) => Vec::new(),
     }
 }
 
-fn available_patch_primitive_classes_for_family(
-    family_id: Option<&FamilyId>,
+fn baseline_patch_primitive_classes_for_context(
+    substrate_kind: Option<&chatty_factory_core::SubstrateKind>,
     tool_kind: Option<&str>,
-    project_features: &[String],
 ) -> Vec<String> {
-    let Some(family_id) = family_id else {
-        return Vec::new();
-    };
-    let patch_kinds: Vec<String> =
-        registry_patch_lane_statuses(Some(family_id), tool_kind, project_features)
-            .into_iter()
-            .map(|lane| lane.patch_kind)
-            .collect();
-    registry_patch_primitive_classes(Some(family_id), tool_kind, &patch_kinds)
+    registry_patch_primitive_classes(substrate_kind.map(SubstrateKind::as_str), tool_kind, &[])
+}
+
+fn baseline_helper_primitive_kinds_for_context(
+    substrate_kind: Option<&chatty_factory_core::SubstrateKind>,
+    _tool_kind: Option<&str>,
+) -> Vec<String> {
+    if matches!(substrate_kind, Some(SubstrateKind::StaticWeb)) {
+        vec![
+            "inbox_lane".into(),
+            "processed_output".into(),
+            "summary_emitter".into(),
+            "status_reporter".into(),
+        ]
+    } else {
+        Vec::new()
+    }
 }
 
 fn derive_missing_composition_layers(
     request: &chatty_factory_core::RequestRecord,
-    suggested_family_id: Option<&FamilyId>,
+    suggested_substrate_kind: Option<&chatty_factory_core::SubstrateKind>,
     suggested_tool_kind: Option<&str>,
     active_spec: Option<&ProjectSpec>,
 ) -> (Vec<String>, Vec<String>, Vec<String>) {
     let desired_patch_classes = desired_patch_primitive_classes_from_request(request);
     let desired_helper_kinds = desired_helper_primitive_kinds_from_request(request);
-    let family_build_classes = suggested_family_id
-        .map(build_primitive_classes_for_family)
-        .unwrap_or_default();
-    let patch_classes = available_patch_primitive_classes_for_family(
-        suggested_family_id,
-        suggested_tool_kind,
-        active_spec
-            .map(|spec| spec.features.as_slice())
-            .unwrap_or(&[]),
-    );
+    let family_build_classes =
+        baseline_build_primitive_classes_for_context(suggested_substrate_kind, suggested_tool_kind);
+    let patch_classes = active_spec
+        .map(|spec| patch_primitive_classes_for_kinds(&spec.supported_patch_kinds))
+        .filter(|classes| !classes.is_empty())
+        .unwrap_or_else(|| {
+            baseline_patch_primitive_classes_for_context(
+                suggested_substrate_kind,
+                suggested_tool_kind,
+            )
+        });
     let helper_kinds = active_spec
         .map(helper_primitive_kinds_from_spec)
         .filter(|kinds| !kinds.is_empty())
-        .unwrap_or_else(|| family_default_helper_primitive_kinds(suggested_family_id));
+        .unwrap_or_else(|| {
+            baseline_helper_primitive_kinds_for_context(
+                suggested_substrate_kind,
+                suggested_tool_kind,
+            )
+        });
 
-    let missing_family_build = desired_patch_classes
+    let missing_base_build = desired_patch_classes
         .iter()
         .filter(|class| !family_build_classes.contains(*class))
         .cloned()
@@ -19850,7 +18327,7 @@ fn derive_missing_composition_layers(
         .collect::<Vec<_>>();
 
     (
-        dedup_strings(missing_family_build),
+        dedup_strings(missing_base_build),
         dedup_strings(missing_patch),
         dedup_strings(missing_helper),
     )
@@ -19879,7 +18356,7 @@ fn bridge_capability_ids(caps: &ChattyCogBridgeCapabilities) -> Vec<String> {
 
 fn primitive_execution_status_for_layer(layer: &str, route_plan: &ComposableRoutePlan) -> String {
     match layer {
-        "family_build" => "satisfied_by_family".into(),
+        "base_build" => "satisfied_by_base_build".into(),
         "helper" => {
             if route_plan.selected_helper_ids.is_empty() {
                 "not_selected".into()
@@ -19905,339 +18382,36 @@ fn primitive_execution_status_for_layer(layer: &str, route_plan: &ComposableRout
     }
 }
 
-fn score_family_primitive_adapter(
-    adapter: &FamilyPrimitiveAdapter,
-    composition_layer: &str,
-    primitive_name: &str,
-    source_kind: &str,
-    source_value: &str,
-    interpreted_goal: &str,
-) -> usize {
-    let mut score = 0usize;
-    if adapter.composition_layer == composition_layer {
-        score += 20;
-    }
-    if adapter.primitive_name == primitive_name {
-        score += 20;
-    }
-    match adapter.support_level.as_str() {
-        "native" => score += 12,
-        "optional" => score += 6,
-        _ => score += 3,
-    }
-    if composition_layer == "patch" && adapter.adapter_kind.contains("patch") {
-        score += 6;
-    }
-    if composition_layer == "helper" && adapter.adapter_kind.contains("helper") {
-        score += 6;
-    }
-    if composition_layer == "family_build" && source_kind == "family_build_primitive_class" {
-        score += 4;
-    }
-
-    let haystack = format!(
-        "{} {} {} {}",
-        adapter.adapter_id,
-        adapter.adapter_kind,
-        adapter.primitive_name,
-        adapter.notes.join(" ")
-    )
-    .to_ascii_lowercase();
-    let source_text = format!("{source_value} {interpreted_goal}").to_ascii_lowercase();
-    for token in source_text
-        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
-        .filter(|token| token.len() >= 4)
-    {
-        if haystack.contains(token) {
-            score += 5;
-        }
-    }
-    score
-}
-
-fn select_family_primitive_adapter(
-    family_id: Option<&FamilyId>,
-    composition_layer: &str,
-    primitive_name: &str,
-    source_kind: &str,
-    source_value: &str,
-    interpreted_goal: &str,
-) -> Option<FamilyPrimitiveAdapter> {
-    let family_id = family_id?;
-    let mut candidates = primitive_adapters_for_family(family_id)
-        .into_iter()
-        .filter(|adapter| {
-            adapter.composition_layer == composition_layer
-                && adapter.primitive_name == primitive_name
-        })
-        .map(|adapter| {
-            let score = score_family_primitive_adapter(
-                &adapter,
-                composition_layer,
-                primitive_name,
-                source_kind,
-                source_value,
-                interpreted_goal,
-            );
-            (adapter, score)
-        })
-        .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| {
-        right
-            .1
-            .cmp(&left.1)
-            .then_with(|| left.0.adapter_id.cmp(&right.0.adapter_id))
-    });
-    candidates.into_iter().next().map(|(adapter, _)| adapter)
-}
-
-fn primitive_plan_contains_primitive(
-    steps: &[PrimitiveExecutionStep],
-    primitive_name: &str,
-) -> bool {
-    steps
-        .iter()
-        .any(|step| step.primitive_name == primitive_name)
-}
-
-fn adapter_missing_required_primitives(
-    steps: &[PrimitiveExecutionStep],
-    adapter: &FamilyPrimitiveAdapter,
-) -> Vec<String> {
-    adapter
-        .requires_primitives
-        .iter()
-        .filter(|primitive_name| !primitive_plan_contains_primitive(steps, primitive_name))
-        .cloned()
-        .collect()
-}
-
-fn adapter_present_companion_primitives(
-    steps: &[PrimitiveExecutionStep],
-    adapter: &FamilyPrimitiveAdapter,
-) -> Vec<String> {
-    adapter
-        .companion_primitives
-        .iter()
-        .filter(|primitive_name| primitive_plan_contains_primitive(steps, primitive_name))
-        .cloned()
-        .collect()
-}
-
-fn adapter_semantic_notes(
-    steps: &[PrimitiveExecutionStep],
-    adapter: &FamilyPrimitiveAdapter,
-) -> Vec<String> {
-    let mut notes = adapter.notes.clone();
-    if let Some(hint) = &adapter.execution_hint {
-        notes.push(format!("execution_hint: {hint}"));
-    }
-    let missing = adapter_missing_required_primitives(steps, adapter);
-    if !missing.is_empty() {
-        notes.push(format!(
-            "missing_required_primitives: {}",
-            missing.join(", ")
-        ));
-    }
-    let companions = adapter_present_companion_primitives(steps, adapter);
-    if !companions.is_empty() {
-        notes.push(format!(
-            "present_companion_primitives: {}",
-            companions.join(", ")
-        ));
-    }
-    notes
-}
-
-fn summarize_adapter_semantics(adapter: &FamilyPrimitiveAdapter) -> String {
-    let requires = if adapter.requires_primitives.is_empty() {
-        "none".to_string()
-    } else {
-        adapter.requires_primitives.join("|")
-    };
-    let companions = if adapter.companion_primitives.is_empty() {
-        "none".to_string()
-    } else {
-        adapter.companion_primitives.join("|")
-    };
-    let hint = adapter
-        .execution_hint
-        .clone()
-        .unwrap_or_else(|| "none".into());
-    format!(
-        "{}:{}:{} support={} requires={} companions={} hint={}",
-        adapter.composition_layer,
-        adapter.primitive_name,
-        adapter.adapter_id,
-        adapter.support_level,
-        requires,
-        companions,
-        hint
-    )
-}
-
 fn composition_adapter_semantics_for_review(
-    family_id: Option<&FamilyId>,
-    family_build_primitive_classes: &[String],
-    patch_primitive_classes: &[String],
-    helper_primitive_kinds: &[String],
+    _selected_substrate_kind: Option<&SubstrateKind>,
+    _selected_tool_kind: Option<&str>,
+    _base_build_primitive_classes: &[String],
+    _patch_primitive_classes: &[String],
+    _helper_primitive_kinds: &[String],
 ) -> Vec<String> {
-    let Some(family_id) = family_id else {
-        return Vec::new();
-    };
-    let mut semantics = Vec::new();
-    for primitive_name in family_build_primitive_classes {
-        if let Some(adapter) = select_family_primitive_adapter(
-            Some(family_id),
-            "family_build",
-            primitive_name,
-            "family_build_primitive_class",
-            primitive_name,
-            primitive_name,
-        ) {
-            semantics.push(summarize_adapter_semantics(&adapter));
-        }
-    }
-    for primitive_name in patch_primitive_classes {
-        if let Some(adapter) = select_family_primitive_adapter(
-            Some(family_id),
-            "patch",
-            primitive_name,
-            "patch_primitive_class",
-            primitive_name,
-            primitive_name,
-        ) {
-            semantics.push(summarize_adapter_semantics(&adapter));
-        }
-    }
-    for primitive_name in helper_primitive_kinds {
-        if let Some(adapter) = select_family_primitive_adapter(
-            Some(family_id),
-            "helper",
-            primitive_name,
-            "helper_primitive_kind",
-            primitive_name,
-            primitive_name,
-        ) {
-            semantics.push(summarize_adapter_semantics(&adapter));
-        }
-    }
-    dedup_strings(semantics)
-}
-
-fn candidate_patch_kind_for_primitive_class(
-    family_id: Option<&FamilyId>,
-    tool_kind: Option<&str>,
-    candidate_patch_kinds: &[String],
-    primitive_class: &str,
-) -> Option<String> {
-    candidate_patch_kinds.iter().find_map(|patch_kind| {
-        let classes = candidate_patch_primitive_classes_for_composition(
-            family_id,
-            tool_kind,
-            std::slice::from_ref(patch_kind),
-        );
-        if classes.iter().any(|class| class == primitive_class) {
-            Some(patch_kind.clone())
-        } else {
-            None
-        }
-    })
-}
-
-fn adapter_semantic_patch_restores(
-    family_id: Option<&FamilyId>,
-    tool_kind: Option<&str>,
-    candidate_patch_kinds: &[String],
-    selected_patch_kinds: &[String],
-) -> Vec<String> {
-    let selected_patch_primitive_classes = candidate_patch_primitive_classes_for_composition(
-        family_id,
-        tool_kind,
-        selected_patch_kinds,
-    );
-    let mut restores = Vec::new();
-
-    for primitive_class in &selected_patch_primitive_classes {
-        let Some(adapter) = select_family_primitive_adapter(
-            family_id,
-            "patch",
-            primitive_class,
-            "patch_primitive_class",
-            primitive_class,
-            primitive_class,
-        ) else {
-            continue;
-        };
-
-        for required in &adapter.requires_primitives {
-            if !selected_patch_primitive_classes.contains(required) {
-                if let Some(patch_kind) = candidate_patch_kind_for_primitive_class(
-                    family_id,
-                    tool_kind,
-                    candidate_patch_kinds,
-                    required,
-                ) {
-                    restores.push(patch_kind);
-                }
-            }
-        }
-
-        for companion in &adapter.companion_primitives {
-            if !selected_patch_primitive_classes.contains(companion) {
-                if let Some(patch_kind) = candidate_patch_kind_for_primitive_class(
-                    family_id,
-                    tool_kind,
-                    candidate_patch_kinds,
-                    companion,
-                ) {
-                    restores.push(patch_kind);
-                }
-            }
-        }
-    }
-
-    dedup_strings(restores)
+    Vec::new()
 }
 
 fn derive_primitive_execution_plan(route_plan: &ComposableRoutePlan) -> PrimitiveExecutionPlan {
     let mut steps = Vec::new();
     let mut execution_order = 0usize;
-    let family_id = route_plan.target_family_id.as_ref();
 
-    for primitive_name in &route_plan.selected_family_build_primitive_classes {
+    for primitive_name in &route_plan.selected_base_build_primitive_classes {
         execution_order += 1;
-        let source_kind = "family_build_primitive_class";
+        let source_kind = "base_build_primitive_class";
         let source_value = primitive_name.clone();
-        let adapter = select_family_primitive_adapter(
-            family_id,
-            "family_build",
-            primitive_name,
-            source_kind,
-            &source_value,
-            &route_plan.interpreted_goal,
-        );
         steps.push(PrimitiveExecutionStep {
             step_id: format!("primitive-step-{:02}", execution_order),
-            composition_layer: "family_build".into(),
+            composition_layer: "base_build".into(),
             primitive_name: primitive_name.clone(),
-            adapter_id: adapter
-                .as_ref()
-                .map(|item| item.adapter_id.clone())
-                .unwrap_or_else(|| format!("{}_family_build", primitive_name)),
-            adapter_kind: adapter
-                .as_ref()
-                .map(|item| item.adapter_kind.clone())
-                .unwrap_or_else(|| "declared_family_surface".into()),
-            support_level: adapter
-                .as_ref()
-                .map(|item| item.support_level.clone())
-                .unwrap_or_else(|| "declared".into()),
+            adapter_id: format!("{}_base_build", primitive_name),
+            adapter_kind: "declared_base_build_surface".into(),
+            support_level: "declared".into(),
             source_kind: source_kind.into(),
             source_value,
             execution_order,
-            execution_status: primitive_execution_status_for_layer("family_build", route_plan),
-            notes: adapter.map(|item| item.notes).unwrap_or_default(),
+            execution_status: primitive_execution_status_for_layer("base_build", route_plan),
+            notes: Vec::new(),
         });
     }
 
@@ -20245,35 +18419,18 @@ fn derive_primitive_execution_plan(route_plan: &ComposableRoutePlan) -> Primitiv
         execution_order += 1;
         let source_kind = "patch_primitive_class";
         let source_value = route_plan.selected_patch_kinds.join(", ");
-        let adapter = select_family_primitive_adapter(
-            family_id,
-            "patch",
-            primitive_name,
-            source_kind,
-            &source_value,
-            &route_plan.interpreted_goal,
-        );
         steps.push(PrimitiveExecutionStep {
             step_id: format!("primitive-step-{:02}", execution_order),
             composition_layer: "patch".into(),
             primitive_name: primitive_name.clone(),
-            adapter_id: adapter
-                .as_ref()
-                .map(|item| item.adapter_id.clone())
-                .unwrap_or_else(|| format!("{}_patch_adapter", primitive_name)),
-            adapter_kind: adapter
-                .as_ref()
-                .map(|item| item.adapter_kind.clone())
-                .unwrap_or_else(|| "patch_lane_adapter".into()),
-            support_level: adapter
-                .as_ref()
-                .map(|item| item.support_level.clone())
-                .unwrap_or_else(|| "declared".into()),
+            adapter_id: format!("{}_patch_adapter", primitive_name),
+            adapter_kind: "patch_lane_adapter".into(),
+            support_level: "declared".into(),
             source_kind: source_kind.into(),
             source_value,
             execution_order,
             execution_status: primitive_execution_status_for_layer("patch", route_plan),
-            notes: adapter.map(|item| item.notes).unwrap_or_default(),
+            notes: Vec::new(),
         });
     }
 
@@ -20281,35 +18438,18 @@ fn derive_primitive_execution_plan(route_plan: &ComposableRoutePlan) -> Primitiv
         execution_order += 1;
         let source_kind = "helper_primitive_kind";
         let source_value = route_plan.selected_helper_ids.join(", ");
-        let adapter = select_family_primitive_adapter(
-            family_id,
-            "helper",
-            primitive_name,
-            source_kind,
-            &source_value,
-            &route_plan.interpreted_goal,
-        );
         steps.push(PrimitiveExecutionStep {
             step_id: format!("primitive-step-{:02}", execution_order),
             composition_layer: "helper".into(),
             primitive_name: primitive_name.clone(),
-            adapter_id: adapter
-                .as_ref()
-                .map(|item| item.adapter_id.clone())
-                .unwrap_or_else(|| format!("{}_helper_adapter", primitive_name)),
-            adapter_kind: adapter
-                .as_ref()
-                .map(|item| item.adapter_kind.clone())
-                .unwrap_or_else(|| "helper_bundle_adapter".into()),
-            support_level: adapter
-                .as_ref()
-                .map(|item| item.support_level.clone())
-                .unwrap_or_else(|| "declared".into()),
+            adapter_id: format!("{}_helper_adapter", primitive_name),
+            adapter_kind: "helper_bundle_adapter".into(),
+            support_level: "declared".into(),
             source_kind: source_kind.into(),
             source_value,
             execution_order,
             execution_status: primitive_execution_status_for_layer("helper", route_plan),
-            notes: adapter.map(|item| item.notes).unwrap_or_default(),
+            notes: Vec::new(),
         });
     }
 
@@ -20334,7 +18474,7 @@ fn derive_primitive_execution_plan(route_plan: &ComposableRoutePlan) -> Primitiv
         execution_plan_id: chatty_factory_core::timestamp_id("primitive-execution"),
         composition_plan_id: route_plan.composition_plan_id.clone(),
         request_id: route_plan.request_id.clone(),
-        target_family_id: route_plan.target_family_id.clone(),
+        target_substrate_kind: route_plan.target_substrate_kind.clone(),
         target_tool_kind: route_plan.target_tool_kind.clone(),
         composition_work_order_kind: route_plan.composition_work_order_kind.clone(),
         composition_layers: route_plan.selected_composition_layers.clone(),
@@ -20349,30 +18489,8 @@ fn derive_primitive_execution_plan(route_plan: &ComposableRoutePlan) -> Primitiv
         steps,
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
-
-    let annotated_steps = plan
-        .steps
-        .iter()
-        .cloned()
-        .map(|mut step| {
-            if let Some(adapter) = select_family_primitive_adapter(
-                plan.target_family_id.as_ref(),
-                &step.composition_layer,
-                &step.primitive_name,
-                &step.source_kind,
-                &step.source_value,
-                &route_plan.interpreted_goal,
-            ) {
-                step.notes = adapter_semantic_notes(&plan.steps, &adapter);
-            }
-            step
-        })
-        .collect::<Vec<_>>();
-
-    PrimitiveExecutionPlan {
-        steps: annotated_steps,
-        ..plan
-    }
+    
+    plan
 }
 
 fn persist_primitive_execution_plan(
@@ -20494,8 +18612,7 @@ fn proof_capability_classes(
         .features
         .iter()
         .any(|feature| feature == "progress_banner")
-        || (spec.family_id == Some(FamilyId::RustCliTool)
-            && spec.tool_kind.as_deref() == Some("log_summary"))
+        || spec.tool_kind.as_deref() == Some("log_summary")
     {
         classes.push("status_surface".to_string());
     }
@@ -20568,46 +18685,12 @@ fn subtract_sorted_strings(left: &[String], right: &[String]) -> Vec<String> {
 fn find_counterpart_monitoring_project(
     output_root: &Path,
     current_project_name: &str,
-    current_family_id: Option<&FamilyId>,
 ) -> Result<Option<String>> {
-    let desired_family = match current_family_id {
-        Some(FamilyId::StaticWebDashboard) => Some(FamilyId::ChattycogWebviewModule),
-        Some(FamilyId::ChattycogWebviewModule) => Some(FamilyId::StaticWebDashboard),
-        _ => None,
-    };
-    let Some(desired_family) = desired_family else {
-        return Ok(None);
-    };
-
-    let mut candidates = discover_projects(output_root, None)?
-        .into_iter()
-        .filter(|project| project.project_name != current_project_name)
-        .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| right.project_name.cmp(&left.project_name));
-
-    for candidate in candidates {
-        if candidate.family_id.as_ref() != Some(&desired_family) {
-            continue;
-        }
-        let candidate_dir = output_root.join(&candidate.project_name);
-        let spec_path = candidate_dir.join("ProjectSpec.json");
-        let acceptance_path = candidate_dir.join("AcceptancePlan.json");
-        if !spec_path.exists() || !acceptance_path.exists() {
-            continue;
-        }
-        let spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(spec_path)?)?;
-        let acceptance: chatty_factory_core::AcceptancePlan =
-            serde_json::from_str(&fs::read_to_string(acceptance_path)?)?;
-        let capabilities = proof_capability_classes(&spec, &acceptance);
-        if helper_monitoring_baseline_satisfied(&capabilities) {
-            return Ok(Some(candidate.project_name));
-        }
-    }
-
+    let _ = (output_root, current_project_name);
     Ok(None)
 }
 
-fn build_cross_family_capability_comparison_receipt(
+fn build_legacy_comparison_capability_receipt(
     left_project_name: &str,
     left_spec: &ProjectSpec,
     left_acceptance: &chatty_factory_core::AcceptancePlan,
@@ -20615,7 +18698,7 @@ fn build_cross_family_capability_comparison_receipt(
     right_spec: &ProjectSpec,
     right_acceptance: &chatty_factory_core::AcceptancePlan,
     comparison_bundle: &chatty_factory_core::CapabilityComparisonBundle,
-) -> CrossFamilyMonitoringComparisonReceipt {
+) -> LegacyComparisonMonitoringReceipt {
     let policy = &comparison_bundle.policy;
     let comparison_label = if policy.comparison_label.is_empty() {
         "capability comparison"
@@ -20699,24 +18782,16 @@ fn build_cross_family_capability_comparison_receipt(
         notes.push(template.replace("{comparison_label}", comparison_label));
     }
 
-    CrossFamilyMonitoringComparisonReceipt {
+    LegacyComparisonMonitoringReceipt {
         receipt_id: chatty_factory_core::timestamp_id(
             if policy.comparison_receipt_prefix.is_empty() {
-                "cross-family-capability-comparison"
+                "legacy-comparison-capability-comparison"
             } else {
                 policy.comparison_receipt_prefix.as_str()
             },
         ),
         left_project_name: left_project_name.to_string(),
-        left_family_id: left_spec
-            .family_id
-            .as_ref()
-            .map(|id| id.as_str().to_string()),
         right_project_name: right_project_name.to_string(),
-        right_family_id: right_spec
-            .family_id
-            .as_ref()
-            .map(|id| id.as_str().to_string()),
         left_capability_classes: left_capabilities,
         right_capability_classes: right_capabilities,
         shared_capability_classes: shared_capabilities,
@@ -20756,9 +18831,9 @@ fn persist_composition_review_receipt(
     candidate_patch_kinds: &[String],
     reviewed_patch_kinds: &[String],
     final_patch_kinds: &[String],
-    candidate_family_build_primitive_classes: &[String],
-    reviewed_family_build_primitive_classes: &[String],
-    final_family_build_primitive_classes: &[String],
+    candidate_base_build_primitive_classes: &[String],
+    reviewed_base_build_primitive_classes: &[String],
+    final_base_build_primitive_classes: &[String],
     candidate_patch_primitive_classes: &[String],
     reviewed_patch_primitive_classes: &[String],
     final_patch_primitive_classes: &[String],
@@ -20789,9 +18864,9 @@ fn persist_composition_review_receipt(
         "candidate_patch_kinds": candidate_patch_kinds,
         "reviewed_patch_kinds": reviewed_patch_kinds,
         "final_patch_kinds": final_patch_kinds,
-        "candidate_family_build_primitive_classes": candidate_family_build_primitive_classes,
-        "reviewed_family_build_primitive_classes": reviewed_family_build_primitive_classes,
-        "final_family_build_primitive_classes": final_family_build_primitive_classes,
+        "candidate_base_build_primitive_classes": candidate_base_build_primitive_classes,
+        "reviewed_base_build_primitive_classes": reviewed_base_build_primitive_classes,
+        "final_base_build_primitive_classes": final_base_build_primitive_classes,
         "candidate_patch_primitive_classes": candidate_patch_primitive_classes,
         "reviewed_patch_primitive_classes": reviewed_patch_primitive_classes,
         "final_patch_primitive_classes": final_patch_primitive_classes,
@@ -20810,54 +18885,38 @@ fn persist_composition_review_receipt(
     Ok(path)
 }
 
-fn persist_cross_family_capability_comparison_receipt(
+fn persist_legacy_comparison_capability_receipt(
     runtime_root: &Path,
-    receipt: &CrossFamilyMonitoringComparisonReceipt,
+    receipt: &LegacyComparisonMonitoringReceipt,
 ) -> Result<PathBuf> {
     let path = runtime_root
-        .join("cross_family_monitoring_receipts")
+        .join("legacy_comparison_monitoring_receipts")
         .join(format!("{}.json", receipt.receipt_id));
     persist_json_pretty(&path, receipt)?;
     Ok(path)
 }
 
-fn persist_cross_family_paired_proof_receipt(
+fn persist_legacy_comparison_paired_proof_receipt(
     runtime_root: &Path,
     receipt: &PrimitiveProofHarnessReceipt,
 ) -> Result<PathBuf> {
     let path = runtime_root
-        .join("cross_family_paired_proof_receipts")
+        .join("legacy_comparison_paired_proof_receipts")
         .join(format!("{}.json", receipt.receipt_id));
     persist_json_pretty(&path, receipt)?;
     Ok(path)
 }
 
-fn parse_family_id_label(value: &str) -> Option<FamilyId> {
-    match value {
-        "static_web_dashboard" => Some(FamilyId::StaticWebDashboard),
-        "chattycog_webview_module" => Some(FamilyId::ChattycogWebviewModule),
-        "chattycog_native_window_module" => Some(FamilyId::ChattycogNativeWindowModule),
-        "chattyedu_native_window_module" => Some(FamilyId::ChattyeduNativeWindowModule),
-        "chattycog_chattyedu_native_window_module" => {
-            Some(FamilyId::ChattycogChattyeduNativeWindowModule)
-        }
-        "chattycog_workspace_module" => Some(FamilyId::ChattycogWorkspaceModule),
-        "python_cli_tool" => Some(FamilyId::PythonCliTool),
-        "rust_cli_tool" => Some(FamilyId::RustCliTool),
-        _ => None,
-    }
-}
-
-fn proof_request_for_family(
+fn proof_request_for_substrate(
     shared_request: &str,
-    family_id: &FamilyId,
+    substrate_kind: &SubstrateKind,
     execution_recipe: &chatty_factory_core::PrimitiveProofExecutionRecipe,
 ) -> String {
     let request_tail = strip_leading_build_phrase(shared_request);
     if let Some(binding) = execution_recipe
-        .family_request_bindings
+        .substrate_request_bindings
         .iter()
-        .find(|binding| &binding.family_id == family_id)
+        .find(|binding| binding.substrate_kind.as_ref() == Some(substrate_kind))
     {
         if request_tail.is_empty() {
             if let Some(fallback) = binding.empty_request_fallback.as_deref() {
@@ -20869,84 +18928,41 @@ fn proof_request_for_family(
             .request_template
             .replace("{shared_request}", shared_request.trim())
             .replace("{request_tail}", &request_tail)
-            .replace("{family_label}", &binding.family_label)
-            .replace("{family_id}", family_id.as_str())
+            .replace(
+                "{substrate_label}",
+                if binding.substrate_label.is_empty() {
+                    substrate_kind.as_str()
+                } else {
+                    binding.substrate_label.as_str()
+                },
+            )
+            .replace("{substrate_kind}", substrate_kind.as_str())
             .trim()
             .to_string();
     }
 
     match execution_recipe.request_generation_kind.as_str() {
-        "helper_monitoring" => helper_monitoring_request_for_family(shared_request, family_id),
-        "summary_reporting" => summary_reporting_request_for_family(shared_request, family_id),
+        "helper_monitoring" => {
+            if matches!(substrate_kind, SubstrateKind::StaticWeb) {
+                family_specific_monitoring_request(shared_request, "static web dashboard")
+            } else {
+                format!("build me a {} tool that {}", substrate_kind.as_str(), request_tail)
+            }
+        }
+        "summary_reporting" => {
+            if request_tail.is_empty() {
+                format!("build me a {} reporting surface", substrate_kind.as_str())
+            } else {
+                format!("build me a {} reporting surface that {}", substrate_kind.as_str(), request_tail)
+            }
+        }
         _ => {
             if request_tail.is_empty() {
-                format!("build me a {}", family_id.as_str().replace('_', " "))
+                format!("build me a {}", substrate_kind.as_str().replace('_', " "))
             } else {
                 format!(
                     "build me a {} that {}",
-                    family_id.as_str().replace('_', " "),
-                    request_tail
-                )
-            }
-        }
-    }
-}
-
-fn helper_monitoring_request_for_family(shared_request: &str, family_id: &FamilyId) -> String {
-    match family_id {
-        FamilyId::ChattycogWebviewModule => {
-            family_specific_monitoring_request(shared_request, "ChattyCog webview module")
-        }
-        FamilyId::StaticWebDashboard => {
-            family_specific_monitoring_request(shared_request, "static web dashboard")
-        }
-        other => {
-            let request_tail = strip_leading_build_phrase(shared_request);
-            if request_tail.is_empty() {
-                format!("build me a {}", other.as_str().replace('_', " "))
-            } else {
-                format!(
-                    "build me a {} that {}",
-                    other.as_str().replace('_', " "),
-                    request_tail
-                )
-            }
-        }
-    }
-}
-
-fn summary_reporting_request_for_family(shared_request: &str, family_id: &FamilyId) -> String {
-    match family_id {
-        FamilyId::StaticWebDashboard => {
-            let request_tail = strip_leading_build_phrase(shared_request);
-            if request_tail.is_empty() {
-                "build me a static web dashboard with a local inbox helper that exposes status plus report output".into()
-            } else {
-                format!(
-                    "build me a static web dashboard with a local inbox helper that {}",
-                    request_tail
-                )
-            }
-        }
-        FamilyId::RustCliTool => {
-            let request_tail = strip_leading_build_phrase(shared_request);
-            if request_tail.is_empty() {
-                "build me a rust cli log summary tool with a local inbox helper that filters inputs and exposes status plus report output".into()
-            } else {
-                format!(
-                    "build me a rust cli log summary tool with a local inbox helper that {}",
-                    request_tail
-                )
-            }
-        }
-        other => {
-            let request_tail = strip_leading_build_phrase(shared_request);
-            if request_tail.is_empty() {
-                format!("build me a {}", other.as_str().replace('_', " "))
-            } else {
-                format!(
-                    "build me a {} that {}",
-                    other.as_str().replace('_', " "),
+                    substrate_kind.as_str().replace('_', " "),
                     request_tail
                 )
             }
@@ -21037,21 +19053,6 @@ fn merge_execution_artifacts(
     if let Some(status) = updated.acceptance_status {
         base.acceptance_status = Some(status);
     }
-    if let Some(starter_override_id) = updated.starter_override_id {
-        base.starter_override_id = Some(starter_override_id);
-    }
-    if let Some(starter_override_summary) = updated.starter_override_summary {
-        base.starter_override_summary = Some(starter_override_summary);
-    }
-    if let Some(recommended_starter_id) = updated.recommended_starter_id {
-        base.recommended_starter_id = Some(recommended_starter_id);
-    }
-    if let Some(recommended_starter_summary) = updated.recommended_starter_summary {
-        base.recommended_starter_summary = Some(recommended_starter_summary);
-    }
-    if let Some(starter_recommendation_comparison) = updated.starter_recommendation_comparison {
-        base.starter_recommendation_comparison = Some(starter_recommendation_comparison);
-    }
     base.route_notes.extend(updated.route_notes);
     base
 }
@@ -21125,19 +19126,19 @@ fn execute_composable_route_plan(
         }
 
         match step.composition_layer.as_str() {
-            "family_build" => {
-                step.execution_status = "satisfied_by_family_adapter".into();
+            "base_build" => {
+                step.execution_status = "satisfied_by_base_build_adapter".into();
                 persist_composition_step_receipt(
                     runtime_root,
                     &primitive_plan.composition_plan_id,
                     index + 1,
-                    "family_build",
+                    "base_build",
                     &step.primitive_name,
                     &serde_json::json!({
                         "composition_plan_id": primitive_plan.composition_plan_id,
                         "request_id": request_id,
                         "step_index": index + 1,
-                        "step_kind": "family_build",
+                        "step_kind": "base_build",
                         "primitive_id": step.primitive_name,
                         "status": step.execution_status,
                         "adapter_id": step.adapter_id,
@@ -21288,15 +19289,15 @@ fn persist_composable_route_plan(
     Ok(path)
 }
 
-fn derive_build_fallback_failure_mode(
+fn derive_build_next_attempt_failure_mode(
     summary: &str,
     request: &RequestRecord,
     plan: &RequestPlan,
 ) -> (&'static str, &'static str, FailureClass, &'static str) {
-    if plan.inferred_family_candidates.is_empty() {
+    if plan.inferred_substrate_candidates.is_empty() {
         (
-            "no_deterministic_family_match",
-            "do not force a nearest deterministic family when no family candidate survives request interpretation",
+            "no_deterministic_substrate_match",
+            "do not force a nearest deterministic substrate when no bounded substrate candidate survives request interpretation",
             FailureClass::UnsupportedFamilyCapability,
             "deterministic_build_routing",
         )
@@ -21318,10 +19319,10 @@ fn derive_build_fallback_failure_mode(
         )
     } else {
         (
-            "deterministic_build_fallback_required",
+            "deterministic_build_next_attempt_required",
             "do not pretend the current deterministic build route can satisfy this request without additional structure",
             FailureClass::BuildFailure,
-            "deterministic_build_fallback",
+            "deterministic_build_next_attempt",
         )
     }
 }
@@ -21330,12 +19331,12 @@ fn derive_build_verification_receipt(
     runtime_root: &Path,
     request: &RequestRecord,
     plan: &RequestPlan,
-    build_spec: &FallbackBuildSpec,
+    build_spec: &NextAttemptBuildSpec,
     reasons: &[String],
     summary: &str,
 ) -> BuildVerificationReceipt {
     let (failure_mode, blocked_method, failure_class, review_subject) =
-        derive_build_fallback_failure_mode(summary, request, plan);
+        derive_build_next_attempt_failure_mode(summary, request, plan);
     let normalized_failure_class =
         normalized_failure_class_for_build_failure(&failure_class, failure_mode, summary);
     let next_action = select_mechanical_next_action(
@@ -21347,15 +19348,15 @@ fn derive_build_verification_receipt(
     let approved_constraints = matching_approved_build_constraints(
         runtime_root,
         review_subject,
-        build_spec.suggested_family_id.as_ref(),
+        None,
         build_spec.suggested_tool_kind.as_deref(),
         failure_mode,
     );
     let mut findings = vec![summary.to_string()];
-    if !build_spec.missing_family_build_primitive_classes.is_empty() {
+    if !build_spec.missing_base_build_primitive_classes.is_empty() {
         findings.push(format!(
             "missing family build primitive classes: {}",
-            build_spec.missing_family_build_primitive_classes.join(", ")
+            build_spec.missing_base_build_primitive_classes.join(", ")
         ));
     }
     if !build_spec.missing_patch_primitive_classes.is_empty() {
@@ -21398,10 +19399,13 @@ fn derive_build_verification_receipt(
         request_id: request.request_id.clone(),
         review_subject: review_subject.to_string(),
         interpreted_goal: plan.interpreted_goal.clone(),
-        candidate_family_ids: plan.inferred_family_candidates.clone(),
-        suggested_family_id: build_spec.suggested_family_id.clone(),
+        candidate_substrate_kinds: plan.inferred_substrate_candidates.clone(),
+        suggested_substrate_kind: build_spec.suggested_substrate_kind.clone(),
         suggested_tool_kind: build_spec.suggested_tool_kind.clone(),
-        suggested_extension_kind: build_spec.suggested_extension_kind.clone(),
+        next_attempt_kind: build_spec.next_attempt_kind.clone(),
+        funnel_stage: build_spec.funnel_stage.clone(),
+        next_attempt_mechanics: build_spec.next_attempt_mechanics.clone(),
+        promoted_constraint_summaries: build_spec.promoted_constraint_summaries.clone(),
         failure_class: failure_class.clone(),
         normalized_failure_class,
         recommended_next_action: next_action.action_id,
@@ -21419,118 +19423,14 @@ fn derive_build_verification_receipt(
         findings,
         recommended_next_step: next_action.recommended_next_step,
         decision: if approved_constraints.is_empty() {
-            "fallback_required".into()
+            "next_attempt_required".into()
         } else {
-            "fallback_required_with_approved_constraint".into()
+            "next_attempt_required_with_approved_constraint".into()
         },
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     }
 }
 
-fn resolve_build_starter_override(value: &str) -> Option<BuildStarterOverride> {
-    match value.trim() {
-        "" | "auto" => None,
-        "chattycog_native_window_module" => Some(BuildStarterOverride {
-            family_id: FamilyId::ChattycogNativeWindowModule,
-            desired_surface: DesiredSurface::Desktop,
-            exoskeleton_target: ExoskeletonTarget::ChattyCog,
-            tool_kind: "native_window_starter",
-            rationale: "starter override locked build routing to the standalone Rust dashboard Chatty-Cog native-window skeleton",
-        }),
-        "chattyedu_native_window_module" => Some(BuildStarterOverride {
-            family_id: FamilyId::ChattyeduNativeWindowModule,
-            desired_surface: DesiredSurface::Desktop,
-            exoskeleton_target: ExoskeletonTarget::None,
-            tool_kind: "native_window_starter",
-            rationale: "starter override locked build routing to the standalone Rust dashboard Chatty-EDU native-window skeleton",
-        }),
-        "chattycog_chattyedu_native_window_module" => Some(BuildStarterOverride {
-            family_id: FamilyId::ChattycogChattyeduNativeWindowModule,
-            desired_surface: DesiredSurface::Desktop,
-            exoskeleton_target: ExoskeletonTarget::None,
-            tool_kind: "native_window_starter",
-            rationale: "starter override locked build routing to the standalone Rust dashboard dual-host native-window skeleton for Chatty-Cog and Chatty-EDU",
-        }),
-        "chattycog_webview_module" => Some(BuildStarterOverride {
-            family_id: FamilyId::ChattycogWebviewModule,
-            desired_surface: DesiredSurface::Web,
-            exoskeleton_target: ExoskeletonTarget::ChattyCog,
-            tool_kind: "module_starter",
-            rationale: "starter override locked build routing to the Chatty-Cog webview module starter",
-        }),
-        "chattycog_workspace_module" => Some(BuildStarterOverride {
-            family_id: FamilyId::ChattycogWorkspaceModule,
-            desired_surface: DesiredSurface::Unknown,
-            exoskeleton_target: ExoskeletonTarget::ChattyCog,
-            tool_kind: "workspace_module",
-            rationale: "starter override locked build routing to the Chatty-Cog workspace module starter",
-        }),
-        "static_web_dashboard" => Some(BuildStarterOverride {
-            family_id: FamilyId::StaticWebDashboard,
-            desired_surface: DesiredSurface::Web,
-            exoskeleton_target: ExoskeletonTarget::None,
-            tool_kind: "dashboard",
-            rationale: "starter override locked build routing to the standalone static web dashboard starter",
-        }),
-        "rust_cli_tool" => Some(BuildStarterOverride {
-            family_id: FamilyId::RustCliTool,
-            desired_surface: DesiredSurface::Cli,
-            exoskeleton_target: ExoskeletonTarget::None,
-            tool_kind: "directory_audit",
-            rationale: "starter override locked build routing to the standalone Rust CLI starter",
-        }),
-        "python_cli_tool" => Some(BuildStarterOverride {
-            family_id: FamilyId::PythonCliTool,
-            desired_surface: DesiredSurface::Cli,
-            exoskeleton_target: ExoskeletonTarget::None,
-            tool_kind: "directory_audit",
-            rationale: "starter override locked build routing to the standalone Python CLI starter",
-        }),
-        _ => None,
-    }
-}
-
-fn apply_build_starter_override(
-    request: &mut RequestRecord,
-    starter_override: BuildStarterOverride,
-) {
-    request.candidate_family_ids = vec![starter_override.family_id.clone()];
-    request.desired_surface = Some(starter_override.desired_surface);
-    request.exoskeleton_target = Some(starter_override.exoskeleton_target);
-    request
-        .ambiguity_flags
-        .retain(|flag| flag != "surface_unclear");
-}
-
-fn apply_build_starter_override_to_plan(
-    plan: &mut RequestPlan,
-    starter_override: BuildStarterOverride,
-) {
-    plan.inferred_family_candidates = vec![starter_override.family_id];
-    plan.inferred_tool_kind = Some(starter_override.tool_kind.to_string());
-    plan.constraints.retain(|item| item != "surface_unclear");
-    if !plan
-        .rationale
-        .iter()
-        .any(|item| item == starter_override.rationale)
-    {
-        plan.rationale.push(starter_override.rationale.into());
-    }
-    plan.confidence_score = plan.confidence_score.max(80);
-    if plan.confidence_score >= 80 {
-        plan.confidence_band = "starter_override".into();
-        plan.escalation_reasons.clear();
-        plan.needs_llm_review = false;
-    }
-}
-
-fn build_starter_override_summary(starter_override: &BuildStarterOverride) -> String {
-    format!(
-        "starter override enforced: {} ({})",
-        starter_override.family_id.as_str(),
-        starter_override.rationale
-    )
-}
 
 fn is_soft_build_review_reason(reason: &str) -> bool {
     reason == "surface_unclear"
@@ -21539,7 +19439,7 @@ fn is_soft_build_review_reason(reason: &str) -> bool {
         || reason.starts_with("unsupported_explicit_stack:")
         || reason.starts_with("explicit stack `")
         || reason
-            == "request asks for service/backend capabilities that do not have a deterministic family yet"
+            == "request asks for service/backend capabilities that do not have a bounded deterministic substrate yet"
 }
 
 fn should_continue_build_with_soft_review(plan: &RequestPlan) -> bool {
@@ -21549,7 +19449,7 @@ fn should_continue_build_with_soft_review(plan: &RequestPlan) -> bool {
     if !plan.needs_llm_review {
         return false;
     }
-    if plan.inferred_family_candidates.is_empty() || plan.inferred_tool_kind.is_none() {
+    if plan.inferred_substrate_candidates.is_empty() || plan.inferred_tool_kind.is_none() {
         return false;
     }
     if plan.constraints.is_empty() && plan.escalation_reasons.is_empty() {
@@ -21576,7 +19476,7 @@ fn should_continue_patch_with_soft_review(plan: &RequestPlan, spec: &ProjectSpec
     if !plan.needs_llm_review {
         return false;
     }
-    if plan.inferred_family_candidates.is_empty() {
+    if plan.inferred_substrate_candidates.is_empty() {
         return false;
     }
     if spec.supported_patch_kinds.is_empty() {
@@ -21657,11 +19557,11 @@ fn extract_first_build_source_anchor(lines: &[String]) -> Option<String> {
 fn derive_build_verification_xray(
     verification: &BuildVerificationReceipt,
 ) -> BuildVerificationXray {
-    let family = verification
-        .suggested_family_id
+    let substrate = verification
+        .suggested_substrate_kind
         .as_ref()
-        .map(FamilyId::as_str)
-        .unwrap_or("unknown_family");
+        .map(SubstrateKind::as_str)
+        .unwrap_or("unknown_substrate");
     let tool = verification
         .suggested_tool_kind
         .as_deref()
@@ -21713,13 +19613,13 @@ fn derive_build_verification_xray(
 
     let lineage_key = format!(
         "build-verification:{}:{}:{}:{}",
-        family,
+        substrate,
         tool,
         review_subject,
         sanitize_filename_like(&task_subtype)
     );
     let mut narrow_usage_pattern = vec![
-        format!("family_id={family}"),
+        format!("substrate_kind={substrate}"),
         format!("tool_kind={tool}"),
         format!("review_subject={review_subject}"),
         format!("failure_mode={failure_mode}"),
@@ -21751,7 +19651,7 @@ fn derive_build_verification_xray(
         lineage_key,
         failure_class: verification.normalized_failure_class.clone(),
         trigger_class: Some(review_subject.to_string()),
-        attempt_method: format!("generated_build:{}:{}", family, tool),
+        attempt_method: format!("generated_build:{}:{}", substrate, tool),
         narrow_usage_pattern,
         findings,
         recommended_constraint_summary,
@@ -21793,7 +19693,7 @@ fn derive_proposed_constraint_from_build_promotion_candidate(
                 verification.review_subject
             ),
             constraint_origin: "triangulated_task_failure".into(),
-            family_id: verification.suggested_family_id.clone(),
+            substrate_kind: verification.suggested_substrate_kind.clone(),
             tool_kind: verification.suggested_tool_kind.clone(),
             language_id: Some("rust".into()),
             constraint_kind: candidate.failure_class.clone(),
@@ -22111,10 +20011,20 @@ fn matches_optional_str(expected: Option<&str>, actual: Option<&str>) -> bool {
     }
 }
 
+fn matches_optional_substrate(
+    expected: Option<&SubstrateKind>,
+    actual: Option<&SubstrateKind>,
+) -> bool {
+    match expected {
+        Some(expected) => actual == Some(expected),
+        None => true,
+    }
+}
+
 fn matching_approved_build_constraints(
     runtime_root: &Path,
     review_subject: &str,
-    family_id: Option<&FamilyId>,
+    substrate_kind: Option<&SubstrateKind>,
     tool_kind: Option<&str>,
     failure_mode: &str,
 ) -> Vec<ImplementationConstraint> {
@@ -22124,10 +20034,7 @@ fn matching_approved_build_constraints(
         .filter(|constraint| constraint.constraint_scope == review_subject)
         .filter(|constraint| constraint.constraint_kind == failure_mode)
         .filter(|constraint| {
-            matches_optional_str(
-                constraint.family_id.as_ref().map(FamilyId::as_str),
-                family_id.map(FamilyId::as_str),
-            )
+            matches_optional_substrate(constraint.substrate_kind.as_ref(), substrate_kind)
         })
         .filter(|constraint| matches_optional_str(constraint.tool_kind.as_deref(), tool_kind))
         .collect()
@@ -22209,9 +20116,9 @@ fn persist_post_build_failure_learning(
     request: &RequestRecord,
     plan: &RequestPlan,
     project_name: &str,
-    family_id: Option<FamilyId>,
+    substrate_kind: Option<SubstrateKind>,
     tool_kind: Option<&str>,
-    suggested_extension_kind: &str,
+    next_attempt_kind: &str,
     failure_mode: &str,
     blocked_method: &str,
     summary: &str,
@@ -22235,7 +20142,7 @@ fn persist_post_build_failure_learning(
     let approved_constraints = matching_approved_build_constraints(
         runtime_root,
         &review_subject,
-        family_id.as_ref(),
+        substrate_kind.as_ref(),
         tool_kind,
         &specific_failure_mode,
     );
@@ -22244,10 +20151,19 @@ fn persist_post_build_failure_learning(
         request_id: request.request_id.clone(),
         review_subject: review_subject.to_string(),
         interpreted_goal: plan.interpreted_goal.clone(),
-        candidate_family_ids: plan.inferred_family_candidates.clone(),
-        suggested_family_id: family_id.clone(),
+        candidate_substrate_kinds: plan.inferred_substrate_candidates.clone(),
+        suggested_substrate_kind: substrate_kind.clone(),
         suggested_tool_kind: tool_kind.map(str::to_string),
-        suggested_extension_kind: suggested_extension_kind.to_string(),
+        next_attempt_kind: next_attempt_kind.to_string(),
+        funnel_stage: "post_build_failure_classification".into(),
+        next_attempt_mechanics: vec![
+            "fail_honestly_against_the_frozen_intent".into(),
+            "classify_post_build_failure_before_any_retry".into(),
+            "promote_constraints_from_post_build_receipts".into(),
+            "retry_with_a_specific_mechanical_delta_instead_of_substituting_artifact_shape".into(),
+            "compare_against_prior_verification_receipts_before_changing_method_or_model".into(),
+        ],
+        promoted_constraint_summaries: plan.constraints.clone(),
         failure_class: failure_class.clone(),
         normalized_failure_class,
         recommended_next_action: next_action.action_id.clone(),
@@ -22266,11 +20182,11 @@ fn persist_post_build_failure_learning(
             let mut findings = vec![
                 format!("project_name={project_name}"),
                 format!(
-                    "family_id={}",
-                    family_id
+                    "substrate_kind={}",
+                    substrate_kind
                         .as_ref()
-                        .map(FamilyId::as_str)
-                        .unwrap_or("unknown_family")
+                        .map(chatty_factory_core::SubstrateKind::as_str)
+                        .unwrap_or("unknown_substrate")
                 ),
                 "built artifacts exist but host verification did not approve them".into(),
                 format!(
@@ -22293,9 +20209,9 @@ fn persist_post_build_failure_learning(
         },
         recommended_next_step: next_action.recommended_next_step,
         decision: if approved_constraints.is_empty() {
-            "fallback_required_after_build_verification".into()
+            "next_attempt_required_after_build_verification".into()
         } else {
-            "fallback_required_after_build_verification_with_approved_constraint".into()
+            "next_attempt_required_after_build_verification_with_approved_constraint".into()
         },
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
@@ -22329,7 +20245,7 @@ fn derive_post_build_failure_details(
         (
             "post_build_entrypoint_contract".into(),
             "missing_entrypoint_after_build".into(),
-            "do not mark a generated build as shippable when its primary entrypoint is missing after scaffold emission".into(),
+            "do not mark a generated build as shippable when its primary entrypoint is missing after build-seed emission".into(),
         )
     } else if lower.contains("chattycog module contract failed")
         || lower.contains("chattycog visual load contract failed")
@@ -22355,7 +20271,7 @@ fn derive_post_build_failure_details(
         (
             "post_build_compile_contract".into(),
             "cargo_check_failed_after_build".into(),
-            "do not accept a generated rust build when cargo check fails after scaffold emission"
+            "do not accept a generated rust build when cargo check fails after build-seed emission"
                 .into(),
         )
     } else if lower.contains("cargo run failed") {
@@ -22386,16 +20302,16 @@ fn derive_post_build_failure_details(
     }
 }
 
-fn emit_fallback_result(
+fn emit_next_attempt_result(
     runtime_root: &Path,
     request: &chatty_factory_core::RequestRecord,
     plan: &chatty_factory_core::RequestPlan,
     active_spec: Option<&ProjectSpec>,
     summary: &str,
 ) -> Result<HostActionResult> {
-    let fallback_shape = derive_chattycog_fallback_shape(request, plan);
+    let next_attempt_shape = derive_chattycog_next_attempt_shape(request, plan);
     let composition_route_class =
-        derive_composition_route_class(request, plan, active_spec, Some(&fallback_shape), false);
+        derive_composition_route_class(request, plan, active_spec, Some(&next_attempt_shape), false);
     let composable_route_plan = derive_composable_route_plan(
         request,
         plan,
@@ -22408,19 +20324,27 @@ fn emit_fallback_result(
         persist_composable_route_plan(runtime_root, &composable_route_plan)?;
     let mut reasons = dedup_strings(plan.escalation_reasons.clone());
     let constraints = dedup_strings(plan.constraints.clone());
+    let promoted_constraint_summaries = constraints.clone();
     let extension_shape =
-        derive_fallback_extension_shape(request, plan, active_spec, &fallback_shape);
-    let proof_seed_recommendation = if extension_shape.extension_kind == "proof_harness_bundle" {
-        closest_built_in_proof_seed(
-            &FallbackBuildSpec {
-                fallback_spec_id: String::new(),
+        derive_next_attempt_extension_shape(request, plan, active_spec, &next_attempt_shape);
+    let funnel_stage = next_attempt_funnel_stage(request, plan, &next_attempt_shape);
+    let next_attempt_mechanics =
+        next_attempt_mechanics_list(request, plan, &next_attempt_shape);
+    let comparison_seed_recommendation = if extension_shape.extension_kind == "proof_harness_bundle" {
+        closest_built_in_comparison_seed(
+            &NextAttemptBuildSpec {
+                next_attempt_spec_id: String::new(),
                 request_id: request.request_id.clone(),
                 mode: request.mode.clone(),
                 composition_route_class: Some(composition_route_class.clone()),
                 interpreted_goal: plan.interpreted_goal.clone(),
-                candidate_family_ids: plan.inferred_family_candidates.clone(),
-                suggested_extension_kind: extension_shape.extension_kind.clone(),
-                suggested_family_id: extension_shape.suggested_family_id.clone(),
+                candidate_substrate_kinds: plan.inferred_substrate_candidates.clone(),
+                next_attempt_kind: extension_shape.extension_kind.clone(),
+                funnel_stage: funnel_stage.clone(),
+                next_attempt_mechanics: next_attempt_mechanics.clone(),
+                promoted_constraint_summaries: promoted_constraint_summaries.clone(),
+                host_shape_substitution_forbidden: true,
+                suggested_substrate_kind: extension_shape.suggested_substrate_kind.clone(),
                 suggested_tool_kind: extension_shape.suggested_tool_kind.clone(),
                 suggested_patch_kind: extension_shape.suggested_patch_kind.clone(),
                 suggested_bridge_capabilities: extension_shape
@@ -22429,8 +20353,8 @@ fn emit_fallback_result(
                 suggested_hosting_mode: extension_shape.suggested_hosting_mode.clone(),
                 requested_capabilities: request.requested_capabilities.clone(),
                 constraints: constraints.clone(),
-                missing_family_build_primitive_classes: extension_shape
-                    .missing_family_build_primitive_classes
+                missing_base_build_primitive_classes: extension_shape
+                    .missing_base_build_primitive_classes
                     .clone(),
                 missing_patch_primitive_classes: extension_shape
                     .missing_patch_primitive_classes
@@ -22441,14 +20365,13 @@ fn emit_fallback_result(
                 suggested_artifacts: extension_shape.suggested_artifacts.clone(),
                 acceptance_targets: extension_shape.acceptance_targets.clone(),
                 implementation_notes: extension_shape.implementation_notes.clone(),
-                suggested_proof_seed_template_id: None,
-                suggested_proof_seed_bundle_id: None,
-                stub_bundle_path: None,
+                comparison_seed_template_id: None,
+                comparison_seed_bundle_id: None,
+                attempt_bundle_path: None,
                 recommended_next_action: String::new(),
                 recommended_next_step: String::new(),
                 created_at: None,
             },
-            &plan.inferred_family_candidates,
         )
         .map(|(template, bundle)| (template.template_id, bundle.bundle_id))
     } else {
@@ -22458,49 +20381,54 @@ fn emit_fallback_result(
         clarification_id: chatty_factory_core::timestamp_id("clarification"),
         request_id: request.request_id.clone(),
         mode: request.mode.clone(),
-        question: fallback_question(request, plan, active_spec, &fallback_shape),
+        question: next_attempt_question(request, plan, active_spec, &next_attempt_shape),
         reasons: reasons.clone(),
-        candidate_family_ids: plan.inferred_family_candidates.clone(),
+        candidate_substrate_kinds: plan.inferred_substrate_candidates.clone(),
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
     let clarification_path = runtime_root
         .join("clarifications")
         .join(format!("{}-clarification.json", request.request_id));
     persist_json_pretty(&clarification_path, &clarification)?;
-    let fallback_next_action = fallback_recommended_next_action(request, plan, &fallback_shape);
+    let next_attempt_action =
+        next_attempt_recommended_action(request, plan, &next_attempt_shape);
 
-    let build_spec = FallbackBuildSpec {
-        fallback_spec_id: chatty_factory_core::timestamp_id("fallback-build-spec"),
+    let build_spec = NextAttemptBuildSpec {
+        next_attempt_spec_id: chatty_factory_core::timestamp_id("next-attempt-build-spec"),
         request_id: request.request_id.clone(),
         mode: request.mode.clone(),
         composition_route_class: Some(composition_route_class.clone()),
         interpreted_goal: plan.interpreted_goal.clone(),
-        candidate_family_ids: plan.inferred_family_candidates.clone(),
-        suggested_extension_kind: extension_shape.extension_kind.clone(),
-        suggested_family_id: extension_shape.suggested_family_id.clone(),
+        candidate_substrate_kinds: plan.inferred_substrate_candidates.clone(),
+        next_attempt_kind: extension_shape.extension_kind.clone(),
+        funnel_stage: funnel_stage.clone(),
+        next_attempt_mechanics: next_attempt_mechanics.clone(),
+        promoted_constraint_summaries: promoted_constraint_summaries.clone(),
+        host_shape_substitution_forbidden: true,
+        suggested_substrate_kind: extension_shape.suggested_substrate_kind.clone(),
         suggested_tool_kind: extension_shape.suggested_tool_kind.clone(),
         suggested_patch_kind: extension_shape.suggested_patch_kind.clone(),
         suggested_bridge_capabilities: extension_shape.suggested_bridge_capabilities.clone(),
         suggested_hosting_mode: extension_shape.suggested_hosting_mode.clone(),
         requested_capabilities: request.requested_capabilities.clone(),
         constraints: constraints.clone(),
-        missing_family_build_primitive_classes: extension_shape
-            .missing_family_build_primitive_classes
+        missing_base_build_primitive_classes: extension_shape
+            .missing_base_build_primitive_classes
             .clone(),
         missing_patch_primitive_classes: extension_shape.missing_patch_primitive_classes.clone(),
         missing_helper_primitive_kinds: extension_shape.missing_helper_primitive_kinds.clone(),
         suggested_artifacts: extension_shape.suggested_artifacts.clone(),
         acceptance_targets: extension_shape.acceptance_targets.clone(),
         implementation_notes: extension_shape.implementation_notes.clone(),
-        suggested_proof_seed_template_id: proof_seed_recommendation
+        comparison_seed_template_id: comparison_seed_recommendation
             .as_ref()
             .map(|(template_id, _)| template_id.clone()),
-        suggested_proof_seed_bundle_id: proof_seed_recommendation
+        comparison_seed_bundle_id: comparison_seed_recommendation
             .as_ref()
             .map(|(_, bundle_id)| bundle_id.clone()),
-        stub_bundle_path: None,
-        recommended_next_action: fallback_next_action.action_id.clone(),
-        recommended_next_step: fallback_next_action.recommended_next_step.clone(),
+        attempt_bundle_path: None,
+        recommended_next_action: next_attempt_action.action_id.clone(),
+        recommended_next_step: next_attempt_action.recommended_next_step.clone(),
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
     let pending_registry_path = runtime_root
@@ -22515,18 +20443,18 @@ fn emit_fallback_result(
         reasons.push("matching pending deterministic lane already exists with the same unresolved layer profile".into());
         reasons = dedup_strings(reasons);
     }
-    let stub_bundle_path =
-        persist_extension_stub_bundle(runtime_root, request, plan, active_spec, &build_spec)?;
+    let attempt_bundle_path =
+        persist_next_attempt_bundle(runtime_root, request, plan, active_spec, &build_spec)?;
     let mut build_spec = build_spec;
-    build_spec.stub_bundle_path = Some(stub_bundle_path.display().to_string());
+    build_spec.attempt_bundle_path = Some(attempt_bundle_path.display().to_string());
     if !pending_matches.is_empty() {
-        build_spec.recommended_next_action = "continue_pending_lane_implementation".into();
+        build_spec.recommended_next_action = "continue_pending_attempt_implementation".into();
         build_spec.recommended_next_step =
-            "continue implementing the matching pending deterministic lane with the same unresolved family/patch/helper profile, or promote it from pending to executable registry code".into();
+            "continue implementing the matching pending deterministic attempt with the same unresolved layer profile, or promote it from pending to executable registry code".into();
     }
     let build_spec_path = runtime_root
-        .join("fallback_build_specs")
-        .join(format!("{}-fallback-build-spec.json", request.request_id));
+        .join("next_attempt_build_specs")
+        .join(format!("{}-next-attempt-build-spec.json", request.request_id));
     persist_json_pretty(&build_spec_path, &build_spec)?;
 
     let planner_handoff = derive_planner_handoff(request, plan, active_spec);
@@ -22535,21 +20463,30 @@ fn emit_fallback_result(
         .join(format!("{}.json", planner_handoff.handoff_id));
     persist_json_pretty(&planner_handoff_path, &planner_handoff)?;
 
-    let receipt = FallbackPlanReceipt {
-        fallback_receipt_id: chatty_factory_core::timestamp_id("fallback-plan"),
+    let receipt = NextAttemptReceipt {
+        next_attempt_receipt_id: chatty_factory_core::timestamp_id("next-attempt-plan"),
         request_id: request.request_id.clone(),
         mode: request.mode.clone(),
-        status: "fallback_required".into(),
+        status: "next_attempt_required".into(),
         reasons: reasons.clone(),
+        funnel_stage: funnel_stage.clone(),
+        next_attempt_mechanics: next_attempt_mechanics.clone(),
+        evidence_receipt_paths: vec![
+            clarification_path.display().to_string(),
+            build_spec_path.display().to_string(),
+            planner_handoff_path.display().to_string(),
+            composable_route_plan_path.display().to_string(),
+            attempt_bundle_path.display().to_string(),
+        ],
         clarification_path: Some(clarification_path.display().to_string()),
         build_spec_path: Some(build_spec_path.display().to_string()),
         planner_handoff_path: Some(planner_handoff_path.display().to_string()),
-        stub_bundle_path: Some(stub_bundle_path.display().to_string()),
+        attempt_bundle_path: Some(attempt_bundle_path.display().to_string()),
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
     let receipt_path = runtime_root
-        .join("fallback_plan_receipts")
-        .join(format!("{}-fallback.json", request.request_id));
+        .join("next_attempt_receipts")
+        .join(format!("{}-next-attempt.json", request.request_id));
     persist_json_pretty(&receipt_path, &receipt)?;
 
     let (
@@ -22605,13 +20542,13 @@ fn emit_fallback_result(
 
     let mut details = vec![
         format!("clarification={}", clarification_path.display()),
-        format!("fallback_build_spec={}", build_spec_path.display()),
+        format!("next_attempt_build_spec={}", build_spec_path.display()),
         format!("planner_handoff={}", planner_handoff_path.display()),
         format!(
             "composable_route_plan={}",
             composable_route_plan_path.display()
         ),
-        format!("fallback_receipt={}", receipt_path.display()),
+        format!("next_attempt_receipt={}", receipt_path.display()),
     ];
     if let Some(path) = &build_verification_path {
         details.push(format!("build_verification={}", path.display()));
@@ -22619,7 +20556,7 @@ fn emit_fallback_result(
     if let Some(path) = &proposed_constraint_path {
         details.push(format!("proposed_constraint={}", path.display()));
     }
-    let (outcome_class, outcome_notes) = classify_fallback_outcome(request, plan, summary);
+    let (outcome_class, outcome_notes) = classify_next_attempt_outcome(request, plan, summary);
 
     Ok(HostActionResult {
         summary: summary.into(),
@@ -22627,7 +20564,7 @@ fn emit_fallback_result(
         browser_state: None,
         runtime_refresh: None,
         execution_result: None,
-        fallback_result: Some(HostFallbackResult {
+        next_attempt_result: Some(HostNextAttemptResult {
             request_id: request.request_id.clone(),
             mode: request.mode.as_ref().map(|mode| match mode {
                 chatty_factory_core::RequestMode::NewBuild => "new_build".to_string(),
@@ -22641,50 +20578,69 @@ fn emit_fallback_result(
             question: clarification.question,
             interpreted_goal: plan.interpreted_goal.clone(),
             reasons,
-            candidate_family_ids: plan
-                .inferred_family_candidates
+            funnel_stage,
+            next_attempt_mechanics,
+            evidence_receipt_paths: {
+                let mut paths = vec![
+                    clarification_path.display().to_string(),
+                    build_spec_path.display().to_string(),
+                    planner_handoff_path.display().to_string(),
+                    composable_route_plan_path.display().to_string(),
+                    attempt_bundle_path.display().to_string(),
+                ];
+                if let Some(path) = &build_verification_path {
+                    paths.push(path.display().to_string());
+                }
+                if let Some(path) = &proposed_constraint_path {
+                    paths.push(path.display().to_string());
+                }
+                paths
+            },
+            host_shape_substitution_forbidden: true,
+            candidate_substrate_kinds: plan
+                .inferred_substrate_candidates
                 .iter()
-                .map(|id| id.as_str().to_string())
+                .map(|kind| kind.as_str().to_string())
                 .collect(),
             requested_capabilities: request.requested_capabilities.clone(),
             constraints,
-            suggested_extension_kind: build_spec.suggested_extension_kind.clone(),
-            suggested_family_id: build_spec
-                .suggested_family_id
+            next_attempt_kind: build_spec.next_attempt_kind.clone(),
+            suggested_substrate_kind: build_spec
+                .suggested_substrate_kind
                 .as_ref()
-                .map(|id| id.as_str().to_string()),
+                .map(|kind| kind.as_str().to_string()),
             suggested_tool_kind: build_spec.suggested_tool_kind.clone(),
             suggested_patch_kind: build_spec.suggested_patch_kind.clone(),
             suggested_bridge_capabilities: build_spec.suggested_bridge_capabilities.clone(),
             suggested_hosting_mode: build_spec.suggested_hosting_mode.clone(),
             suggested_artifacts: build_spec.suggested_artifacts.clone(),
-            missing_family_build_primitive_classes: build_spec
-                .missing_family_build_primitive_classes
+            missing_base_build_primitive_classes: build_spec
+                .missing_base_build_primitive_classes
                 .clone(),
             missing_patch_primitive_classes: build_spec.missing_patch_primitive_classes.clone(),
             missing_helper_primitive_kinds: build_spec.missing_helper_primitive_kinds.clone(),
             acceptance_targets: build_spec.acceptance_targets.clone(),
             implementation_notes: build_spec.implementation_notes.clone(),
-            suggested_proof_seed_template_id: build_spec.suggested_proof_seed_template_id.clone(),
-            suggested_proof_seed_bundle_id: build_spec.suggested_proof_seed_bundle_id.clone(),
+            comparison_seed_template_id: build_spec.comparison_seed_template_id.clone(),
+            comparison_seed_bundle_id: build_spec.comparison_seed_bundle_id.clone(),
             recommended_next_action: Some(build_spec.recommended_next_action.clone()),
             recommended_next_step: build_spec.recommended_next_step,
-            pending_extension_ids: pending_matches
+            pending_attempt_ids: pending_matches
                 .iter()
                 .map(|entry| entry.entry_id.clone())
                 .collect(),
-            pending_extension_scaffold_roots: pending_matches
+            pending_attempt_bundle_roots: pending_matches
                 .iter()
-                .map(|entry| entry.scaffold_root.clone())
+                .map(|entry| entry.attempt_bundle_root.clone())
                 .collect(),
-            chattycog_requested_hosting_mode: fallback_shape.requested_hosting_mode,
-            chattycog_valid_hosting_modes: fallback_shape.valid_hosting_modes,
-            chattycog_requested_bridge_capabilities: fallback_shape.requested_bridge_capabilities,
-            chattycog_supported_bridge_capabilities: fallback_shape.supported_bridge_capabilities,
+            chattycog_requested_hosting_mode: next_attempt_shape.requested_hosting_mode,
+            chattycog_valid_hosting_modes: next_attempt_shape.valid_hosting_modes,
+            chattycog_requested_bridge_capabilities: next_attempt_shape.requested_bridge_capabilities,
+            chattycog_supported_bridge_capabilities: next_attempt_shape.supported_bridge_capabilities,
             clarification_path: Some(clarification_path.display().to_string()),
             build_spec_path: Some(build_spec_path.display().to_string()),
             planner_handoff_path: Some(planner_handoff_path.display().to_string()),
-            stub_bundle_path: Some(stub_bundle_path.display().to_string()),
+            attempt_bundle_path: Some(attempt_bundle_path.display().to_string()),
             build_failure_class: build_verification
                 .as_ref()
                 .map(|verification| verification.normalized_failure_class.clone()),
@@ -22718,15 +20674,66 @@ fn emit_fallback_result(
     })
 }
 
+fn next_attempt_funnel_stage(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    chattycog_shape: &ChattyCogNextAttemptShape,
+) -> String {
+    if matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch)) {
+        "retry_under_frozen_patch_intent".into()
+    } else if plan.needs_llm_review {
+        "classify_and_retry_under_promoted_constraints".into()
+    } else if chattycog_shape.has_hosting_conflict
+        || chattycog_shape.exceeds_current_contract
+        || !chattycog_shape.unsupported_bridge_capabilities.is_empty()
+    {
+        "decompose_and_retry_with_narrower_hosting_constraints".into()
+    } else {
+        "classify_and_retry_under_frozen_build_intent".into()
+    }
+}
+
+fn next_attempt_mechanics_list(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    chattycog_shape: &ChattyCogNextAttemptShape,
+) -> Vec<String> {
+    let mut mechanics = vec![
+        "fail_honestly_against_the_frozen_intent".into(),
+        "classify_failure_before_any_retry".into(),
+        "retry_with_a_mechanical_delta_derived_from_evidence".into(),
+    ];
+    if matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch)) {
+        mechanics.push("preserve_the_active_project_and_change_only_the_patch_attempt_method".into());
+    } else {
+        mechanics.push("preserve_the_requested_artifact_intent_and_do_not_substitute_shape".into());
+    }
+    if !plan.constraints.is_empty() || !plan.escalation_reasons.is_empty() {
+        mechanics.push("promote_constraints_from_receipts_before_the_next_attempt".into());
+    }
+    mechanics.push("decompose_smaller_if_the_same_attempt_shape_keeps_failing".into());
+    mechanics.push("triangulate_against_failure_library_and_prior_receipts".into());
+    mechanics.push("compare_against_prior_receipts_before_changing_method_or_model".into());
+    if chattycog_shape.has_hosting_conflict
+        || chattycog_shape.exceeds_current_contract
+        || !chattycog_shape.unsupported_bridge_capabilities.is_empty()
+    {
+        mechanics.push("narrow_the_hosting_or_bridge_attempt_without_inventing_a_replacement_artifact".into());
+    }
+    mechanics.push("alter_method_or_toolchain_only_if_receipts_justify_it".into());
+    mechanics.push("change_model_only_if_the_failure_pattern_points_to_model_limitation".into());
+    mechanics
+}
+
 #[derive(Debug, Clone, Default)]
-struct FallbackExtensionShape {
+struct NextAttemptExtensionShape {
     extension_kind: String,
-    suggested_family_id: Option<FamilyId>,
+    suggested_substrate_kind: Option<chatty_factory_core::SubstrateKind>,
     suggested_tool_kind: Option<String>,
     suggested_patch_kind: Option<String>,
     suggested_bridge_capabilities: Vec<String>,
     suggested_hosting_mode: Option<String>,
-    missing_family_build_primitive_classes: Vec<String>,
+    missing_base_build_primitive_classes: Vec<String>,
     missing_patch_primitive_classes: Vec<String>,
     missing_helper_primitive_kinds: Vec<String>,
     suggested_artifacts: Vec<String>,
@@ -22734,36 +20741,34 @@ struct FallbackExtensionShape {
     implementation_notes: Vec<String>,
 }
 
-fn derive_fallback_extension_shape(
+fn derive_next_attempt_extension_shape(
     request: &chatty_factory_core::RequestRecord,
     plan: &chatty_factory_core::RequestPlan,
     active_spec: Option<&ProjectSpec>,
-    chattycog_shape: &ChattyCogFallbackShape,
-) -> FallbackExtensionShape {
+    chattycog_shape: &ChattyCogNextAttemptShape,
+) -> NextAttemptExtensionShape {
     let requested_hosting_mode = chattycog_shape.requested_hosting_mode.clone();
-    let suggested_family_id = if let Some(spec) = active_spec {
-        spec.family_id.clone()
+    let suggested_substrate_kind = if let Some(spec) = active_spec {
+        project_spec_substrate_kind(spec)
     } else if let Some(mode) = requested_hosting_mode.as_deref() {
         match mode {
-            "hosted_webview" => Some(FamilyId::ChattycogWebviewModule),
-            "hosted_native_window" => Some(FamilyId::ChattycogNativeWindowModule),
-            "workspace_surface" => Some(FamilyId::ChattycogWorkspaceModule),
-            _ => plan.inferred_family_candidates.first().cloned(),
+            "hosted_webview" => Some(chatty_factory_core::SubstrateKind::Webview),
+            "hosted_native_window" => Some(chatty_factory_core::SubstrateKind::NativeWindow),
+            _ => plan.inferred_substrate_candidates.first().cloned(),
         }
     } else {
-        plan.inferred_family_candidates.first().cloned()
+        plan.inferred_substrate_candidates.first().cloned()
     };
-
     let suggested_tool_kind = active_spec
         .and_then(|spec| spec.tool_kind.clone())
         .or_else(|| plan.inferred_tool_kind.clone());
     let (
-        missing_family_build_primitive_classes,
+        missing_base_build_primitive_classes,
         missing_patch_primitive_classes,
         missing_helper_primitive_kinds,
     ) = derive_missing_composition_layers(
         request,
-        suggested_family_id.as_ref(),
+        suggested_substrate_kind.as_ref(),
         suggested_tool_kind.as_deref(),
         active_spec,
     );
@@ -22780,20 +20785,20 @@ fn derive_fallback_extension_shape(
         let extension_kind = classify_extension_kind(
             request.mode.as_ref(),
             &[],
-            &missing_family_build_primitive_classes,
+            &missing_base_build_primitive_classes,
             &missing_patch_primitive_classes,
             &missing_helper_primitive_kinds,
             false,
             false,
         );
-        return FallbackExtensionShape {
+        return NextAttemptExtensionShape {
             extension_kind,
-            suggested_family_id,
+            suggested_substrate_kind,
             suggested_tool_kind,
             suggested_patch_kind,
             suggested_bridge_capabilities: Vec::new(),
             suggested_hosting_mode: requested_hosting_mode,
-            missing_family_build_primitive_classes,
+            missing_base_build_primitive_classes,
             missing_patch_primitive_classes,
             missing_helper_primitive_kinds,
             suggested_artifacts: vec![
@@ -22807,8 +20812,8 @@ fn derive_fallback_extension_shape(
             ],
             implementation_notes: vec![
                 "Implement a deterministic patch lane instead of routing this request through freeform planner output.".into(),
-                "Prefer a registry-backed patch recipe keyed by family and tool kind.".into(),
-                "Record missing primitive coverage in terms of base-family classes, patch classes, and helper kinds.".into(),
+                "Prefer a registry-backed patch recipe keyed by substrate and tool facts.".into(),
+                "Record missing primitive coverage in terms of substrate-build classes, patch classes, and helper kinds.".into(),
             ],
         };
     }
@@ -22817,22 +20822,22 @@ fn derive_fallback_extension_shape(
         let extension_kind = classify_extension_kind(
             request.mode.as_ref(),
             &chattycog_shape.unsupported_bridge_capabilities,
-            &missing_family_build_primitive_classes,
+            &missing_base_build_primitive_classes,
             &missing_patch_primitive_classes,
             &missing_helper_primitive_kinds,
             true,
             false,
         );
-        return FallbackExtensionShape {
+        return NextAttemptExtensionShape {
             extension_kind,
-            suggested_family_id,
+            suggested_substrate_kind,
             suggested_tool_kind,
             suggested_patch_kind,
             suggested_bridge_capabilities: chattycog_shape
                 .unsupported_bridge_capabilities
                 .clone(),
             suggested_hosting_mode: requested_hosting_mode,
-            missing_family_build_primitive_classes,
+            missing_base_build_primitive_classes,
             missing_patch_primitive_classes,
             missing_helper_primitive_kinds,
             suggested_artifacts: vec![
@@ -22856,20 +20861,20 @@ fn derive_fallback_extension_shape(
         let extension_kind = classify_extension_kind(
             request.mode.as_ref(),
             &[],
-            &missing_family_build_primitive_classes,
+            &missing_base_build_primitive_classes,
             &missing_patch_primitive_classes,
             &missing_helper_primitive_kinds,
             false,
             true,
         );
-        return FallbackExtensionShape {
+        return NextAttemptExtensionShape {
             extension_kind,
-            suggested_family_id,
+            suggested_substrate_kind,
             suggested_tool_kind,
             suggested_patch_kind,
             suggested_bridge_capabilities: Vec::new(),
             suggested_hosting_mode: requested_hosting_mode,
-            missing_family_build_primitive_classes,
+            missing_base_build_primitive_classes,
             missing_patch_primitive_classes,
             missing_helper_primitive_kinds,
             suggested_artifacts: vec![
@@ -22883,88 +20888,88 @@ fn derive_fallback_extension_shape(
             ],
             implementation_notes: vec![
                 "Split hosted ChattyCog UI concerns from helper or service concerns.".into(),
-                "Model helper/runtime work as a new deterministic lane rather than stretching the hosting family.".into(),
+                "Model helper/runtime work as a new deterministic lane rather than stretching the current hosting contract.".into(),
                 "Document which helper primitive kinds are still missing from the current substrate.".into(),
             ],
         };
     }
 
-    FallbackExtensionShape {
+    NextAttemptExtensionShape {
         extension_kind: classify_extension_kind(
             request.mode.as_ref(),
             &[],
-            &missing_family_build_primitive_classes,
+            &missing_base_build_primitive_classes,
             &missing_patch_primitive_classes,
             &missing_helper_primitive_kinds,
             false,
             false,
         ),
-        suggested_family_id,
+        suggested_substrate_kind,
         suggested_tool_kind,
         suggested_patch_kind,
         suggested_bridge_capabilities: Vec::new(),
         suggested_hosting_mode: requested_hosting_mode,
-        missing_family_build_primitive_classes,
+        missing_base_build_primitive_classes,
         missing_patch_primitive_classes,
         missing_helper_primitive_kinds,
         suggested_artifacts: vec![
-            "FAMILY_MANIFEST_STUB.json".into(),
+            "BASE_BUILD_STUB.json".into(),
             "ACCEPTANCE_STUB.json".into(),
             "README.md".into(),
         ],
         acceptance_targets: vec![
-            "family_acceptance_passes".into(),
+            "base_build_acceptance_passes".into(),
             "project_contract_emitted".into(),
         ],
         implementation_notes: vec![
-            "Define a deterministic family instead of falling back to prompt-shaped code generation.".into(),
-            "Anchor the new lane in manifest data, emitted templates, and host-owned acceptance.".into(),
-            "Use the missing primitive layers to decide whether this should land as family surface, patch surface, helper substrate, or a combination.".into(),
+            "Define a deterministic base-build attempt instead of falling back to prompt-shaped code generation.".into(),
+            "Anchor the next attempt in emitted contract data and host-owned acceptance.".into(),
+            "Use the missing primitive layers to decide whether this should land as base-build, patch, helper, bridge, or a composition bundle.".into(),
         ],
     }
 }
 
-fn persist_extension_stub_bundle(
+fn persist_next_attempt_bundle(
     runtime_root: &Path,
     request: &chatty_factory_core::RequestRecord,
     plan: &chatty_factory_core::RequestPlan,
     active_spec: Option<&ProjectSpec>,
-    build_spec: &FallbackBuildSpec,
+    build_spec: &NextAttemptBuildSpec,
 ) -> Result<PathBuf> {
     let stub_root = runtime_root
-        .join("extension_stubs")
+        .join("next_attempts")
         .join(request.request_id.as_str());
     fs::create_dir_all(&stub_root)?;
 
-    persist_json_pretty(&stub_root.join("EXTENSION_SPEC.json"), build_spec)?;
+    persist_json_pretty(&stub_root.join("NEXT_ATTEMPT_SPEC.json"), build_spec)?;
 
     let readme = format!(
-        "# Extension Stub\n\nRequest: `{}`\n\nInterpreted goal: {}\n\nExtension kind: `{}`\n\nRecommended next step: {}\n\nSuggested family: `{}`\nSuggested tool kind: `{}`\nSuggested patch kind: `{}`\nSuggested hosting mode: `{}`\nSuggested proof seed template: `{}`\nSuggested proof seed bundle: `{}`\n\nMissing base family build classes:\n{}\n\nMissing patch primitive classes:\n{}\n\nMissing helper primitive kinds:\n{}\n\nAcceptance targets:\n{}\n\nImplementation notes:\n{}\n",
+        "# Next Attempt Bundle\n\nRequest: `{}`\n\nInterpreted goal: {}\n\nNext attempt kind: `{}`\n\nRecommended next step: {}\n\nSuggested substrate: `{}`\nSuggested tool kind: `{}`\nSuggested patch kind: `{}`\nSuggested hosting mode: `{}`\nComparison seed template: `{}`\nComparison seed bundle: `{}`\n\nMissing base build primitive classes:\n{}\n\nMissing patch primitive classes:\n{}\n\nMissing helper primitive kinds:\n{}\n\nAcceptance targets:\n{}\n\nImplementation notes:\n{}\n",
         request.raw_request.trim(),
         build_spec.interpreted_goal,
-        build_spec.suggested_extension_kind,
+        build_spec.next_attempt_kind,
         build_spec.recommended_next_step,
         build_spec
-            .suggested_family_id
+            .suggested_substrate_kind
             .as_ref()
-            .map(|id| id.as_str())
+            .map(|kind| kind.as_str())
             .unwrap_or("none"),
         build_spec.suggested_tool_kind.as_deref().unwrap_or("none"),
         build_spec.suggested_patch_kind.as_deref().unwrap_or("none"),
         build_spec.suggested_hosting_mode.as_deref().unwrap_or("none"),
         build_spec
-            .suggested_proof_seed_template_id
+            .comparison_seed_template_id
             .as_deref()
             .unwrap_or("none"),
         build_spec
-            .suggested_proof_seed_bundle_id
+            .comparison_seed_bundle_id
             .as_deref()
             .unwrap_or("none"),
-        if build_spec.missing_family_build_primitive_classes.is_empty() {
+        if build_spec.missing_base_build_primitive_classes.is_empty() {
             "- none".to_string()
         } else {
             build_spec
-                .missing_family_build_primitive_classes
+                .missing_base_build_primitive_classes
                 .iter()
                 .map(|item| format!("- {item}"))
                 .collect::<Vec<_>>()
@@ -23010,15 +21015,16 @@ fn persist_extension_stub_bundle(
         "raw_request": request.raw_request,
         "interpreted_goal": plan.interpreted_goal,
         "active_project": request.active_project,
-        "active_project_family_id": active_spec.and_then(|spec| spec.family_id.as_ref().map(|id| id.as_str().to_string())),
+        "candidate_substrate_kinds": build_spec.candidate_substrate_kinds.iter().map(|kind| kind.as_str()).collect::<Vec<_>>(),
         "active_project_tool_kind": active_spec.and_then(|spec| spec.tool_kind.clone()),
-        "candidate_family_ids": build_spec.candidate_family_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        "suggested_substrate_kind": build_spec.suggested_substrate_kind.as_ref().map(|kind| kind.as_str()).unwrap_or("none"),
+        "next_attempt_kind": build_spec.next_attempt_kind,
         "requested_capabilities": build_spec.requested_capabilities,
         "constraints": build_spec.constraints,
         "acceptance_targets": build_spec.acceptance_targets,
         "implementation_notes": build_spec.implementation_notes,
-        "suggested_proof_seed_template_id": build_spec.suggested_proof_seed_template_id,
-        "suggested_proof_seed_bundle_id": build_spec.suggested_proof_seed_bundle_id,
+        "comparison_seed_template_id": build_spec.comparison_seed_template_id,
+        "comparison_seed_bundle_id": build_spec.comparison_seed_bundle_id,
     });
 
     for artifact in &build_spec.suggested_artifacts {
@@ -23028,7 +21034,7 @@ fn persist_extension_stub_bundle(
         } else if !artifact_path.exists() {
             fs::write(
                 artifact_path,
-                "Fill this stub in as the deterministic extension lane is implemented.\n",
+                "Fill this bundle in as the deterministic next attempt is implemented.\n",
             )?;
         }
     }
@@ -23036,54 +21042,40 @@ fn persist_extension_stub_bundle(
     Ok(stub_root)
 }
 
-fn unresolved_scaffold_layers(build_spec: &FallbackBuildSpec) -> Vec<&'static str> {
-    if build_spec.suggested_extension_kind == "proof_harness_bundle" {
+fn unresolved_attempt_layers(build_spec: &NextAttemptBuildSpec) -> Vec<&'static str> {
+    if build_spec.next_attempt_kind == "proof_harness_bundle" {
         return vec!["proof_harness"];
     }
     let mut layers = Vec::new();
-    if !build_spec.missing_family_build_primitive_classes.is_empty() {
-        layers.push("family_build");
+    if !build_spec.missing_base_build_primitive_classes.is_empty() {
+        layers.push("base_build");
     }
     if !build_spec.missing_patch_primitive_classes.is_empty()
-        || build_spec.suggested_extension_kind == "patch_recipe"
+        || build_spec.next_attempt_kind == "patch_recipe"
     {
         layers.push("patch");
     }
     if !build_spec.missing_helper_primitive_kinds.is_empty()
-        || build_spec.suggested_extension_kind == "helper_lane"
+        || build_spec.next_attempt_kind == "helper_lane"
     {
         layers.push("helper");
     }
     if !build_spec.suggested_bridge_capabilities.is_empty()
-        || build_spec.suggested_extension_kind == "chattycog_bridge_lane"
+        || build_spec.next_attempt_kind == "chattycog_bridge_lane"
     {
         layers.push("bridge");
     }
     if layers.is_empty() {
-        layers.push("family_build");
+        layers.push("base_build");
     }
     layers
 }
 
-fn scaffold_primary_file(build_spec: &FallbackBuildSpec) -> &'static str {
-    let layers = unresolved_scaffold_layers(build_spec);
-    if layers.len() > 1 {
-        return "composition_bundle.json";
-    }
-    match layers[0] {
-        "proof_harness" => "proof_template_manifest.json",
-        "patch" => "patch_recipe.json",
-        "helper" => "helper_lane.json",
-        "bridge" => "bridge_lane.json",
-        _ => "family_manifest.json",
-    }
-}
-
-fn fallback_question(
+fn next_attempt_question(
     request: &chatty_factory_core::RequestRecord,
     plan: &chatty_factory_core::RequestPlan,
     active_spec: Option<&ProjectSpec>,
-    chattycog_shape: &ChattyCogFallbackShape,
+    chattycog_shape: &ChattyCogNextAttemptShape,
 ) -> String {
     if matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch)) {
         let project_name = request
@@ -23097,12 +21089,12 @@ fn fallback_question(
         )
     } else if chattycog_shape.is_chattycog_request && chattycog_shape.has_hosting_conflict {
         format!(
-            "Should this ChattyCog module be hosted as a webview, a native window, or a ChattyCog workspace surface? Valid modes: {}.",
+            "Should this ChattyCog module be hosted as a webview or a native window? Valid modes: {}.",
             chattycog_shape.valid_hosting_modes.join(", ")
         )
     } else if chattycog_shape.is_chattycog_request
         && chattycog_shape.requested_hosting_mode.is_none()
-        && plan.inferred_family_candidates.is_empty()
+        && plan.inferred_substrate_candidates.is_empty()
     {
         format!(
             "Which ChattyCog hosting mode should this module use: {}?",
@@ -23121,15 +21113,15 @@ fn fallback_question(
             chattycog_shape.unsupported_bridge_capabilities.join(", "),
             chattycog_shape.supported_bridge_capabilities.join(", ")
         )
-    } else if plan.inferred_family_candidates.is_empty() {
+    } else if plan.inferred_substrate_candidates.is_empty() {
         "What concrete substrate or stack should this build target?".into()
     } else {
-        "What concrete project shape should the host use for this request?".into()
+        "What concrete build substrate or execution surface should the next attempt use for this request?".into()
     }
 }
 
 #[derive(Debug, Clone, Default)]
-struct ChattyCogFallbackShape {
+struct ChattyCogNextAttemptShape {
     is_chattycog_request: bool,
     requested_hosting_mode: Option<String>,
     valid_hosting_modes: Vec<String>,
@@ -23140,10 +21132,10 @@ struct ChattyCogFallbackShape {
     exceeds_current_contract: bool,
 }
 
-fn derive_chattycog_fallback_shape(
+fn derive_chattycog_next_attempt_shape(
     request: &chatty_factory_core::RequestRecord,
     plan: &chatty_factory_core::RequestPlan,
-) -> ChattyCogFallbackShape {
+) -> ChattyCogNextAttemptShape {
     let lower = request.raw_request.to_ascii_lowercase();
     let requested_modes = infer_chattycog_hosting_modes_from_text(&lower);
     let requested_hosting_mode = infer_chattycog_hosting_mode_from_text(&lower).map(str::to_string);
@@ -23173,7 +21165,7 @@ fn derive_chattycog_fallback_shape(
         )
     });
 
-    ChattyCogFallbackShape {
+    ChattyCogNextAttemptShape {
         is_chattycog_request,
         requested_hosting_mode,
         valid_hosting_modes: chattycog_valid_hosting_modes(),
@@ -23185,16 +21177,16 @@ fn derive_chattycog_fallback_shape(
     }
 }
 
-fn fallback_recommended_next_step(
+fn next_attempt_recommended_step(
     request: &chatty_factory_core::RequestRecord,
-    chattycog_shape: &ChattyCogFallbackShape,
+    chattycog_shape: &ChattyCogNextAttemptShape,
 ) -> String {
     if matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch)) {
         "clarify the follow-up capability or add a new deterministic patch lane".into()
     } else if chattycog_shape.is_chattycog_request && chattycog_shape.has_hosting_conflict {
         "pick one ChattyCog hosting mode and rerun the request, or add a new hosted-module lane if the module must span multiple hosting contracts".into()
     } else if chattycog_shape.is_chattycog_request && chattycog_shape.exceeds_current_contract {
-        "pick one supported ChattyCog hosting mode first, then move the unsupported helper/service capability into a new deterministic family or helper lane".into()
+        "pick one supported ChattyCog hosting mode first, then move the unsupported helper/service capability into a new deterministic helper or execution lane".into()
     } else if chattycog_shape.is_chattycog_request
         && !chattycog_shape.unsupported_bridge_capabilities.is_empty()
     {
@@ -23202,34 +21194,34 @@ fn fallback_recommended_next_step(
     } else if chattycog_shape.is_chattycog_request
         && chattycog_shape.requested_hosting_mode.is_none()
     {
-        "clarify whether the module should be hosted as a webview, a native window, or a ChattyCog workspace surface".into()
+            "clarify whether the module should be hosted as a webview or a native window".into()
     } else {
-        "clarify the target substrate or add a new deterministic family".into()
+        "clarify the target substrate or add a new deterministic base-build or composition lane".into()
     }
 }
 
-fn fallback_recommended_next_action(
+fn next_attempt_recommended_action(
     request: &chatty_factory_core::RequestRecord,
     plan: &chatty_factory_core::RequestPlan,
-    chattycog_shape: &ChattyCogFallbackShape,
+    chattycog_shape: &ChattyCogNextAttemptShape,
 ) -> MechanicalNextAction {
     let normalized_failure_class =
         if matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch)) {
             "route_selection_mismatch"
-        } else if plan.inferred_family_candidates.is_empty() {
-            "unsupported_family_capability"
+        } else if plan.inferred_substrate_candidates.is_empty() {
+            "unsupported_substrate_capability"
         } else if plan.needs_llm_review || chattycog_shape.requested_hosting_mode.is_none() {
             "route_selection_mismatch"
         } else if chattycog_shape.has_hosting_conflict || chattycog_shape.exceeds_current_contract {
             "task_too_broad"
         } else if !chattycog_shape.unsupported_bridge_capabilities.is_empty() {
-            "unsupported_family_capability"
+            "unsupported_substrate_capability"
         } else {
             "verification_failure"
         };
     let mut next_action =
         select_mechanical_next_action(normalized_failure_class, Some("bundle"), 0, false);
-    next_action.recommended_next_step = fallback_recommended_next_step(request, chattycog_shape);
+    next_action.recommended_next_step = next_attempt_recommended_step(request, chattycog_shape);
     next_action
 }
 
@@ -23242,18 +21234,18 @@ fn dedup_strings(mut items: Vec<String>) -> Vec<String> {
 fn classify_extension_kind(
     request_mode: Option<&chatty_factory_core::RequestMode>,
     bridge_capabilities: &[String],
-    missing_family_build_primitive_classes: &[String],
+    missing_base_build_primitive_classes: &[String],
     missing_patch_primitive_classes: &[String],
     missing_helper_primitive_kinds: &[String],
     chattycog_bridge_only: bool,
     helper_only: bool,
 ) -> String {
-    let has_family = !missing_family_build_primitive_classes.is_empty();
+    let has_base_build = !missing_base_build_primitive_classes.is_empty();
     let has_patch = !missing_patch_primitive_classes.is_empty()
         || matches!(request_mode, Some(chatty_factory_core::RequestMode::Patch));
     let has_helper = !missing_helper_primitive_kinds.is_empty();
     let has_bridge = !bridge_capabilities.is_empty() || chattycog_bridge_only;
-    let layer_count = [has_family, has_patch, has_helper, has_bridge]
+    let layer_count = [has_base_build, has_patch, has_helper, has_bridge]
         .into_iter()
         .filter(|flag| *flag)
         .count();
@@ -23270,225 +21262,14 @@ fn classify_extension_kind(
     if has_patch {
         return "patch_recipe".into();
     }
-    "family".into()
+    "base_build".into()
 }
 
-fn extension_slug(build_spec: &FallbackBuildSpec, bundle_name: &str) -> String {
-    match build_spec.suggested_extension_kind.as_str() {
-        "proof_harness_bundle" => build_spec
-            .suggested_patch_kind
-            .clone()
-            .unwrap_or_else(|| format!("proof_manifest_{bundle_name}")),
-        "composition_bundle" => {
-            let family = build_spec
-                .suggested_family_id
-                .as_ref()
-                .map(|id| id.as_str().to_string())
-                .unwrap_or_else(|| "unknown_family".to_string());
-            let tool = build_spec
-                .suggested_tool_kind
-                .clone()
-                .unwrap_or_else(|| "unknown_tool".to_string());
-            format!("{family}_{tool}_composition_bundle")
-        }
-        "patch_recipe" => {
-            let family = build_spec
-                .suggested_family_id
-                .as_ref()
-                .map(|id| id.as_str().to_string())
-                .unwrap_or_else(|| "unknown_family".to_string());
-            let tool = build_spec
-                .suggested_tool_kind
-                .clone()
-                .unwrap_or_else(|| "unknown_tool".to_string());
-            let patch = build_spec
-                .suggested_patch_kind
-                .clone()
-                .unwrap_or_else(|| "new_patch_lane".to_string());
-            format!("{family}_{tool}_{patch}")
-        }
-        "chattycog_bridge_lane" => {
-            let bridge = if build_spec.suggested_bridge_capabilities.is_empty() {
-                "bridge_lane".to_string()
-            } else {
-                build_spec.suggested_bridge_capabilities.join("_")
-            };
-            format!("chattycog_{bridge}")
-        }
-        "helper_lane" => format!("{bundle_name}_helper_lane"),
-        _ => build_spec
-            .suggested_family_id
-            .as_ref()
-            .map(|id| id.as_str().to_string())
-            .unwrap_or_else(|| format!("{bundle_name}_family")),
-    }
-}
-
-fn build_proof_harness_starter_manifests(
-    build_spec: &FallbackBuildSpec,
-    bundle_name: &str,
-) -> (PrimitiveProofTemplate, CapabilityComparisonBundle) {
-    let template_id = build_spec
-        .suggested_patch_kind
-        .clone()
-        .unwrap_or_else(|| format!("proof_manifest_{bundle_name}"));
-    let bundle_id = format!("{template_id}_equivalence");
-    let target_family_ids = if !build_spec.candidate_family_ids.is_empty() {
-        build_spec.candidate_family_ids.clone()
-    } else {
-        build_spec
-            .suggested_family_id
-            .clone()
-            .into_iter()
-            .collect::<Vec<_>>()
-    };
-    let seeded = closest_built_in_proof_seed(build_spec, &target_family_ids);
-    let (mut template, mut bundle) = if let Some((base_template, base_bundle)) = seeded {
-        (base_template, base_bundle)
-    } else {
-        (
-            PrimitiveProofTemplate {
-                template_id: String::new(),
-                template_kind: "cross_family_proof_manifest".into(),
-                display_label: String::new(),
-                description: String::new(),
-                shared_request_seed: String::new(),
-                target_family_ids: Vec::new(),
-                required_composition_layers: vec![
-                    "family_build".into(),
-                    "patch".into(),
-                    "helper".into(),
-                ],
-                required_family_build_primitive_classes: build_spec
-                    .missing_family_build_primitive_classes
-                    .clone(),
-                required_patch_primitive_classes: build_spec
-                    .missing_patch_primitive_classes
-                    .clone(),
-                required_helper_primitive_kinds: build_spec.missing_helper_primitive_kinds.clone(),
-                required_capability_classes: build_spec.requested_capabilities.clone(),
-                optional_capability_classes: Vec::new(),
-                optional_enrichment_steps: Vec::new(),
-                execution_recipe: chatty_factory_core::PrimitiveProofExecutionRecipe::default(),
-                created_at: None,
-            },
-            CapabilityComparisonBundle {
-                bundle_id: String::new(),
-                bundle_kind: "cross_surface_equivalence".into(),
-                required_shared_capability_classes: build_spec.requested_capabilities.clone(),
-                optional_shared_capability_classes: Vec::new(),
-                tolerated_left_only_capability_classes: Vec::new(),
-                tolerated_right_only_capability_classes: Vec::new(),
-                minimum_shared_capability_count: build_spec.requested_capabilities.len(),
-                equivalence_mode: "required_shared_bundle".into(),
-                policy: chatty_factory_core::CapabilityComparisonPolicy::default(),
-                created_at: None,
-            },
-        )
-    };
-
-    let family_request_bindings = if target_family_ids.is_empty() {
-        template.execution_recipe.family_request_bindings.clone()
-    } else if same_family_set(&template.target_family_ids, &target_family_ids) {
-        template.execution_recipe.family_request_bindings.clone()
-    } else {
-        target_family_ids
-            .iter()
-            .map(|family_id| proof_family_request_binding_for(family_id, build_spec))
-            .collect::<Vec<_>>()
-    };
-    let enrichment_bindings = if target_family_ids.is_empty() {
-        template.execution_recipe.enrichment_bindings.clone()
-    } else {
-        let filtered = template
-            .execution_recipe
-            .enrichment_bindings
-            .iter()
-            .filter(|binding| target_family_ids.contains(&binding.family_id))
-            .cloned()
-            .collect::<Vec<_>>();
-        if filtered.is_empty() {
-            default_proof_enrichment_bindings(&target_family_ids)
-        } else {
-            filtered
-        }
-    };
-
-    template.template_id = template_id.clone();
-    template.template_kind = build_spec
-        .suggested_tool_kind
-        .clone()
-        .unwrap_or_else(|| template.template_kind.clone());
-    template.display_label = template_id.replace('_', " ");
-    template.description = format!(
-        "Starter proof template scaffolded from fallback request `{}`.",
-        build_spec.request_id
-    );
-    template.shared_request_seed = proof_shared_request_seed(build_spec);
-    if !target_family_ids.is_empty() {
-        template.target_family_ids = target_family_ids.clone();
-    }
-    merge_missing_strings(
-        &mut template.required_family_build_primitive_classes,
-        &build_spec.missing_family_build_primitive_classes,
-    );
-    merge_missing_strings(
-        &mut template.required_patch_primitive_classes,
-        &build_spec.missing_patch_primitive_classes,
-    );
-    merge_missing_strings(
-        &mut template.required_helper_primitive_kinds,
-        &build_spec.missing_helper_primitive_kinds,
-    );
-    merge_missing_strings(
-        &mut template.required_capability_classes,
-        &build_spec.requested_capabilities,
-    );
-    template.execution_recipe.comparison_bundle_id = bundle_id.clone();
-    template.execution_recipe.family_request_bindings = family_request_bindings;
-    template.execution_recipe.enrichment_bindings = enrichment_bindings;
-    template.created_at = None;
-
-    bundle.bundle_id = bundle_id;
-    merge_missing_strings(
-        &mut bundle.required_shared_capability_classes,
-        &build_spec.requested_capabilities,
-    );
-    bundle.minimum_shared_capability_count = bundle
-        .minimum_shared_capability_count
-        .max(bundle.required_shared_capability_classes.len());
-    bundle.policy.comparison_receipt_prefix = format!("cross-family-{template_id}");
-    bundle.policy.comparison_label = template_id.replace('_', " ");
-    if bundle.policy.shared_note_label.is_empty() {
-        bundle.policy.shared_note_label = "shared proof capabilities".into();
-    }
-    if bundle.policy.left_only_note_label.is_empty() {
-        bundle.policy.left_only_note_label = "left-only capabilities".into();
-    }
-    if bundle.policy.right_only_note_label.is_empty() {
-        bundle.policy.right_only_note_label = "right-only capabilities".into();
-    }
-    if bundle.policy.required_bundle_note_label.is_empty() {
-        bundle.policy.required_bundle_note_label = "required shared bundle".into();
-    }
-    if bundle.policy.success_note_template.is_empty() {
-        bundle.policy.success_note_template =
-            "both projects satisfy the shared {comparison_label} capability bundle".into();
-    }
-    if bundle.policy.failure_note_template.is_empty() {
-        bundle.policy.failure_note_template =
-            "shared {comparison_label} capability bundle is incomplete across the compared projects"
-                .into();
-    }
-    bundle.created_at = None;
-    (template, bundle)
-}
-
-fn closest_built_in_proof_seed(
-    build_spec: &FallbackBuildSpec,
-    target_family_ids: &[FamilyId],
+fn closest_built_in_comparison_seed(
+    build_spec: &NextAttemptBuildSpec,
 ) -> Option<(PrimitiveProofTemplate, CapabilityComparisonBundle)> {
     let mut best: Option<(i32, PrimitiveProofTemplate, CapabilityComparisonBundle)> = None;
+    let target_substrate_kinds = proof_target_substrate_kinds(build_spec);
     for template in built_in_proof_templates() {
         let Some(bundle) = built_in_capability_comparison_bundles()
             .into_iter()
@@ -23497,8 +21278,8 @@ fn closest_built_in_proof_seed(
             continue;
         };
         let mut score = 0;
-        for family_id in target_family_ids {
-            if template.target_family_ids.contains(family_id) {
+        for substrate_kind in &target_substrate_kinds {
+            if template.target_substrate_kinds.contains(substrate_kind) {
                 score += 5;
             }
         }
@@ -23563,128 +21344,14 @@ fn closest_built_in_proof_seed(
     best.map(|(_, template, bundle)| (template, bundle))
 }
 
-fn suggested_proof_seed_for_build_spec(build_spec: &FallbackBuildSpec) -> Option<(String, String)> {
-    closest_built_in_proof_seed(build_spec, &build_spec.candidate_family_ids)
-        .map(|(template, bundle)| (template.template_id, bundle.bundle_id))
-}
-
-fn default_proof_enrichment_bindings(
-    target_family_ids: &[FamilyId],
-) -> Vec<PrimitiveProofEnrichmentBinding> {
-    let mut bindings = Vec::new();
-    if target_family_ids.contains(&FamilyId::RustCliTool) {
-        bindings.push(PrimitiveProofEnrichmentBinding {
-            family_id: FamilyId::RustCliTool,
-            missing_capability_classes: vec!["export_surface".into()],
-            patch_requests: vec!["add json output".into()],
-        });
-    }
-    if target_family_ids.contains(&FamilyId::StaticWebDashboard) {
-        bindings.push(PrimitiveProofEnrichmentBinding {
-            family_id: FamilyId::StaticWebDashboard,
-            missing_capability_classes: vec!["status_surface".into()],
-            patch_requests: vec!["add progress banner".into()],
-        });
-    }
-    bindings
-}
-
-fn merge_missing_strings(target: &mut Vec<String>, extras: &[String]) {
-    for item in extras {
-        if !target.contains(item) {
-            target.push(item.clone());
+fn proof_target_substrate_kinds(build_spec: &NextAttemptBuildSpec) -> Vec<chatty_factory_core::SubstrateKind> {
+    let mut kinds = build_spec.candidate_substrate_kinds.clone();
+    if let Some(kind) = build_spec.suggested_substrate_kind.clone() {
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
         }
     }
-}
-
-fn same_family_set(left: &[FamilyId], right: &[FamilyId]) -> bool {
-    left.len() == right.len() && left.iter().all(|family_id| right.contains(family_id))
-}
-
-fn proof_family_label(family_id: &FamilyId) -> String {
-    match family_id {
-        FamilyId::StaticWebDashboard => "static web dashboard".into(),
-        FamilyId::ChattycogWebviewModule => "ChattyCog webview module".into(),
-        FamilyId::ChattycogNativeWindowModule => "ChattyCog native window module".into(),
-        FamilyId::ChattyeduNativeWindowModule => "Chatty-EDU native window module".into(),
-        FamilyId::ChattycogChattyeduNativeWindowModule => {
-            "ChattyCog + Chatty-EDU native window module".into()
-        }
-        FamilyId::ChattycogWorkspaceModule => "ChattyCog workspace module".into(),
-        FamilyId::PythonCliTool => "python cli tool".into(),
-        FamilyId::RustCliTool => "rust cli tool".into(),
-    }
-}
-
-fn proof_family_request_binding_for(
-    family_id: &FamilyId,
-    build_spec: &FallbackBuildSpec,
-) -> PrimitiveProofFamilyRequestBinding {
-    let goal = build_spec.interpreted_goal.to_lowercase();
-    match family_id {
-        FamilyId::StaticWebDashboard => PrimitiveProofFamilyRequestBinding {
-            family_id: family_id.clone(),
-            family_label: "static web dashboard".into(),
-            request_template:
-                "build me a {family_label} with a local inbox helper that {request_tail}".into(),
-            empty_request_fallback: Some(format!(
-                "build me a static web dashboard with a local inbox helper that {}",
-                goal
-            )),
-        },
-        FamilyId::RustCliTool => PrimitiveProofFamilyRequestBinding {
-            family_id: family_id.clone(),
-            family_label: "rust cli log summary tool".into(),
-            request_template:
-                "build me a {family_label} with a local inbox helper that {request_tail}".into(),
-            empty_request_fallback: Some(format!(
-                "build me a rust cli log summary tool with a local inbox helper that {}",
-                goal
-            )),
-        },
-        FamilyId::PythonCliTool => PrimitiveProofFamilyRequestBinding {
-            family_id: family_id.clone(),
-            family_label: "python cli reporting tool".into(),
-            request_template:
-                "build me a {family_label} with a local inbox helper that {request_tail}".into(),
-            empty_request_fallback: Some(format!(
-                "build me a python cli reporting tool with a local inbox helper that {}",
-                goal
-            )),
-        },
-        _ => PrimitiveProofFamilyRequestBinding {
-            family_id: family_id.clone(),
-            family_label: proof_family_label(family_id),
-            request_template: "build me a {family_label} that {request_tail}".into(),
-            empty_request_fallback: Some(format!(
-                "build me a {} that {}",
-                proof_family_label(family_id),
-                goal
-            )),
-        },
-    }
-}
-
-fn proof_shared_request_seed(build_spec: &FallbackBuildSpec) -> String {
-    let requested = &build_spec.requested_capabilities;
-    if requested
-        .iter()
-        .any(|item| item == "helper_monitoring_surface")
-        || requested
-            .iter()
-            .any(|item| item == "helper_preview_surface")
-    {
-        return "build me a helper-backed monitoring surface that watches two inbox lanes, filters module assets to txt, and surfaces processed file status and preview".into();
-    }
-    if requested.iter().any(|item| item == "report_output")
-        && requested.iter().any(|item| item == "lane_filter_rules")
-    {
-        return "build me a helper-backed filtered reporting surface that filters inputs and emits report output".into();
-    }
-    if requested.iter().any(|item| item == "report_output") {
-        return "build me a helper-backed summary reporting surface that exposes status plus report output".into();
-    }
-    build_spec.interpreted_goal.clone()
+    kinds
 }
 
 fn load_pending_extension_registry(path: &Path) -> Result<PendingExtensionRegistry> {
@@ -23705,7 +21372,7 @@ fn load_pending_extension_registry(path: &Path) -> Result<PendingExtensionRegist
             }) {
                 existing.extension_kind = entry.extension_kind.clone();
                 existing.source_stub_path = entry.source_stub_path.clone();
-                existing.scaffold_root = entry.scaffold_root.clone();
+                existing.attempt_bundle_root = entry.attempt_bundle_root.clone();
                 existing.integrated_paths = entry.integrated_paths.clone();
                 existing.requested_capabilities = entry.requested_capabilities.clone();
                 existing.bridge_capabilities = entry.bridge_capabilities.clone();
@@ -23728,12 +21395,11 @@ fn pending_extension_profile_matches(
     left: &PendingExtensionEntry,
     right: &PendingExtensionEntry,
 ) -> bool {
-    left.family_id == right.family_id
-        && left.tool_kind == right.tool_kind
+    left.tool_kind == right.tool_kind
         && left.patch_kind == right.patch_kind
         && left.unresolved_layers == right.unresolved_layers
-        && left.missing_family_build_primitive_classes
-            == right.missing_family_build_primitive_classes
+        && left.missing_base_build_primitive_classes
+            == right.missing_base_build_primitive_classes
         && left.missing_patch_primitive_classes == right.missing_patch_primitive_classes
         && left.missing_helper_primitive_kinds == right.missing_helper_primitive_kinds
 }
@@ -23741,10 +21407,6 @@ fn pending_extension_profile_matches(
 fn validate_composition_bundle_artifacts(entry: &PendingExtensionEntry) -> Result<Vec<String>> {
     let mut blockers = Vec::new();
     let has_patch_layer = entry.unresolved_layers.iter().any(|layer| layer == "patch");
-    let has_family_layer = entry
-        .unresolved_layers
-        .iter()
-        .any(|layer| layer == "family_build");
     let has_helper_layer = entry
         .unresolved_layers
         .iter()
@@ -23763,11 +21425,6 @@ fn validate_composition_bundle_artifacts(entry: &PendingExtensionEntry) -> Resul
         .integrated_paths
         .iter()
         .find(|path| path.contains("operator_registry") && path.contains("acceptance_recipes"))
-        .map(PathBuf::from);
-    let family_manifest_path = entry
-        .integrated_paths
-        .iter()
-        .find(|path| path.contains("families\\manifests") || path.contains("families/manifests"))
         .map(PathBuf::from);
     let helper_lane_path = entry
         .integrated_paths
@@ -23790,48 +21447,28 @@ fn validate_composition_bundle_artifacts(entry: &PendingExtensionEntry) -> Resul
                     .unwrap_or_default()
                     .is_empty()
                 {
-                    blockers.push("patch recipe starter is missing recipe_id".into());
+                    blockers.push("patch recipe artifact is missing recipe_id".into());
                 }
             }
-            _ => blockers.push("missing integrated patch recipe starter".into()),
+            _ => blockers.push("missing integrated patch recipe artifact".into()),
         }
         match acceptance_path {
             Some(ref path) if path.exists() => {}
-            _ => blockers.push("missing integrated acceptance recipe starter".into()),
-        }
-    }
-
-    if has_family_layer {
-        match family_manifest_path {
-            Some(ref path) if path.exists() => {
-                let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(path)?)?;
-                let provided = value
-                    .get("provided_build_primitive_classes")
-                    .and_then(serde_json::Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                if provided.is_empty() {
-                    blockers.push(
-                        "family manifest starter is missing provided_build_primitive_classes"
-                            .into(),
-                    );
-                }
-            }
-            _ => blockers.push("missing integrated family manifest starter".into()),
+            _ => blockers.push("missing integrated acceptance recipe artifact".into()),
         }
     }
 
     if has_helper_layer {
         match helper_lane_path {
             Some(ref path) if path.exists() => {}
-            _ => blockers.push("missing integrated helper lane starter".into()),
+            _ => blockers.push("missing integrated helper lane artifact".into()),
         }
     }
 
     if has_bridge_layer {
         match bridge_lane_path {
             Some(ref path) if path.exists() => {}
-            _ => blockers.push("missing integrated bridge lane starter".into()),
+            _ => blockers.push("missing integrated bridge lane artifact".into()),
         }
     }
 
@@ -23910,8 +21547,8 @@ fn validate_proof_harness_contract(
     bundle: &CapabilityComparisonBundle,
 ) -> Vec<String> {
     let mut blockers = Vec::new();
-    if template.target_family_ids.is_empty() {
-        blockers.push("proof template must target at least one family".into());
+    if template.target_substrate_kinds.is_empty() {
+        blockers.push("proof template must target at least one substrate".into());
     }
     if template.required_capability_classes.is_empty() {
         blockers.push("proof template must require at least one capability class".into());
@@ -23919,31 +21556,40 @@ fn validate_proof_harness_contract(
     if template.execution_recipe.comparison_bundle_id.is_empty() {
         blockers.push("proof template execution recipe is missing comparison_bundle_id".into());
     }
-    let mut covered_families = Vec::new();
-    for binding in &template.execution_recipe.family_request_bindings {
-        if covered_families.contains(&binding.family_id) {
+    let mut covered_substrates = Vec::new();
+    for binding in &template.execution_recipe.substrate_request_bindings {
+        let Some(substrate_kind) = binding.substrate_kind.clone() else {
+            blockers.push("substrate request binding is missing substrate_kind".into());
+            continue;
+        };
+        if covered_substrates.contains(&substrate_kind) {
             blockers.push(format!(
-                "duplicate family request binding for `{}`",
-                binding.family_id.as_str()
+                "duplicate substrate request binding for `{}`",
+                substrate_kind.as_str()
             ));
         } else {
-            covered_families.push(binding.family_id.clone());
+            covered_substrates.push(substrate_kind);
         }
     }
-    for family_id in &template.target_family_ids {
-        if !covered_families.contains(family_id) {
+    for substrate_kind in &template.target_substrate_kinds {
+        if !covered_substrates.contains(substrate_kind) {
             blockers.push(format!(
-                "missing family request binding for target family `{}`",
-                family_id.as_str()
+                "missing substrate request binding for target substrate `{}`",
+                substrate_kind.as_str()
             ));
         }
     }
     for binding in &template.execution_recipe.enrichment_bindings {
-        if !template.target_family_ids.contains(&binding.family_id) {
+        if let Some(substrate_kind) = binding.substrate_kind.as_ref() {
+            if template.target_substrate_kinds.contains(substrate_kind) {
+                continue;
+            }
             blockers.push(format!(
-                "enrichment binding references non-target family `{}`",
-                binding.family_id.as_str()
+                "enrichment binding references non-target substrate `{}`",
+                substrate_kind.as_str()
             ));
+        } else {
+            blockers.push("enrichment binding is missing substrate_kind".into());
         }
     }
     if bundle.required_shared_capability_classes.is_empty() {
@@ -24044,7 +21690,7 @@ fn latest_proof_harness_receipt_for_template(
 ) -> Option<PrimitiveProofHarnessReceipt> {
     let root = workspace_root
         .join("runtime")
-        .join("cross_family_paired_proof_receipts");
+        .join("legacy_comparison_paired_proof_receipts");
     let entries = fs::read_dir(root).ok()?;
     let mut receipts = entries
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -24074,7 +21720,7 @@ fn latest_passing_proof_harness_receipt_for_template(
 ) -> Option<PrimitiveProofHarnessReceipt> {
     let root = workspace_root
         .join("runtime")
-        .join("cross_family_paired_proof_receipts");
+        .join("legacy_comparison_paired_proof_receipts");
     let entries = fs::read_dir(root).ok()?;
     let mut receipts = entries
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -24183,10 +21829,10 @@ fn infer_closest_proof_seed_ids(
     template: &PrimitiveProofTemplate,
     bundle: &CapabilityComparisonBundle,
 ) -> Option<(String, String)> {
-    let current_target_families = template
-        .target_family_ids
+    let current_target_substrates = template
+        .target_substrate_kinds
         .iter()
-        .map(|family| family.as_str().to_string())
+        .map(|substrate| substrate.as_str().to_string())
         .collect::<Vec<_>>();
     let current_required_caps = template.required_capability_classes.clone();
     let current_required_shared = bundle.required_shared_capability_classes.clone();
@@ -24203,14 +21849,14 @@ fn infer_closest_proof_seed_ids(
             continue;
         };
 
-        let candidate_target_families = candidate_template
-            .target_family_ids
+        let candidate_target_substrates = candidate_template
+            .target_substrate_kinds
             .iter()
-            .map(|family| family.as_str().to_string())
+            .map(|substrate| substrate.as_str().to_string())
             .collect::<Vec<_>>();
-        let target_family_score = current_target_families
+        let target_substrate_score = current_target_substrates
             .iter()
-            .filter(|family| candidate_target_families.contains(*family))
+            .filter(|substrate| candidate_target_substrates.contains(*substrate))
             .count();
         let capability_score = current_required_caps
             .iter()
@@ -24228,7 +21874,7 @@ fn infer_closest_proof_seed_ids(
                     .contains(*cap)
             })
             .count();
-        let score = target_family_score * 4 + capability_score * 3 + shared_score * 3;
+        let score = target_substrate_score * 4 + capability_score * 3 + shared_score * 3;
         if score == 0 {
             continue;
         }
@@ -24297,15 +21943,15 @@ fn classify_proof_harness_drift(
         return ("lightly_customized".into(), notes);
     }
 
-    let current_target_families = template
-        .target_family_ids
+    let current_target_substrates = template
+        .target_substrate_kinds
         .iter()
-        .map(|family| family.as_str().to_string())
+        .map(|substrate| substrate.as_str().to_string())
         .collect::<Vec<_>>();
-    let seed_target_families = seed_template
-        .target_family_ids
+    let seed_target_substrates = seed_template
+        .target_substrate_kinds
         .iter()
-        .map(|family| family.as_str().to_string())
+        .map(|substrate| substrate.as_str().to_string())
         .collect::<Vec<_>>();
     let current_required_caps = sorted_string_values(&template.required_capability_classes);
     let seed_required_caps = sorted_string_values(&seed_template.required_capability_classes);
@@ -24316,12 +21962,12 @@ fn classify_proof_harness_drift(
     let seed_layers = sorted_string_values(&seed_template.required_composition_layers);
 
     let mut risky = false;
-    if current_target_families != seed_target_families {
+    if current_target_substrates != seed_target_substrates {
         risky = true;
         notes.push(format!(
-            "target families changed from [{}] to [{}]",
-            seed_target_families.join(", "),
-            current_target_families.join(", ")
+            "target substrates changed from [{}] to [{}]",
+            seed_target_substrates.join(", "),
+            current_target_substrates.join(", ")
         ));
     }
 
@@ -24505,44 +22151,6 @@ fn persist_bridge_governance_refresh_status(
     Ok(path)
 }
 
-fn persist_family_governance_receipt(
-    runtime_root: &Path,
-    receipt: &FamilyGovernanceReceipt,
-) -> Result<PathBuf> {
-    let dir = runtime_root.join("family_governance_receipts");
-    fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{}.json", receipt.family_id));
-    persist_json_pretty(&path, receipt)?;
-    Ok(path)
-}
-
-fn persist_family_governance_refresh_status(
-    runtime_root: &Path,
-    status: &FamilyGovernanceRefreshStatus,
-) -> Result<PathBuf> {
-    let path = runtime_root.join("family_governance_refresh_status.json");
-    persist_json_pretty(&path, status)?;
-    Ok(path)
-}
-
-fn persist_family_usage_summary(
-    runtime_root: &Path,
-    summary: &FamilyUsageSummaryReceipt,
-) -> Result<PathBuf> {
-    let path = runtime_root.join("family_usage_summary.json");
-    persist_json_pretty(&path, summary)?;
-    Ok(path)
-}
-
-fn persist_starter_usage_summary(
-    runtime_root: &Path,
-    summary: &StarterUsageSummaryReceipt,
-) -> Result<PathBuf> {
-    let path = runtime_root.join("starter_usage_summary.json");
-    persist_json_pretty(&path, summary)?;
-    Ok(path)
-}
-
 fn persist_triangulation_loop_summary(
     runtime_root: &Path,
     summary: &TriangulationLoopSummaryReceipt,
@@ -24552,392 +22160,9 @@ fn persist_triangulation_loop_summary(
     Ok(path)
 }
 
-fn refresh_family_usage_summary(output_root: &Path, runtime_root: &Path) -> Result<PathBuf> {
-    let summary = derive_family_usage_summary(output_root)?;
-    persist_family_usage_summary(runtime_root, &summary)
-}
-
-fn refresh_starter_usage_summary(runtime_root: &Path) -> Result<PathBuf> {
-    let summary = derive_starter_usage_summary(runtime_root)?;
-    persist_starter_usage_summary(runtime_root, &summary)
-}
-
 fn refresh_triangulation_loop_summary(runtime_root: &Path) -> Result<PathBuf> {
     let summary = derive_triangulation_loop_summary(runtime_root)?;
     persist_triangulation_loop_summary(runtime_root, &summary)
-}
-
-fn persist_template_governance_receipt(
-    runtime_root: &Path,
-    receipt: &TemplateGovernanceReceipt,
-) -> Result<PathBuf> {
-    let dir = runtime_root.join("template_governance_receipts");
-    fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{}.json", receipt.template_bundle_id));
-    persist_json_pretty(&path, receipt)?;
-    Ok(path)
-}
-
-fn persist_template_governance_refresh_status(
-    runtime_root: &Path,
-    status: &TemplateGovernanceRefreshStatus,
-) -> Result<PathBuf> {
-    let path = runtime_root.join("template_governance_refresh_status.json");
-    persist_json_pretty(&path, status)?;
-    Ok(path)
-}
-
-fn discover_template_governance_bundles(
-    workspace_root: &Path,
-) -> Result<Vec<TemplateGovernanceBundle>> {
-    let mut bundles = Vec::new();
-    let templates_root = workspace_root.join("templates");
-    for category in ["families", "patches", "helpers", "wrappers"] {
-        let category_root = templates_root.join(category);
-        if !category_root.exists() {
-            continue;
-        }
-        for entry in fs::read_dir(&category_root)? {
-            let entry = entry?;
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let Some(dir_name) = path.file_name().and_then(|value| value.to_str()) else {
-                continue;
-            };
-            let mut artifact_paths = Vec::new();
-            collect_template_artifacts(&path, &mut artifact_paths)?;
-            artifact_paths.sort();
-            let template_bundle_id = format!("{category}_{dir_name}");
-            bundles.push(TemplateGovernanceBundle {
-                template_bundle_id,
-                template_category: category.to_string(),
-                template_root: path,
-                artifact_paths,
-            });
-        }
-    }
-    bundles.sort_by(|left, right| left.template_bundle_id.cmp(&right.template_bundle_id));
-    Ok(bundles)
-}
-
-fn collect_template_artifacts(root: &Path, artifacts: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_template_artifacts(&path, artifacts)?;
-        } else if path.is_file() {
-            artifacts.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn validate_template_governance_bundle(bundle: &TemplateGovernanceBundle) -> Result<Vec<String>> {
-    let mut blockers = Vec::new();
-    if !bundle.template_root.exists() {
-        blockers.push("missing template root".into());
-        return Ok(blockers);
-    }
-    if bundle.artifact_paths.is_empty() {
-        blockers.push("template bundle has no artifact files".into());
-    }
-    if !bundle.artifact_paths.iter().all(|path| path.exists()) {
-        blockers.push("template bundle is missing one or more artifact files".into());
-    }
-    Ok(blockers)
-}
-
-fn template_artifact_hashes(bundle: &TemplateGovernanceBundle) -> BTreeMap<String, String> {
-    let mut hashes = BTreeMap::new();
-    for path in &bundle.artifact_paths {
-        if let Ok(bytes) = fs::read(path) {
-            let mut hasher = DefaultHasher::new();
-            hasher.write(&bytes);
-            hashes.insert(
-                path.display().to_string(),
-                format!("{:016x}", hasher.finish()),
-            );
-        }
-    }
-    hashes
-}
-
-fn load_existing_template_governance_receipt(
-    runtime_root: &Path,
-    template_bundle_id: &str,
-) -> Option<TemplateGovernanceReceipt> {
-    let path = runtime_root
-        .join("template_governance_receipts")
-        .join(format!("{template_bundle_id}.json"));
-    let contents = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<TemplateGovernanceReceipt>(&contents).ok()
-}
-
-fn classify_template_bundle_drift(
-    bundle: &TemplateGovernanceBundle,
-    artifact_hashes: &BTreeMap<String, String>,
-) -> (String, Vec<String>) {
-    let mut notes = Vec::new();
-    if artifact_hashes.is_empty() {
-        notes.push("no template artifact hashes could be computed".into());
-        return ("drifted_risky".into(), notes);
-    }
-    let file_count = bundle.artifact_paths.len();
-    if file_count == 0 {
-        notes.push("template bundle has no artifact files".into());
-        return ("unseeded".into(), notes);
-    }
-    if file_count <= 3 {
-        notes.push("template bundle matches the current governed starter archetype".into());
-        return ("seed_aligned".into(), notes);
-    }
-    if file_count <= 6 {
-        notes.push("template bundle carries a broader multi-file surface than the narrow starter archetype".into());
-        return ("lightly_customized".into(), notes);
-    }
-    notes.push("template bundle carries a broad multi-file surface that exceeds the narrow starter archetype".into());
-    ("structurally_customized".into(), notes)
-}
-
-fn classify_template_change_since_last_live(
-    previous_receipt: Option<&TemplateGovernanceReceipt>,
-    current_hashes: &BTreeMap<String, String>,
-) -> (String, Vec<String>, BTreeMap<String, String>) {
-    let mut notes = Vec::new();
-    if let Some(previous) = previous_receipt {
-        let baseline = if !previous.baseline_artifact_hashes.is_empty() {
-            previous.baseline_artifact_hashes.clone()
-        } else if previous.change_since_last_live_status == "baseline_recorded"
-            || previous.change_since_last_live_status == "stable_since_last_live"
-        {
-            previous.artifact_hashes.clone()
-        } else {
-            BTreeMap::new()
-        };
-        if !baseline.is_empty() {
-            if &baseline == current_hashes {
-                notes.push(
-                    "current template artifacts match the last known-good live baseline".into(),
-                );
-                return ("stable_since_last_live".into(), notes, baseline);
-            }
-            notes.push("template artifacts changed since the last known-good live baseline".into());
-            return ("changed_since_last_live".into(), notes, baseline);
-        }
-    }
-    notes.push("current template bundle establishes the first live baseline".into());
-    ("baseline_recorded".into(), notes, current_hashes.clone())
-}
-
-fn refresh_template_bundle_governance(
-    workspace_root: &Path,
-    runtime_root: &Path,
-    bundle: &TemplateGovernanceBundle,
-) -> Result<()> {
-    let artifact_hashes = template_artifact_hashes(bundle);
-    let drift = classify_template_bundle_drift(bundle, &artifact_hashes);
-    let previous_receipt =
-        load_existing_template_governance_receipt(runtime_root, &bundle.template_bundle_id);
-    let baseline =
-        classify_template_change_since_last_live(previous_receipt.as_ref(), &artifact_hashes);
-    let receipt = TemplateGovernanceReceipt {
-        receipt_id: chatty_factory_core::timestamp_id("template-governance"),
-        template_bundle_id: bundle.template_bundle_id.clone(),
-        template_category: bundle.template_category.clone(),
-        template_root: Some(bundle.template_root.display().to_string()),
-        artifact_paths: bundle
-            .artifact_paths
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect(),
-        artifact_hashes: artifact_hashes.clone(),
-        drift_status: drift.0,
-        drift_notes: drift.1,
-        change_since_last_live_status: baseline.0,
-        change_since_last_live_notes: baseline.1,
-        baseline_artifact_hashes: baseline.2,
-        created_at: Some(chatty_factory_core::timestamp_id("created")),
-    };
-    let _ = workspace_root;
-    persist_template_governance_receipt(runtime_root, &receipt)?;
-    Ok(())
-}
-
-fn family_manifest_path_for(workspace_root: &Path, family_id: &FamilyId) -> PathBuf {
-    workspace_root
-        .join("families")
-        .join("manifests")
-        .join(format!("{}.json", family_id.as_str()))
-}
-
-fn family_artifact_hashes(workspace_root: &Path, family_id: &FamilyId) -> BTreeMap<String, String> {
-    let mut hashes = BTreeMap::new();
-    let path = family_manifest_path_for(workspace_root, family_id);
-    if path.exists() {
-        if let Ok(bytes) = fs::read(&path) {
-            let mut hasher = DefaultHasher::new();
-            hasher.write(&bytes);
-            hashes.insert(
-                path.display().to_string(),
-                format!("{:016x}", hasher.finish()),
-            );
-        }
-    }
-    hashes
-}
-
-fn validate_family_governance_artifacts(
-    workspace_root: &Path,
-    manifest: &chatty_factory_core::FamilyCapabilityManifest,
-) -> Result<Vec<String>> {
-    let mut blockers = Vec::new();
-    let path = family_manifest_path_for(workspace_root, &manifest.family_id);
-    if !path.exists() {
-        blockers.push("missing family manifest".into());
-        return Ok(blockers);
-    }
-    let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
-    if value
-        .get("family_id")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .is_empty()
-    {
-        blockers.push("family manifest is missing family_id".into());
-    }
-    let classes = value
-        .get("provided_build_primitive_classes")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    if classes.is_empty() {
-        blockers.push("family manifest is missing provided_build_primitive_classes".into());
-    }
-    let adapters = value
-        .get("primitive_adapters")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    if adapters.is_empty() {
-        blockers.push("family manifest is missing primitive_adapters".into());
-    }
-    Ok(blockers)
-}
-
-fn load_existing_family_governance_receipt(
-    runtime_root: &Path,
-    family_id: &str,
-) -> Option<FamilyGovernanceReceipt> {
-    let path = runtime_root
-        .join("family_governance_receipts")
-        .join(format!("{family_id}.json"));
-    let contents = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<FamilyGovernanceReceipt>(&contents).ok()
-}
-
-fn classify_family_manifest_drift(
-    manifest: &chatty_factory_core::FamilyCapabilityManifest,
-    artifact_hashes: &BTreeMap<String, String>,
-) -> (String, Vec<String>) {
-    let mut notes = Vec::new();
-    if artifact_hashes.is_empty() {
-        notes.push("no family-manifest artifact hashes could be computed".into());
-        return ("drifted_risky".into(), notes);
-    }
-    if manifest.provided_build_primitive_classes.is_empty() {
-        notes.push("family manifest has no provided build primitive classes".into());
-        return ("unseeded".into(), notes);
-    }
-    if manifest.primitive_adapters.is_empty() {
-        notes.push("family manifest has no primitive adapters".into());
-        return ("drifted_risky".into(), notes);
-    }
-    if manifest.provided_build_primitive_classes.len() > 2 || manifest.primitive_adapters.len() > 6
-    {
-        notes.push("family manifest carries a broader primitive class or adapter surface than the narrow seed archetype".into());
-        return ("structurally_customized".into(), notes);
-    }
-    notes.push("family manifest matches the current governed family-manifest archetype".into());
-    ("seed_aligned".into(), notes)
-}
-
-fn classify_family_change_since_last_live(
-    previous_receipt: Option<&FamilyGovernanceReceipt>,
-    current_hashes: &BTreeMap<String, String>,
-) -> (String, Vec<String>, BTreeMap<String, String>) {
-    let mut notes = Vec::new();
-    if let Some(previous) = previous_receipt {
-        let baseline = if !previous.baseline_artifact_hashes.is_empty() {
-            previous.baseline_artifact_hashes.clone()
-        } else if previous.change_since_last_live_status == "baseline_recorded"
-            || previous.change_since_last_live_status == "stable_since_last_live"
-        {
-            previous.artifact_hashes.clone()
-        } else {
-            BTreeMap::new()
-        };
-        if !baseline.is_empty() {
-            if &baseline == current_hashes {
-                notes.push(
-                    "current family-manifest artifacts match the last known-good live baseline"
-                        .into(),
-                );
-                return ("stable_since_last_live".into(), notes, baseline);
-            }
-            notes.push(
-                "family-manifest artifacts changed since the last known-good live baseline".into(),
-            );
-            return ("changed_since_last_live".into(), notes, baseline);
-        }
-    }
-    notes.push("current family manifest establishes the first live baseline".into());
-    ("baseline_recorded".into(), notes, current_hashes.clone())
-}
-
-fn refresh_family_manifest_governance(
-    workspace_root: &Path,
-    runtime_root: &Path,
-    manifest: &chatty_factory_core::FamilyCapabilityManifest,
-) -> Result<()> {
-    let artifact_hashes = family_artifact_hashes(workspace_root, &manifest.family_id);
-    let drift = classify_family_manifest_drift(manifest, &artifact_hashes);
-    let previous_receipt =
-        load_existing_family_governance_receipt(runtime_root, manifest.family_id.as_str());
-    let baseline =
-        classify_family_change_since_last_live(previous_receipt.as_ref(), &artifact_hashes);
-    let receipt = FamilyGovernanceReceipt {
-        receipt_id: chatty_factory_core::timestamp_id("family-governance"),
-        family_id: manifest.family_id.as_str().to_string(),
-        family_display_name: governance_family_display_name(&manifest.family_id),
-        family_ecosystem: governance_family_ecosystem(&manifest.family_id),
-        manifest_path: Some(
-            family_manifest_path_for(workspace_root, &manifest.family_id)
-                .display()
-                .to_string(),
-        ),
-        primary_substrate: manifest.primary_substrate.clone(),
-        lifecycle_status: manifest.lifecycle_status.clone(),
-        lifecycle_notes: manifest.lifecycle_notes.clone(),
-        supported_tool_kinds: manifest.supported_tool_kinds.clone(),
-        provided_build_primitive_classes: manifest.provided_build_primitive_classes.clone(),
-        primitive_adapter_ids: manifest
-            .primitive_adapters
-            .iter()
-            .map(|adapter| adapter.adapter_id.clone())
-            .collect(),
-        artifact_hashes: artifact_hashes.clone(),
-        drift_status: drift.0.clone(),
-        drift_notes: drift.1.clone(),
-        change_since_last_live_status: baseline.0.clone(),
-        change_since_last_live_notes: baseline.1.clone(),
-        baseline_artifact_hashes: baseline.2.clone(),
-        created_at: Some(chatty_factory_core::timestamp_id("created")),
-    };
-    persist_family_governance_receipt(runtime_root, &receipt)?;
-    Ok(())
 }
 
 fn composition_artifact_hashes(entry: &PendingExtensionEntry) -> BTreeMap<String, String> {
@@ -25189,11 +22414,11 @@ fn classify_composition_bundle_drift(
     if entry
         .unresolved_layers
         .iter()
-        .any(|layer| layer == "family_build")
+        .any(|layer| layer == "base_build")
         && entry.unresolved_layers.iter().any(|layer| layer == "patch")
     {
         notes.push(
-            "composition bundle matches the current family_build + patch mixed-layer archetype"
+            "composition bundle matches the current base_build + patch mixed-layer archetype"
                 .into(),
         );
         return ("seed_aligned".into(), notes);
@@ -25284,7 +22509,7 @@ fn refresh_composition_bundle_governance(
     let receipt = CompositionGovernanceReceipt {
         receipt_id: chatty_factory_core::timestamp_id("composition-governance"),
         entry_id: entry.entry_id.clone(),
-        family_id: entry.family_id.clone(),
+        substrate_kind: pending_entry_substrate_kind(entry),
         tool_kind: entry.tool_kind.clone(),
         patch_kind: entry.patch_kind.clone(),
         unresolved_layers: entry.unresolved_layers.clone(),
@@ -25294,10 +22519,10 @@ fn refresh_composition_bundle_governance(
         } else {
             Some(entry.source_stub_path.clone())
         },
-        scaffold_root: if entry.scaffold_root.trim().is_empty() {
+        attempt_bundle_root: if entry.attempt_bundle_root.trim().is_empty() {
             None
         } else {
-            Some(entry.scaffold_root.clone())
+            Some(entry.attempt_bundle_root.clone())
         },
         acceptance_recipe_paths: acceptance_recipe_paths.clone(),
         acceptance_contract_note: composition_acceptance_contract_note(&acceptance_recipe_paths),
@@ -25664,12 +22889,7 @@ fn refresh_project_patch_readiness_receipt_for_project(
     let receipt = ProjectPatchReadinessReceipt {
         receipt_id: chatty_factory_core::timestamp_id("project-patch-readiness"),
         project_name: project_name.to_string(),
-        family_id: spec.family_id.as_ref().map(|id| id.as_str().to_string()),
-        family_display_name: spec.family_id.as_ref().map(governance_family_display_name),
-        family_ecosystem: spec
-            .family_id
-            .as_ref()
-            .and_then(governance_family_ecosystem),
+        substrate_kind: Some(spec.substrate.clone()),
         tool_kind: spec.tool_kind.clone(),
         request_summary: spec.request_summary.clone(),
         project_spec_path: project_spec_path.display().to_string(),
@@ -25702,9 +22922,9 @@ fn classify_patch_recipe_drift(
 ) -> (String, Vec<String>) {
     let mut notes = Vec::new();
     if entry.patch_kind.as_deref().unwrap_or_default().is_empty()
-        || entry.family_id.as_deref().unwrap_or_default().is_empty()
+        || entry.substrate_kind.as_deref().unwrap_or_default().is_empty()
     {
-        notes.push("patch recipe entry is missing family or patch identity".into());
+        notes.push("patch recipe entry is missing substrate or patch identity".into());
         return ("unseeded".into(), notes);
     }
     if artifact_hashes.is_empty() {
@@ -25722,7 +22942,7 @@ fn classify_patch_recipe_drift(
     if patch_recipe_path.is_some() && acceptance_recipe_path.is_some() {
         notes.push("patch recipe and paired acceptance artifacts are both present".into());
         if !entry.source_stub_path.trim().is_empty() {
-            notes.push("patch recipe still carries scaffold lineage metadata".into());
+            notes.push("patch recipe still carries attempt-bundle lineage metadata".into());
             return ("lightly_customized".into(), notes);
         }
         return ("seed_aligned".into(), notes);
@@ -25803,7 +23023,7 @@ fn refresh_patch_recipe_governance(
     let receipt = PatchGovernanceReceipt {
         receipt_id: chatty_factory_core::timestamp_id("patch-governance"),
         entry_id: entry.entry_id.clone(),
-        family_id: entry.family_id.clone(),
+        substrate_kind: pending_entry_substrate_kind(entry),
         tool_kind: entry.tool_kind.clone(),
         patch_kind: entry.patch_kind.clone(),
         requested_capabilities: entry.requested_capabilities.clone(),
@@ -25812,10 +23032,10 @@ fn refresh_patch_recipe_governance(
         } else {
             Some(entry.source_stub_path.clone())
         },
-        scaffold_root: if entry.scaffold_root.trim().is_empty() {
+        attempt_bundle_root: if entry.attempt_bundle_root.trim().is_empty() {
             None
         } else {
-            Some(entry.scaffold_root.clone())
+            Some(entry.attempt_bundle_root.clone())
         },
         patch_recipe_path: patch_recipe_path.map(|path| path.display().to_string()),
         acceptance_recipe_path: acceptance_recipe_path.map(|path| path.display().to_string()),
@@ -25881,7 +23101,7 @@ fn classify_helper_lane_drift(
         return ("structurally_customized".into(), notes);
     }
     if !entry.source_stub_path.trim().is_empty() {
-        notes.push("helper lane still carries scaffold lineage metadata".into());
+        notes.push("helper lane still carries attempt-bundle lineage metadata".into());
         return ("lightly_customized".into(), notes);
     }
     notes.push("helper lane matches the current governed helper-lane archetype".into());
@@ -25956,7 +23176,7 @@ fn refresh_helper_lane_governance(
     let receipt = HelperGovernanceReceipt {
         receipt_id: chatty_factory_core::timestamp_id("helper-governance"),
         entry_id: entry.entry_id.clone(),
-        family_id: entry.family_id.clone(),
+        substrate_kind: pending_entry_substrate_kind(entry),
         tool_kind: entry.tool_kind.clone(),
         helper_lane_path: helper_lane_path.map(|path| path.display().to_string()),
         requested_capabilities: entry.requested_capabilities.clone(),
@@ -25966,10 +23186,10 @@ fn refresh_helper_lane_governance(
         } else {
             Some(entry.source_stub_path.clone())
         },
-        scaffold_root: if entry.scaffold_root.trim().is_empty() {
+        attempt_bundle_root: if entry.attempt_bundle_root.trim().is_empty() {
             None
         } else {
-            Some(entry.scaffold_root.clone())
+            Some(entry.attempt_bundle_root.clone())
         },
         artifact_hashes: artifact_hashes.clone(),
         drift_status: drift.0.clone(),
@@ -26032,7 +23252,7 @@ fn classify_bridge_lane_drift(
         return ("structurally_customized".into(), notes);
     }
     if !entry.source_stub_path.trim().is_empty() {
-        notes.push("bridge lane still carries scaffold lineage metadata".into());
+        notes.push("bridge lane still carries attempt-bundle lineage metadata".into());
         return ("lightly_customized".into(), notes);
     }
     notes.push("bridge lane matches the current governed bridge-lane archetype".into());
@@ -26107,7 +23327,7 @@ fn refresh_bridge_lane_governance(
     let receipt = BridgeGovernanceReceipt {
         receipt_id: chatty_factory_core::timestamp_id("bridge-governance"),
         entry_id: entry.entry_id.clone(),
-        family_id: entry.family_id.clone(),
+        substrate_kind: pending_entry_substrate_kind(entry),
         tool_kind: entry.tool_kind.clone(),
         bridge_lane_path: bridge_lane_path.map(|path| path.display().to_string()),
         bridge_capabilities: entry.bridge_capabilities.clone(),
@@ -26117,10 +23337,10 @@ fn refresh_bridge_lane_governance(
         } else {
             Some(entry.source_stub_path.clone())
         },
-        scaffold_root: if entry.scaffold_root.trim().is_empty() {
+        attempt_bundle_root: if entry.attempt_bundle_root.trim().is_empty() {
             None
         } else {
-            Some(entry.scaffold_root.clone())
+            Some(entry.attempt_bundle_root.clone())
         },
         artifact_hashes: artifact_hashes.clone(),
         drift_status: drift.0.clone(),
@@ -26359,9 +23579,9 @@ fn refresh_proof_harness_lineage(
 
 fn match_pending_extensions(
     registry: &PendingExtensionRegistry,
-    build_spec: &FallbackBuildSpec,
+    build_spec: &NextAttemptBuildSpec,
 ) -> Vec<PendingExtensionEntry> {
-    let expected_unresolved_layers = unresolved_scaffold_layers(build_spec)
+    let expected_unresolved_layers = unresolved_attempt_layers(build_spec)
         .into_iter()
         .map(str::to_string)
         .collect::<Vec<_>>();
@@ -26369,14 +23589,14 @@ fn match_pending_extensions(
         .entries
         .iter()
         .filter(|entry| entry.status == "pending_implementation")
-        .filter(|entry| entry.extension_kind == build_spec.suggested_extension_kind)
+        .filter(|entry| entry.extension_kind == build_spec.next_attempt_kind)
         .filter(|entry| {
             option_string_matches(
-                entry.family_id.as_deref(),
+                pending_entry_substrate_kind(entry).as_deref(),
                 build_spec
-                    .suggested_family_id
+                    .suggested_substrate_kind
                     .as_ref()
-                    .map(FamilyId::as_str),
+                    .map(chatty_factory_core::SubstrateKind::as_str),
             )
         })
         .filter(|entry| {
@@ -26404,9 +23624,9 @@ fn match_pending_extensions(
                 || entry.unresolved_layers == expected_unresolved_layers
         })
         .filter(|entry| {
-            build_spec.missing_family_build_primitive_classes.is_empty()
-                || entry.missing_family_build_primitive_classes
-                    == build_spec.missing_family_build_primitive_classes
+            build_spec.missing_base_build_primitive_classes.is_empty()
+                || entry.missing_base_build_primitive_classes
+                    == build_spec.missing_base_build_primitive_classes
         })
         .filter(|entry| {
             build_spec.missing_patch_primitive_classes.is_empty()
@@ -26421,6 +23641,15 @@ fn match_pending_extensions(
         .collect()
 }
 
+fn pending_entry_substrate_kind(entry: &PendingExtensionEntry) -> Option<String> {
+    entry.substrate_kind.clone()
+}
+
+fn pending_entry_surface_label(entry: &PendingExtensionEntry) -> String {
+    pending_entry_substrate_kind(entry).unwrap_or_else(|| "unknown_surface".into())
+}
+
+
 fn option_string_matches(left: Option<&str>, right: Option<&str>) -> bool {
     match (left, right) {
         (Some(a), Some(b)) => a == b,
@@ -26430,18 +23659,15 @@ fn option_string_matches(left: Option<&str>, right: Option<&str>) -> bool {
 }
 
 fn pending_entry_slug(entry: &PendingExtensionEntry) -> String {
+    let surface = pending_entry_surface_label(entry);
+    let tool = entry.tool_kind.as_deref().unwrap_or("unknown_tool");
+    let patch = entry.patch_kind.as_deref().unwrap_or("next_patch_lane");
     match entry.extension_kind.as_str() {
         "composition_bundle" => format!(
             "{}_{}_composition_bundle",
-            entry.family_id.as_deref().unwrap_or("unknown_family"),
-            entry.tool_kind.as_deref().unwrap_or("unknown_tool"),
+            surface, tool,
         ),
-        "patch_recipe" => format!(
-            "{}_{}_{}",
-            entry.family_id.as_deref().unwrap_or("unknown_family"),
-            entry.tool_kind.as_deref().unwrap_or("unknown_tool"),
-            entry.patch_kind.as_deref().unwrap_or("new_patch_lane")
-        ),
+        "patch_recipe" => format!("{surface}_{tool}_{patch}"),
         "chattycog_bridge_lane" => {
             if entry.bridge_capabilities.is_empty() {
                 "chattycog_bridge_lane".into()
@@ -26449,28 +23675,26 @@ fn pending_entry_slug(entry: &PendingExtensionEntry) -> String {
                 format!("chattycog_{}", entry.bridge_capabilities.join("_"))
             }
         }
-        other => format!(
-            "{}_{}",
-            entry.family_id.as_deref().unwrap_or("unknown_family"),
-            other
-        ),
+        other => format!("{surface}_{other}"),
     }
 }
 
 fn build_registry_stub(entry: &PendingExtensionEntry, slug: &str) -> String {
+    let tool = entry.tool_kind.as_deref().unwrap_or("unknown_tool");
+    let patch = entry.patch_kind.as_deref().unwrap_or("next_patch_lane");
     match entry.extension_kind.as_str() {
         "composition_bundle" => format!(
-            "// Composition bundle stub for {slug}\n// Unresolved layers: {}\n// Missing family build classes: {}\n// Missing patch classes: {}\n// Missing helper primitive kinds: {}\n",
+            "// Composition bundle stub for {slug}\n// Unresolved layers: {}\n// Missing substrate-build classes: {}\n// Missing patch classes: {}\n// Missing helper primitive kinds: {}\n",
             entry.unresolved_layers.join(", "),
-            entry.missing_family_build_primitive_classes.join(", "),
+            entry.missing_base_build_primitive_classes.join(", "),
             entry.missing_patch_primitive_classes.join(", "),
             entry.missing_helper_primitive_kinds.join(", ")
         ),
         "patch_recipe" => format!(
-            "PatchRecipeSpec {{\n    recipe_id: \"{slug}\",\n    family_id: \"{family}\",\n    tool_kind: Some(\"{tool}\"),\n    patch_kind: \"{patch}\",\n    primitive_classes: &[{primitive_classes}],\n    dependency_mode: \"standalone\",\n    requires_features: &[],\n    provides_features: &[\"todo_feature\"],\n    request_match_any: &[\"todo phrase\"],\n    request_match_all: &[],\n    handler: crate::patch_{slug},\n}},\n",
-            family = entry.family_id.as_deref().unwrap_or("unknown_family"),
-            tool = entry.tool_kind.as_deref().unwrap_or("unknown_tool"),
-            patch = entry.patch_kind.as_deref().unwrap_or("new_patch_lane"),
+            "PatchRecipeSpec {{\n    recipe_id: \"{slug}\",\n    substrate_kind: \"{substrate}\",\n    tool_kind: Some(\"{tool}\"),\n    patch_kind: \"{patch}\",\n    primitive_classes: &[{primitive_classes}],\n    dependency_mode: \"standalone\",\n    requires_features: &[],\n    provides_features: &[\"todo_feature\"],\n    request_match_any: &[\"todo phrase\"],\n    request_match_all: &[],\n    handler: crate::patch_{slug},\n}},\n",
+            substrate = pending_entry_surface_label(entry),
+            tool = tool,
+            patch = patch,
             primitive_classes = if entry.missing_patch_primitive_classes.is_empty() {
                 "\"patch_extension\"".to_string()
             } else {
@@ -26492,9 +23716,9 @@ fn build_registry_stub(entry: &PendingExtensionEntry, slug: &str) -> String {
             entry.missing_helper_primitive_kinds.join(", ")
         ),
         _ => format!(
-            "// Family manifest wiring stub for {slug}\n// Requested capabilities: {}\n// Missing family build classes: {}\n",
+            "// Substrate wiring stub for {slug}\n// Requested capabilities: {}\n// Missing substrate-build classes: {}\n",
             entry.requested_capabilities.join(", "),
-            entry.missing_family_build_primitive_classes.join(", ")
+            entry.missing_base_build_primitive_classes.join(", ")
         ),
     }
 }
@@ -26502,16 +23726,16 @@ fn build_registry_stub(entry: &PendingExtensionEntry, slug: &str) -> String {
 fn build_handler_stub(entry: &PendingExtensionEntry, slug: &str) -> String {
     match entry.extension_kind.as_str() {
         "composition_bundle" => format!(
-            "// Composition bundle stub for `{slug}`\n// This lane spans unresolved layers: {}\n// Missing family build classes: {}\n// Missing patch classes: {}\n// Missing helper primitive kinds: {}\n// Wire the family manifest/startup surface and the deterministic patch lane together\n// before promoting this bundle to executable Rust registry code.\n",
+            "// Composition bundle stub for `{slug}`\n// This lane spans unresolved layers: {}\n// Missing substrate-build classes: {}\n// Missing patch classes: {}\n// Missing helper primitive kinds: {}\n// Wire the substrate shell and the deterministic patch lane together\n// before promoting this bundle to executable Rust registry code.\n",
             if entry.unresolved_layers.is_empty() {
                 "none".to_string()
             } else {
                 entry.unresolved_layers.join(", ")
             },
-            if entry.missing_family_build_primitive_classes.is_empty() {
+            if entry.missing_base_build_primitive_classes.is_empty() {
                 "none".to_string()
             } else {
-                entry.missing_family_build_primitive_classes.join(", ")
+                entry.missing_base_build_primitive_classes.join(", ")
             },
             if entry.missing_patch_primitive_classes.is_empty() {
                 "none".to_string()
@@ -26534,7 +23758,7 @@ fn build_handler_stub(entry: &PendingExtensionEntry, slug: &str) -> String {
 fn build_promotion_plan(entry: &PendingExtensionEntry, slug: &str) -> String {
     let suggested_targets = match entry.extension_kind.as_str() {
         "composition_bundle" => format!(
-            "- family manifest/template: review the integrated family starter for `{}`\n- patch recipe + acceptance: review the integrated patch starter for `{}`\n- [registry.rs](/abs/path/not-applicable): wire any needed Rust patch registry entry only after the mixed bundle contract is settled\n- [lib.rs](/abs/path/not-applicable): add deterministic handler logic only for the patch-side portion of the bundle",
+            "- substrate shell: review the integrated bounded surface files for `{}`\n- patch recipe + acceptance: review the integrated patch artifacts for `{}`\n- [registry.rs](/abs/path/not-applicable): wire any needed Rust patch registry entry only after the mixed bundle contract is settled\n- [lib.rs](/abs/path/not-applicable): add deterministic handler logic only for the patch-side portion of the bundle",
             slug, slug
         ),
         _ => format!(
@@ -26543,18 +23767,19 @@ fn build_promotion_plan(entry: &PendingExtensionEntry, slug: &str) -> String {
         ),
     };
     format!(
-        "# Rust Registry Promotion Plan\n\nEntry id: `{}`\n\nExtension kind: `{}`\n\nUnresolved layers:\n{}\n\nMissing family build classes:\n{}\n\nMissing patch classes:\n{}\n\nMissing helper primitive kinds:\n{}\n\nSuggested Rust wiring target:\n{}\n\nRequested capabilities:\n{}\n\nIntegrated starter files:\n{}\n",
+        "# Rust Registry Promotion Plan\n\nEntry id: `{}`\n\nExtension kind: `{}`\n\nTarget substrate:\n- {}\n\nUnresolved layers:\n{}\n\nMissing substrate-build classes:\n{}\n\nMissing patch classes:\n{}\n\nMissing helper primitive kinds:\n{}\n\nSuggested Rust wiring target:\n{}\n\nRequested capabilities:\n{}\n\nIntegrated bounded files:\n{}\n",
         entry.entry_id,
         entry.extension_kind,
+        pending_entry_surface_label(entry),
         if entry.unresolved_layers.is_empty() {
             "- none".to_string()
         } else {
             entry.unresolved_layers.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n")
         },
-        if entry.missing_family_build_primitive_classes.is_empty() {
+        if entry.missing_base_build_primitive_classes.is_empty() {
             "- none".to_string()
         } else {
-            entry.missing_family_build_primitive_classes.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n")
+            entry.missing_base_build_primitive_classes.iter().map(|item| format!("- {item}")).collect::<Vec<_>>().join("\n")
         },
         if entry.missing_patch_primitive_classes.is_empty() {
             "- none".to_string()
@@ -26583,16 +23808,18 @@ fn build_promotion_plan(entry: &PendingExtensionEntry, slug: &str) -> String {
 }
 
 fn build_registry_apply_patch_template(entry: &PendingExtensionEntry, slug: &str) -> String {
+    let tool = entry.tool_kind.as_deref().unwrap_or("unknown_tool");
+    let patch = entry.patch_kind.as_deref().unwrap_or("next_patch_lane");
     match entry.extension_kind.as_str() {
         "composition_bundle" => format!(
-            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/registry.rs\n@@\n-// Add generated registry entry here.\n+// Composition bundle `{slug}` spans unresolved layers: {}.\n+// Keep family manifest wiring in the integrated family starter files,\n+// and only add Rust patch-registry entries here once the patch-side scope is settled.\n*** End Patch\n",
+            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/registry.rs\n@@\n-// Add generated registry entry here.\n+// Composition bundle `{slug}` spans unresolved layers: {}.\n+// Keep substrate-shell wiring in the integrated bounded files,\n+// and only add Rust patch-registry entries here once the patch-side scope is settled.\n*** End Patch\n",
             entry.unresolved_layers.join(", ")
         ),
         "patch_recipe" => format!(
-            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/registry.rs\n@@\n         PatchRecipeSpec {{\n             recipe_id: \"log_summary_severity_filter\",\n             family_id: \"rust_cli_tool\",\n             tool_kind: Some(\"log_summary\"),\n             patch_kind: \"severity_filter\",\n             dependency_mode: \"standalone\",\n             requires_features: &[],\n             provides_features: &[\"severity_filter\"],\n             request_match_any: &[\"severity filter\", \"severity only\", \"select severity\"],\n             request_match_all: &[\"severity\", \"filter\"],\n             handler: crate::patch_rust_log_summary_severity_filter,\n         }},\n+        PatchRecipeSpec {{\n+            recipe_id: \"{slug}\",\n+            family_id: \"{family}\",\n+            tool_kind: Some(\"{tool}\"),\n+            patch_kind: \"{patch}\",\n+            dependency_mode: \"standalone\",\n+            requires_features: &[],\n+            provides_features: &[\"todo_feature\"],\n+            request_match_any: &[\"todo phrase\"],\n+            request_match_all: &[],\n+            handler: crate::patch_{slug},\n+        }},\n     ]\n }}\n*** End Patch\n",
-            family = entry.family_id.as_deref().unwrap_or("unknown_family"),
-            tool = entry.tool_kind.as_deref().unwrap_or("unknown_tool"),
-            patch = entry.patch_kind.as_deref().unwrap_or("new_patch_lane"),
+            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/registry.rs\n@@\n         PatchRecipeSpec {{\n             recipe_id: \"log_summary_severity_filter\",\n             substrate_kind: \"cli\",\n             tool_kind: Some(\"log_summary\"),\n             patch_kind: \"severity_filter\",\n             dependency_mode: \"standalone\",\n             requires_features: &[],\n             provides_features: &[\"severity_filter\"],\n             request_match_any: &[\"severity filter\", \"severity only\", \"select severity\"],\n             request_match_all: &[\"severity\", \"filter\"],\n             handler: crate::patch_rust_log_summary_severity_filter,\n         }},\n+        PatchRecipeSpec {{\n+            recipe_id: \"{slug}\",\n+            substrate_kind: \"{substrate}\",\n+            tool_kind: Some(\"{tool}\"),\n+            patch_kind: \"{patch}\",\n+            dependency_mode: \"standalone\",\n+            requires_features: &[],\n+            provides_features: &[\"todo_feature\"],\n+            request_match_any: &[\"todo phrase\"],\n+            request_match_all: &[],\n+            handler: crate::patch_{slug},\n+        }},\n     ]\n }}\n*** End Patch\n",
+            substrate = pending_entry_surface_label(entry),
+            tool = tool,
+            patch = patch,
         ),
         _ => format!(
             "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/registry.rs\n@@\n-// Add generated registry entry here.\n+// Add generated registry entry for `{slug}` here.\n*** End Patch\n"
@@ -26603,10 +23830,10 @@ fn build_registry_apply_patch_template(entry: &PendingExtensionEntry, slug: &str
 fn build_handler_apply_patch_template(entry: &PendingExtensionEntry, slug: &str) -> String {
     match entry.extension_kind.as_str() {
         "composition_bundle" => format!(
-            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/lib.rs\n@@\n pub fn candidate_acceptance_recipe_ids(\n     family_id: Option<&FamilyId>,\n     tool_kind: Option<&str>,\n ) -> Vec<String> {{\n@@\n }}\n+\n+// Composition bundle `{slug}` requires coordinated family + patch wiring.\n+// Keep the family-surface work in the integrated manifest/template starters,\n+// and add deterministic Rust patch logic here only for the patch-side portion.\n*** End Patch\n"
+            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/lib.rs\n@@\n pub fn candidate_acceptance_recipe_ids(\n     substrate_kind: Option<&str>,\n     tool_kind: Option<&str>,\n ) -> Vec<String> {{\n@@\n }}\n+\n+// Composition bundle `{slug}` requires coordinated substrate-shell + patch wiring.\n+// Keep the bounded surface work in the integrated files,\n+// and add deterministic Rust patch logic here only for the patch-side portion.\n*** End Patch\n"
         ),
         _ => format!(
-            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/lib.rs\n@@\n pub fn candidate_acceptance_recipe_ids(\n     family_id: Option<&FamilyId>,\n     tool_kind: Option<&str>,\n ) -> Vec<String> {{\n@@\n }}\n+\n+pub(crate) fn patch_{slug}(\n+    _project_dir: &std::path::Path,\n+    _project_name: &str,\n+    _request: &str,\n+    _request_id: &str,\n+) -> anyhow::Result<(PatchArtifacts, chatty_factory_core::PatchReceipt)> {{\n+    anyhow::bail!(\"pending lane `{}` is not wired yet; replace this stub with deterministic patch logic\")\n+}}\n*** End Patch\n",
+            "*** Begin Patch\n*** Update File: crates/chatty_factory_families/src/lib.rs\n@@\n pub fn candidate_acceptance_recipe_ids(\n     substrate_kind: Option<&str>,\n     tool_kind: Option<&str>,\n ) -> Vec<String> {{\n@@\n }}\n+\n+pub(crate) fn patch_{slug}(\n+    _project_dir: &std::path::Path,\n+    _project_name: &str,\n+    _request: &str,\n+    _request_id: &str,\n+) -> anyhow::Result<(PatchArtifacts, chatty_factory_core::PatchReceipt)> {{\n+    anyhow::bail!(\"pending lane `{}` is not wired yet; replace this stub with deterministic patch logic\")\n+}}\n*** End Patch\n",
             entry.entry_id
         ),
     }
@@ -26795,13 +24022,7 @@ fn verify_patch_artifacts(
             )?;
             Ok(())
         }
-        Err(err) => persist_failure(
-            runtime_root,
-            request_id,
-            artifacts.project_dir.clone(),
-            acceptance_plan.family_id.clone(),
-            err,
-        ),
+        Err(err) => persist_failure(runtime_root, request_id, artifacts.project_dir.clone(), err),
     }
 }
 
@@ -26809,14 +24030,15 @@ fn persist_failure(
     runtime_root: &PathBuf,
     request_id: &str,
     project_dir: PathBuf,
-    family_id: Option<FamilyId>,
     err: anyhow::Error,
 ) -> Result<()> {
     let message = err.to_string();
+    let spec = load_project_spec_with_contract_refresh(&project_dir).ok();
     let report = FailureReport {
         failure_id: chatty_factory_core::timestamp_id("failure"),
         request_id: request_id.to_string(),
-        family_id,
+        substrate_kind: spec.as_ref().and_then(project_spec_substrate_kind_ref),
+        tool_kind: spec.as_ref().and_then(|spec| spec.tool_kind.clone()),
         failure_class: Some(classify_failure(&message)),
         failing_check_id: None,
         evidence: Some(FailureReportEvidence {
@@ -27195,7 +24417,7 @@ mod tests {
             request_id: "request-test".into(),
             mode: Some(RequestMode::NewBuild),
             interpreted_goal: "build a shell".into(),
-            inferred_family_candidates: vec![FamilyId::StaticWebDashboard],
+            inferred_substrate_candidates: vec![chatty_factory_core::SubstrateKind::StaticWeb],
             inferred_tool_kind: Some("dashboard".into()),
             intended_patch_kind: None,
             available_patch_kinds: Vec::new(),
@@ -27221,11 +24443,11 @@ mod tests {
     }
 
     #[test]
-    fn soft_review_builds_can_continue_for_scaffoldable_requests() {
+    fn soft_review_builds_can_continue_for_seedable_requests() {
         let mut plan = sample_review_plan();
         plan.constraints = vec![
             "surface_unclear".into(),
-            "request asks for service/backend capabilities that do not have a deterministic family yet"
+            "request asks for service/backend capabilities that do not have a deterministic bounded substrate yet"
                 .into(),
         ];
         plan.escalation_reasons = plan.constraints.clone();
@@ -27249,7 +24471,7 @@ mod tests {
     fn soft_review_patches_can_continue_to_substrate_attempts() {
         let spec = ProjectSpec {
             project_name: "demo".into(),
-            family_id: Some(FamilyId::StaticWebDashboard),
+            substrate: "static_web".into(),
             tool_kind: Some("dashboard".into()),
             supported_patch_kinds: vec!["progress_banner".into()],
             ..ProjectSpec::default()
@@ -27266,7 +24488,7 @@ mod tests {
     fn hard_constraint_patches_still_block_continuation() {
         let spec = ProjectSpec {
             project_name: "demo".into(),
-            family_id: Some(FamilyId::StaticWebDashboard),
+            substrate: "static_web".into(),
             tool_kind: Some("dashboard".into()),
             supported_patch_kinds: vec!["progress_banner".into()],
             ..ProjectSpec::default()
@@ -27280,3 +24502,4 @@ mod tests {
         assert!(!should_continue_patch_with_soft_review(&plan, &spec));
     }
 }
+

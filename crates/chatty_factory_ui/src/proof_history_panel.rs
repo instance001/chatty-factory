@@ -4,8 +4,8 @@ impl ChattyFactoryUiApp {
     pub(crate) fn render_paired_proof_results_section(
         &mut self,
         ui: &mut egui::Ui,
-        paired_receipts: &[(CrossFamilyPairedProofReceiptSummary, PathBuf)],
-        filtered_paired_receipts: &[(CrossFamilyPairedProofReceiptSummary, PathBuf)],
+        paired_receipts: &[(LegacyComparisonPairedProofReceiptSummary, PathBuf)],
+        filtered_paired_receipts: &[(LegacyComparisonPairedProofReceiptSummary, PathBuf)],
         proof_templates: &[PrimitiveProofTemplate],
         comparison_bundles: &[CapabilityComparisonBundle],
     ) {
@@ -41,10 +41,10 @@ impl ChattyFactoryUiApp {
     fn render_latest_paired_proof_card(
         &mut self,
         ui: &mut egui::Ui,
-        latest_receipt: &CrossFamilyPairedProofReceiptSummary,
+        latest_receipt: &LegacyComparisonPairedProofReceiptSummary,
         latest_path: &Path,
-        filtered_paired_receipts: &[(CrossFamilyPairedProofReceiptSummary, PathBuf)],
-        paired_receipts: &[(CrossFamilyPairedProofReceiptSummary, PathBuf)],
+        filtered_paired_receipts: &[(LegacyComparisonPairedProofReceiptSummary, PathBuf)],
+        paired_receipts: &[(LegacyComparisonPairedProofReceiptSummary, PathBuf)],
         comparison_bundles: &[CapabilityComparisonBundle],
     ) {
         ui.group(|ui| {
@@ -146,7 +146,7 @@ impl ChattyFactoryUiApp {
     fn render_latest_paired_proof_actions(
         &mut self,
         ui: &mut egui::Ui,
-        receipt: &CrossFamilyPairedProofReceiptSummary,
+        receipt: &LegacyComparisonPairedProofReceiptSummary,
         receipt_path: &Path,
     ) {
         ui.horizontal(|ui| {
@@ -242,7 +242,7 @@ impl ChattyFactoryUiApp {
     fn render_latest_paired_proof_note(
         &mut self,
         ui: &mut egui::Ui,
-        receipt: &CrossFamilyPairedProofReceiptSummary,
+        receipt: &LegacyComparisonPairedProofReceiptSummary,
     ) {
         ui.horizontal(|ui| {
             let current_note = self
@@ -284,7 +284,7 @@ impl ChattyFactoryUiApp {
     fn render_latest_paired_proof_export_history(
         &mut self,
         ui: &mut egui::Ui,
-        receipt: &CrossFamilyPairedProofReceiptSummary,
+        receipt: &LegacyComparisonPairedProofReceiptSummary,
     ) {
         let export_history = self.paired_proof_export_history_paths(&receipt.receipt_id);
         if export_history.is_empty() {
@@ -342,7 +342,7 @@ impl ChattyFactoryUiApp {
     fn render_latest_paired_proof_timeline(
         &mut self,
         ui: &mut egui::Ui,
-        receipt: &CrossFamilyPairedProofReceiptSummary,
+        receipt: &LegacyComparisonPairedProofReceiptSummary,
     ) {
         egui::CollapsingHeader::new("Proof Timeline")
             .default_open(false)
@@ -374,7 +374,7 @@ impl ChattyFactoryUiApp {
     fn render_favorite_paired_proofs(
         &mut self,
         ui: &mut egui::Ui,
-        filtered_paired_receipts: &[(CrossFamilyPairedProofReceiptSummary, PathBuf)],
+        filtered_paired_receipts: &[(LegacyComparisonPairedProofReceiptSummary, PathBuf)],
         comparison_bundles: &[CapabilityComparisonBundle],
     ) {
         let favorite_receipts: Vec<_> = filtered_paired_receipts
@@ -399,7 +399,7 @@ impl ChattyFactoryUiApp {
     fn render_recent_paired_proofs(
         &mut self,
         ui: &mut egui::Ui,
-        filtered_paired_receipts: &[(CrossFamilyPairedProofReceiptSummary, PathBuf)],
+        filtered_paired_receipts: &[(LegacyComparisonPairedProofReceiptSummary, PathBuf)],
         comparison_bundles: &[CapabilityComparisonBundle],
     ) {
         ui.separator();
@@ -412,7 +412,7 @@ impl ChattyFactoryUiApp {
     fn render_paired_proof_history(
         &mut self,
         ui: &mut egui::Ui,
-        filtered_paired_receipts: &[(CrossFamilyPairedProofReceiptSummary, PathBuf)],
+        filtered_paired_receipts: &[(LegacyComparisonPairedProofReceiptSummary, PathBuf)],
         proof_templates: &[PrimitiveProofTemplate],
         comparison_bundles: &[CapabilityComparisonBundle],
     ) {
@@ -446,7 +446,7 @@ impl ChattyFactoryUiApp {
     fn render_compact_paired_proof_row(
         &mut self,
         ui: &mut egui::Ui,
-        receipt: &CrossFamilyPairedProofReceiptSummary,
+        receipt: &LegacyComparisonPairedProofReceiptSummary,
         path: &Path,
         comparison_bundles: &[CapabilityComparisonBundle],
         show_unpin: bool,
@@ -519,7 +519,7 @@ fn latest_proof_last_touched(
 }
 
 fn paired_proof_required_bundle_summary(
-    receipt: &CrossFamilyPairedProofReceiptSummary,
+    receipt: &LegacyComparisonPairedProofReceiptSummary,
     comparison_bundles: &[CapabilityComparisonBundle],
 ) -> String {
     let Some(bundle) = proof_receipt_comparison_bundle(receipt, comparison_bundles) else {
