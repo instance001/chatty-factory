@@ -16,7 +16,7 @@ use chatty_factory_core::{
     default_runtime_config, derive_build_seed_inputs, derive_planner_handoff, derive_request_plan,
     discover_projects, discover_runtime, gate_patch_project_snapshot,
     infer_chattycog_bridge_capabilities_from_text, infer_chattycog_hosting_mode_from_text,
-    infer_chattycog_hosting_modes_from_text, infer_route_hints, load_project_session,
+    infer_chattycog_hosting_modes_from_text, load_project_session,
     normalize_patch_request, normalize_request, patch_primitive_classes_for_kinds,
     persist_json_pretty, persist_project_browser_state, persist_project_session,
     proof_template_by_id, proof_template_by_id_from_root,
@@ -12735,28 +12735,78 @@ fn enrich_project_for_proof_baseline(
         )) = patch_execution
         else {
             if reviewed_patch_intent_freeze.intended_patch_kind.is_none() {
-                let substrate_bundle = prepare_patch_next_attempt(
+                let (artifacts, receipt, mutation_bundle) =
+                    execute_bounded_patch_mutation_gauntlet(
+                        &self.runtime_root,
+                        &self.output_root,
+                        &project_dir,
+                        &request,
+                        &plan,
+                        &spec,
+                        &patch_diagnosis,
+                    )?;
+                let refreshed_spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(
+                    artifacts.project_dir.join("ProjectSpec.json"),
+                )?)?;
+                sync_helper_acceptance_expectations(&artifacts.project_dir, None)?;
+                let helper_runtime_receipts = execute_and_persist_helper_runtime_state(
                     &self.runtime_root,
-                    &self.workspace_root,
-                    &project_dir,
+                    &request.request_id,
+                    &artifacts.project_dir,
+                    &refreshed_spec,
+                )?;
+                let selected_patch_kinds = vec![receipt.patch_kind.clone()];
+                let composable_route_plan = derive_composable_route_plan(
                     &request,
                     &plan,
-                    &spec,
-                    planner,
-                )?;
-                return emit_patch_next_attempt_result(
+                    Some(&spec),
+                    Some(&refreshed_spec),
+                    CompositionRouteClass::BoundedCompositionCandidate,
+                    &selected_patch_kinds,
+                );
+                let composable_route_plan_path =
+                    persist_composable_route_plan(&self.runtime_root, &composable_route_plan)?;
+                let mut primitive_execution_plan =
+                    derive_primitive_execution_plan(&composable_route_plan);
+                primitive_execution_plan.overall_status = "executed".into();
+                let primitive_execution_plan_path =
+                    persist_primitive_execution_plan(&self.runtime_root, &primitive_execution_plan)?;
+                let mut notes = vec![
+                    "no deterministic patch lane matched; executed a bounded mutation gauntlet against the existing project surface"
+                        .into(),
+                    format!(
+                        "gauntlet receipt={}",
+                        mutation_bundle.gauntlet_receipt_path.display()
+                    ),
+                ];
+                if !mutation_bundle.verification_commands.is_empty() {
+                    notes.push(format!(
+                        "required verification commands: {}",
+                        mutation_bundle.verification_commands.join(", ")
+                    ));
+                }
+                notes.extend(soft_review_patch_notes.clone());
+                notes.extend(mutation_bundle.notes);
+                return finish_patch_result(
                     &self.runtime_root,
                     &self.output_root,
                     &request,
                     &plan,
                     &spec,
-                    &reviewed_patch_intent_freeze,
+                    &patch_diagnosis,
                     &patch_diagnosis_path,
                     &patch_plan_review_path,
                     &patch_constraint_review_path,
                     &patch_intent_freeze_path,
-                    &substrate_bundle,
-                    &soft_review_patch_notes,
+                    artifacts,
+                    receipt,
+                    CompositionRouteClass::BoundedCompositionCandidate,
+                    composable_route_plan_path,
+                    primitive_execution_plan_path,
+                    selected_patch_kinds,
+                    notes,
+                    None,
+                    helper_runtime_receipts,
                 );
             }
             return emit_next_attempt_result(
@@ -15319,7 +15369,8 @@ fn derive_project_patch_diagnosis(
     let post_patch_checks = vec![
         "project spec still exists".into(),
         "acceptance plan still exists".into(),
-        "family id and tool kind remain stable".into(),
+        "execution substrate remains stable".into(),
+        "contract files stay synchronized with the repaired implementation".into(),
         "at least one diagnosed target file was modified".into(),
     ];
 
@@ -16496,400 +16547,406 @@ fn emit_patch_freeze_skip_result(
     })
 }
 
-fn next_attempt_substrate_feature_tokens(
-    request: &chatty_factory_core::RequestRecord,
-    plan: &chatty_factory_core::RequestPlan,
-) -> Vec<String> {
-    let lower = request.raw_request.to_ascii_lowercase();
-    let mut features = plan.planner_suggested_features.clone();
-    if lower.contains("kanban")
-        || lower.contains("task board")
-        || lower.contains("task card")
-        || lower.contains("drag and drop")
-    {
-        features.push("kanban_board".into());
-    }
-    if lower.contains("metric") || lower.contains("dashboard") || lower.contains("tracker") {
-        features.push("metric_card".into());
-    }
-    if lower.contains("status") || lower.contains("progress") {
-        features.push("status_panel".into());
-    }
-    features.sort();
-    features.dedup();
-    features
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BoundedPatchMutationGauntletReceipt {
+    pub receipt_id: String,
+    pub request_id: String,
+    pub project_name: String,
+    pub substrate: String,
+    pub current_tool_kind: Option<String>,
+    pub next_tool_kind: Option<String>,
+    pub interpreted_goal: String,
+    pub requirement_gap: String,
+    pub current_project_evidence: Vec<String>,
+    pub affected_files: Vec<String>,
+    pub verification_commands: Vec<String>,
+    pub next_attempt_mechanics: Vec<String>,
+    pub execution_strategy: String,
+    pub created_at: Option<String>,
 }
 
-struct PatchSubstrateAttemptBundle {
-    build_intent_freeze_path: PathBuf,
-    build_plan_artifact_path: PathBuf,
-    build_plan_review_path: PathBuf,
-    build_constraint_review_path: PathBuf,
-    plan_task_list_path: PathBuf,
-    plan_task_execution_log_path: PathBuf,
-    plan_task_verification_log_path: PathBuf,
-    execution_status: String,
+struct BoundedPatchMutationBundle {
+    gauntlet_receipt_path: PathBuf,
+    verification_commands: Vec<String>,
     notes: Vec<String>,
 }
 
-fn prepare_patch_next_attempt(
+fn generic_patch_verification_commands(spec: &ProjectSpec) -> Vec<String> {
+    if spec.tool_kind.as_deref() == Some("rust_cli") || spec.substrate == "rust_cli" {
+        return vec!["cargo check".into(), "cargo test".into()];
+    }
+    if spec.tool_kind.as_deref() == Some("python_cli") || spec.substrate == "python_cli" {
+        return vec!["python -m py_compile main.py".into()];
+    }
+    if spec.substrate == "static_web" {
+        return vec!["contract file refresh".into(), "browser smoke".into()];
+    }
+    Vec::new()
+}
+
+fn execute_bounded_patch_mutation_gauntlet(
     runtime_root: &Path,
-    workspace_root: &Path,
+    output_root: &Path,
     project_dir: &Path,
     request: &chatty_factory_core::RequestRecord,
     plan: &chatty_factory_core::RequestPlan,
     spec: &ProjectSpec,
-    planner: &HostPlannerOptions,
-) -> Result<PatchSubstrateAttemptBundle> {
-    let selected_substrate_kind = project_spec_substrate_kind(spec)
-        .or_else(|| plan.inferred_substrate_candidates.first().cloned());
-    let (selected_operator_ids, selected_wrapper_ids) = infer_route_hints(request);
-    let mut decision_reasons = vec!["patch_next_attempt_from_active_project".into()];
-    if let Some(tool_kind) = plan
+    diagnosis: &ProjectPatchDiagnosis,
+) -> Result<(PatchArtifacts, PatchReceipt, BoundedPatchMutationBundle)> {
+    let next_tool_kind = plan
         .inferred_tool_kind
         .clone()
-        .or_else(|| spec.tool_kind.clone())
-    {
-        decision_reasons.push(format!("tool_kind={tool_kind}"));
+        .or_else(|| spec.tool_kind.clone());
+    let current_tool_kind = spec.tool_kind.clone();
+    let verification_commands = generic_patch_verification_commands(spec);
+    let requirement_gap = match (current_tool_kind.as_deref(), next_tool_kind.as_deref()) {
+        (Some(current), Some(next)) if current != next => format!(
+            "current implementation advertises `{current}` but the preserved request requires `{next}` behavior on the same substrate"
+        ),
+        (Some(current), _) => format!(
+            "current implementation remains grounded in `{current}` but does not satisfy the preserved request without bounded mutation"
+        ),
+        _ => "existing project surface does not satisfy the preserved request without bounded mutation".into(),
+    };
+    let mut current_project_evidence = vec![
+        format!("substrate={}", spec.substrate),
+        format!(
+            "current_tool_kind={}",
+            current_tool_kind.as_deref().unwrap_or("unknown")
+        ),
+        format!("interpreted_goal={}", plan.interpreted_goal),
+    ];
+    if !diagnosis.candidate_target_files.is_empty() {
+        current_project_evidence.push(format!(
+            "diagnosed_target_files={}",
+            diagnosis.candidate_target_files.join(", ")
+        ));
     }
-    decision_reasons.push("no_direct_patch_lane_match_prepare_task_bundle".into());
-    let route = chatty_factory_core::RouteDecision {
-        route_id: chatty_factory_core::timestamp_id("route"),
-        request_id: request.request_id.clone(),
-        selected_substrate_kind,
-        selected_operator_ids,
-        selected_wrapper_ids,
-        selected_behavior_kind: None,
-        capability_transition: Some(chatty_factory_core::CapabilityTransition::None),
-        decision_reasons,
-        next_attempt_level: Some("patch_substrate".into()),
-        needs_llm_review: plan.needs_llm_review,
-        created_at: Some(chatty_factory_core::timestamp_id("created")),
-    };
-    let inputs = chatty_factory_core::BuildSeedInputs {
-        project_name: spec.project_name.clone(),
-        title: format!("{} follow-up", spec.project_name.replace('_', " ")),
-        summary: format!(
-            "Substrate-first patch attempt prepared for request: {}",
-            request.raw_request.trim()
-        ),
-        copy_bundle: route
-            .selected_operator_ids
-            .iter()
-            .map(|op| op.0.clone())
-            .collect(),
-        feature_tokens: next_attempt_substrate_feature_tokens(request, plan),
-        style_preset: Some("factory_default".into()),
-        wrapper_target: request.exoskeleton_target.clone(),
-        entrypoint_config: Vec::new(),
-        fixture_config: Vec::new(),
-    };
-    let build_intent_freeze = derive_build_intent_freeze(request, plan, &route, &inputs, None);
-    let build_plan_artifact = derive_build_plan_artifact(
-        &build_intent_freeze,
-        request,
-        plan,
-        &route,
-        &inputs,
-        None,
-    );
-    let build_intent_freeze_path = runtime_root.join("build_intent_freezes").join(format!(
-        "{}-patch-substrate-freeze.json",
-        request.request_id
-    ));
-    let build_plan_artifact_path = runtime_root.join("build_plans").join(format!(
-        "{}-patch-substrate-build-plan.json",
-        request.request_id
-    ));
-    let (build_plan_review, reviewed_build_plan_artifact) =
-        review_build_plan_artifact(&build_plan_artifact);
-    let build_plan_review_path = runtime_root.join("build_plan_reviews").join(format!(
-        "{}-patch-substrate-review.json",
-        request.request_id
-    ));
-    let build_constraint_review =
-        review_build_plan_constraints(&reviewed_build_plan_artifact, &build_plan_review);
-    let build_constraint_review_path = runtime_root.join("build_constraint_reviews").join(format!(
-        "{}-patch-substrate-constraint-review.json",
-        request.request_id
-    ));
-    let build_execution_work_order = derive_build_execution_work_order(
-        &reviewed_build_plan_artifact,
-        &build_plan_review,
-        &build_constraint_review,
-    );
-    let build_execution_work_order_path =
-        runtime_root
-            .join("build_execution_work_orders")
-            .join(format!(
-                "{}-patch-substrate-work-order.json",
-                request.request_id
-            ));
-    let plan_task_list = derive_plan_task_list(
-        runtime_root,
-        &reviewed_build_plan_artifact,
-        &build_plan_review,
-        &build_constraint_review,
-        &build_execution_work_order,
-    );
-    let plan_task_list_path = runtime_root
-        .join("plan_tasks")
-        .join(format!("{}-patch-substrate-tasks.json", request.request_id));
-    persist_json_pretty(&build_intent_freeze_path, &build_intent_freeze)?;
-    persist_json_pretty(&build_plan_artifact_path, &reviewed_build_plan_artifact)?;
-    persist_json_pretty(&build_plan_review_path, &build_plan_review)?;
-    persist_json_pretty(&build_constraint_review_path, &build_constraint_review)?;
-    persist_json_pretty(
-        &build_execution_work_order_path,
-        &build_execution_work_order,
-    )?;
-    persist_json_pretty(&plan_task_list_path, &plan_task_list)?;
-    let notes = vec![
-        format!(
-            "prepared substrate-first patch work order for substrate `{}`",
-            route
-                .selected_substrate_kind
-                .as_ref()
-                .map(SubstrateKind::as_str)
-                .unwrap_or("unknown")
-        ),
-        format!(
-            "prepared feature slices: {}",
-            reviewed_build_plan_artifact
-                .feature_slices
-                .iter()
-                .filter(|slice| slice.slice_kind == "feature_layer")
-                .map(|slice| slice.title.clone())
+    if !diagnosis.diagnosed_artifact_groups.is_empty() {
+        current_project_evidence.push(format!(
+            "diagnosed_artifact_groups={}",
+            diagnosis
+                .diagnosed_artifact_groups
+                .keys()
+                .cloned()
                 .collect::<Vec<_>>()
                 .join(", ")
+        ));
+    }
+
+    let execution_strategy = if spec.substrate == "rust_cli" {
+        "same_substrate_rust_cli_reseed"
+    } else if spec.substrate == "python_cli" {
+        "same_substrate_python_cli_reseed"
+    } else if spec.substrate == "static_web" {
+        "same_substrate_static_web_reseed"
+    } else {
+        "unknown_substrate_reseed"
+    }
+    .to_string();
+    let next_attempt_mechanics = vec![
+        "preserve the user request as the authority".into(),
+        "treat current project evidence as the bounded mutation surface".into(),
+        "replace or update the existing implementation instead of creating a duplicate surface".into(),
+        "rewrite contract files so they match the repaired implementation".into(),
+        "verify the repaired artifact using the required substrate checks".into(),
+    ];
+
+    let gauntlet_receipt = BoundedPatchMutationGauntletReceipt {
+        receipt_id: chatty_factory_core::timestamp_id("patch-gauntlet"),
+        request_id: request.request_id.clone(),
+        project_name: spec.project_name.clone(),
+        substrate: spec.substrate.clone(),
+        current_tool_kind: current_tool_kind.clone(),
+        next_tool_kind: next_tool_kind.clone(),
+        interpreted_goal: plan.interpreted_goal.clone(),
+        requirement_gap,
+        current_project_evidence,
+        affected_files: diagnosis.candidate_target_files.clone(),
+        verification_commands: verification_commands.clone(),
+        next_attempt_mechanics: next_attempt_mechanics.clone(),
+        execution_strategy: execution_strategy.clone(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let gauntlet_receipt_path = runtime_root
+        .join("patch_gauntlets")
+        .join(format!("{}-bounded-mutation.json", request.request_id));
+    persist_json_pretty(&gauntlet_receipt_path, &gauntlet_receipt)?;
+
+    let mut entrypoint_config = Vec::new();
+    if let Some(tool_kind) = &next_tool_kind {
+        entrypoint_config.push(format!("tool_kind={tool_kind}"));
+    }
+    let inputs = chatty_factory_core::BuildSeedInputs {
+        project_name: spec.project_name.clone(),
+        title: spec.project_name.replace('_', " "),
+        summary: request.raw_request.trim().to_string(),
+        copy_bundle: Vec::new(),
+        feature_tokens: plan.planner_suggested_features.clone(),
+        style_preset: Some("factory_default".into()),
+        wrapper_target: request.exoskeleton_target.clone(),
+        entrypoint_config,
+        fixture_config: Vec::new(),
+    };
+
+    let build_artifacts = if spec.substrate == "rust_cli" {
+        build_rust_cli_seed(output_root, &inputs)?
+    } else if spec.substrate == "python_cli" {
+        build_python_cli_seed(output_root, &inputs)?
+    } else if spec.substrate == "static_web" {
+        build_static_web_seed(output_root, &inputs)?
+    } else {
+        anyhow::bail!(
+            "bounded patch mutation gauntlet could not determine a supported substrate for project `{}`",
+            spec.project_name
+        );
+    };
+
+    let modified_files = build_artifacts
+        .emitted_files
+        .iter()
+        .filter_map(|path| {
+            path.strip_prefix(project_dir)
+                .ok()
+                .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+        })
+        .collect::<Vec<_>>();
+
+    let receipt = PatchReceipt {
+        patch_id: chatty_factory_core::timestamp_id("patch"),
+        request_id: request.request_id.clone(),
+        project_name: spec.project_name.clone(),
+        substrate: spec.substrate.clone(),
+        patch_kind: "bounded_request_repair".into(),
+        request_summary: plan.interpreted_goal.clone(),
+        modified_files: build_artifacts
+            .emitted_files
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+        created_at: Some(chatty_factory_core::timestamp_id("created")),
+    };
+    let notes = vec![
+        format!(
+            "bounded mutation gauntlet executed via {execution_strategy} against the existing project surface"
+        ),
+        format!(
+            "gauntlet receipt persisted: {}",
+            gauntlet_receipt_path.display()
+        ),
+        format!(
+            "modified files: {}",
+            if modified_files.is_empty() {
+                "none".into()
+            } else {
+                modified_files.join(", ")
+            }
         ),
     ];
-    let work_order_synced_files =
-        execute_safe_build_execution_work_order(project_dir, &build_execution_work_order)?;
-    let mut attempted_outcomes =
-        execute_first_host_mechanical_microtasks(project_dir, &plan_task_list)?;
-    let (model_outcomes, attempted_model_microtasks) = execute_first_model_authored_microtasks(
-        runtime_root,
-        workspace_root,
-        project_dir,
-        &plan_task_list,
-        planner,
-    )?;
-    attempted_outcomes.extend(model_outcomes);
-    let plan_task_execution_log = derive_plan_task_execution_log(
-        &plan_task_list,
-        &work_order_synced_files,
-        &attempted_outcomes,
-    );
-    let plan_task_execution_log_path =
-        persist_plan_task_execution_log(runtime_root, &plan_task_execution_log)?;
-    let execution_status = run_execution_safety(
-        runtime_root,
-        &request.request_id,
-        project_dir.parent().unwrap_or(project_dir),
-        project_dir,
-    )?;
-    let plan_task_verification_log = derive_plan_task_verification_log(
-        &plan_task_list,
-        &plan_task_execution_log,
-        &execution_status,
-    );
-    let plan_task_verification_log_path =
-        persist_plan_task_verification_log(runtime_root, &plan_task_verification_log)?;
-    let mut notes = notes;
-    if !work_order_synced_files.is_empty() {
-        notes.push(format!(
-            "safe patch substrate sync updated: {}",
-            work_order_synced_files.join(", ")
-        ));
-    }
-    let attempted_microtasks = plan_task_execution_log
-        .receipts
-        .iter()
-        .filter(|receipt| receipt.task_kind != "host_sync")
-        .map(|receipt| format!("{}:{}", receipt.task_id, receipt.status))
-        .collect::<Vec<_>>();
-    if !attempted_microtasks.is_empty() {
-        notes.push(format!(
-            "attempted substrate microtasks: {}",
-            attempted_microtasks.join(" | ")
-        ));
-    }
-    for receipt_path in attempted_model_microtasks {
-        notes.push(format!(
-            "model-authored substrate task receipt persisted: {}",
-            receipt_path.display()
-        ));
-    }
-    Ok(PatchSubstrateAttemptBundle {
-        build_intent_freeze_path,
-        build_plan_artifact_path,
-        build_plan_review_path,
-        build_constraint_review_path,
-        plan_task_list_path,
-        plan_task_execution_log_path,
-        plan_task_verification_log_path,
-        execution_status,
-        notes,
-    })
+
+    Ok((
+        PatchArtifacts {
+            project_dir: build_artifacts.project_dir,
+            modified_files: build_artifacts.emitted_files,
+            patch_kind: "bounded_request_repair".into(),
+        },
+        receipt,
+        BoundedPatchMutationBundle {
+            gauntlet_receipt_path,
+            verification_commands,
+            notes,
+        },
+    ))
 }
 
-fn emit_patch_next_attempt_result(
-    runtime_root: &Path,
-    output_root: &Path,
+fn finish_patch_result(
+    runtime_root: &PathBuf,
+    output_root: &PathBuf,
     request: &chatty_factory_core::RequestRecord,
     plan: &chatty_factory_core::RequestPlan,
     spec: &ProjectSpec,
-    patch_intent_freeze: &PatchIntentFreeze,
+    patch_diagnosis: &ProjectPatchDiagnosis,
     patch_diagnosis_path: &Path,
     patch_plan_review_path: &Path,
     patch_constraint_review_path: &Path,
     patch_intent_freeze_path: &Path,
-    substrate_bundle: &PatchSubstrateAttemptBundle,
-    soft_review_patch_notes: &[String],
+    artifacts: PatchArtifacts,
+    receipt: PatchReceipt,
+    composition_route_class: CompositionRouteClass,
+    composable_route_plan_path: PathBuf,
+    primitive_execution_plan_path: PathBuf,
+    selected_patch_kinds: Vec<String>,
+    composition_notes: Vec<String>,
+    composition_review_receipt_path: Option<String>,
+    helper_runtime_receipts: Vec<HelperRuntimeReceipt>,
 ) -> Result<HostActionResult> {
-    let project_dir = output_root.join(&spec.project_name);
-    if project_dir.join("ProjectSpec.json").exists() {
-        let _ = refresh_project_patch_readiness_receipt_for_project(
-            runtime_root,
-            &project_dir,
-            &spec.project_name,
-        );
-    }
+    apply_request_plan_enrichments(&artifacts.project_dir, plan)?;
+    let execution_status = run_execution_safety(
+        runtime_root,
+        &request.request_id,
+        output_root,
+        &artifacts.project_dir,
+    )?;
+    persist_project_grounding(runtime_root, &request.request_id, &artifacts.project_dir)?;
+    let refreshed_spec: ProjectSpec = serde_json::from_str(&fs::read_to_string(
+        artifacts.project_dir.join("ProjectSpec.json"),
+    )?)?;
+    let patch_diagnosis_postcheck = run_patch_diagnosis_postcheck(
+        runtime_root,
+        patch_diagnosis,
+        &artifacts.project_dir,
+        spec,
+        &refreshed_spec,
+        &receipt,
+    )?;
+    let patch_diagnosis_postcheck_path =
+        patch_diagnosis_postcheck_path(runtime_root, &patch_diagnosis.request_id);
+    verify_patch_artifacts(runtime_root, &request.request_id, &artifacts)?;
+    persist_json_pretty(
+        &runtime_root
+            .join("patch_receipts")
+            .join(format!("{}-patch.json", request.request_id)),
+        &receipt,
+    )?;
+    persist_project_session(
+        runtime_root,
+        "active_project_session.json",
+        "active_project_sessions",
+        &ProjectSession {
+            project_name: receipt.project_name.clone(),
+            substrate: receipt.substrate.clone(),
+            tool_kind: refreshed_spec.tool_kind.clone(),
+            request_summary: Some(receipt.request_summary.clone()),
+            last_action: "patch".into(),
+            source_kind: "factory_patch".into(),
+            source_request_id: request.request_id.clone(),
+            updated_at: chatty_factory_core::timestamp_id("updated"),
+        },
+    )?;
     let browser_state = persist_project_browser_state(output_root, runtime_root)?;
-    let substrate = project_spec_substrate_label(spec).unwrap_or("unknown_substrate");
-    let mut details = vec![
-        format!("project={}", spec.project_name),
-        format!("substrate={substrate}"),
-        "reason=no direct deterministic patch lane matched; prepared a substrate-first patch attempt".into(),
-        format!(
-            "build_intent_freeze={}",
-            substrate_bundle.build_intent_freeze_path.display()
-        ),
-        format!("patch_diagnosis={}", patch_diagnosis_path.display()),
-        format!("patch_plan_review={}", patch_plan_review_path.display()),
-        format!("patch_constraint_review={}", patch_constraint_review_path.display()),
-        format!("patch_intent_freeze={}", patch_intent_freeze_path.display()),
-    ];
-    for path in [
-        &substrate_bundle.build_plan_artifact_path,
-        &substrate_bundle.build_plan_review_path,
-        &substrate_bundle.build_constraint_review_path,
-        &substrate_bundle.plan_task_list_path,
-        &substrate_bundle.plan_task_execution_log_path,
-        &substrate_bundle.plan_task_verification_log_path,
-    ] {
-        details.push(format!("patch_next_attempt_artifact={}", path.display()));
-    }
-    let mut route_notes = vec![
-        "no direct deterministic patch lane matched; prepared a substrate-first patch attempt"
-            .into(),
-    ];
-    route_notes.extend(soft_review_patch_notes.iter().cloned());
-    route_notes.extend(substrate_bundle.notes.iter().cloned());
-    let next_action =
-        select_mechanical_next_action("route_selection_mismatch", Some("bundle"), 0, false);
-    details.push(format!("recommended_next_action={}", next_action.action_id));
-    details.push(format!(
-        "recommended_next_step={}",
-        next_action.recommended_next_step
-    ));
-    route_notes.push(format!("mechanical next action: {}", next_action.action_id));
-    route_notes.push(format!(
-        "mechanical next step: {}",
-        next_action.recommended_next_step
-    ));
+    let acceptance_status = load_acceptance_status(runtime_root, &request.request_id);
+    let substrate = receipt.substrate.as_str();
     Ok(HostActionResult {
-        summary: "Patch substrate attempt executed".into(),
-        details,
+        summary: "Patch request finished".into(),
+        details: vec![
+            format!("project={}", receipt.project_name),
+            format!("substrate={substrate}"),
+            format!("patch_kind={}", receipt.patch_kind),
+            format!(
+                "composition_route_class={}",
+                composition_route_class_label(&composition_route_class)
+            ),
+            format!("patch_diagnosis={}", patch_diagnosis_path.display()),
+            format!(
+                "patch_diagnosis_postcheck={}",
+                if patch_diagnosis_postcheck.passed {
+                    "passed"
+                } else {
+                    "warning"
+                }
+            ),
+            format!(
+                "patch_diagnosis_postcheck_path={}",
+                patch_diagnosis_postcheck_path.display()
+            ),
+            format!(
+                "patch_postcheck_next_action={}",
+                patch_diagnosis_postcheck.recommended_next_action
+            ),
+            format!(
+                "patch_postcheck_next_step={}",
+                patch_diagnosis_postcheck.recommended_next_step
+            ),
+            format!("patch_plan_review={}", patch_plan_review_path.display()),
+            format!(
+                "patch_constraint_review={}",
+                patch_constraint_review_path.display()
+            ),
+            format!("patch_intent_freeze={}", patch_intent_freeze_path.display()),
+            format!(
+                "plan_confidence={} ({})",
+                plan.confidence_score, plan.confidence_band
+            ),
+            format!("execution_smoke={execution_status}"),
+        ],
         browser_state: Some(browser_state),
         runtime_refresh: None,
         execution_result: Some(with_execution_outcome_posture(HostExecutionResult {
-            kind: "patch_prepare".into(),
-            request_id: request.request_id.clone(),
-            project_name: spec.project_name.clone(),
-            build_intent_freeze_path: Some(
-                substrate_bundle
-                    .build_intent_freeze_path
-                    .display()
-                    .to_string(),
-            ),
-            outcome_class: Some("partial_success".into()),
-            outcome_notes: {
-                let mut notes = vec![
-                    "the factory prepared a grounded substrate attempt rather than completing the requested patch"
-                        .into(),
-                    format!("mechanical next action: {}", next_action.action_id),
-                    format!(
-                        "mechanical next step: {}",
-                        next_action.recommended_next_step
-                    ),
-                ];
-                notes.extend(next_action.rationale.clone());
-                notes
-            },
+            kind: "patch".into(),
+            request_id: receipt.request_id.clone(),
+            project_name: receipt.project_name.clone(),
+            build_intent_freeze_path: None,
+            outcome_class: Some("full_success".into()),
+            outcome_notes: vec![
+                format!(
+                    "patch postcheck next action: {}",
+                    patch_diagnosis_postcheck.recommended_next_action
+                ),
+                format!(
+                    "patch postcheck next step: {}",
+                    patch_diagnosis_postcheck.recommended_next_step
+                ),
+            ],
             recommended_next_action: None,
             recommended_next_step: String::new(),
-            substrate_kind: Some(spec.substrate.clone()),
-            tool_kind: plan
-                .inferred_tool_kind
-                .clone()
-                .or_else(|| spec.tool_kind.clone()),
-            patch_kind: patch_intent_freeze.intended_patch_kind.clone(),
-            composition_route_class: Some("patch_next_attempt".into()),
-            composable_route_plan_path: None,
-            composition_review_receipt_path: None,
+            substrate_kind: Some(refreshed_spec.substrate.clone()),
+            tool_kind: refreshed_spec.tool_kind.clone(),
+            patch_kind: Some(receipt.patch_kind.clone()),
+            composition_route_class: Some(composition_route_class_label(
+                &composition_route_class,
+            )),
+            composable_route_plan_path: Some(composable_route_plan_path.display().to_string()),
+            composition_review_receipt_path,
             followup_request_mode: None,
             followup_rationale: Vec::new(),
             plan_confidence_score: plan.confidence_score,
             plan_confidence_band: plan.confidence_band.clone(),
             needs_llm_review: plan.needs_llm_review,
-            acceptance_status: Some(substrate_bundle.execution_status.clone()),
-            route_notes,
-            file_paths: {
-                let mut files = vec![
-                    substrate_bundle
-                        .build_intent_freeze_path
-                        .display()
-                        .to_string(),
-                    patch_diagnosis_path.display().to_string(),
-                    patch_plan_review_path.display().to_string(),
-                    patch_constraint_review_path.display().to_string(),
-                    patch_intent_freeze_path.display().to_string(),
-                ];
-                files.extend([
-                    substrate_bundle
-                        .build_plan_artifact_path
-                        .display()
-                        .to_string(),
-                    substrate_bundle
-                        .build_plan_review_path
-                        .display()
-                        .to_string(),
-                    substrate_bundle
-                        .build_constraint_review_path
-                        .display()
-                        .to_string(),
-                    substrate_bundle.plan_task_list_path.display().to_string(),
-                    substrate_bundle
-                        .plan_task_execution_log_path
-                        .display()
-                        .to_string(),
-                    substrate_bundle
-                        .plan_task_verification_log_path
-                        .display()
-                        .to_string(),
-                ]);
+            acceptance_status,
+            route_notes: {
+                let mut notes = composition_notes;
+                notes.push(format!(
+                    "patch postcheck next action: {}",
+                    patch_diagnosis_postcheck.recommended_next_action
+                ));
+                notes.push(format!(
+                    "patch postcheck next step: {}",
+                    patch_diagnosis_postcheck.recommended_next_step
+                ));
+                notes
+            },
+            file_paths: if matches!(
+                composition_route_class,
+                CompositionRouteClass::BoundedCompositionCandidate
+            ) {
+                let mut files = selected_patch_kinds
+                    .iter()
+                    .map(|patch_kind| format!("composition_patch={patch_kind}"))
+                    .collect::<Vec<_>>();
+                files.push(patch_diagnosis_path.display().to_string());
+                files.push(patch_diagnosis_postcheck_path.display().to_string());
+                files.push(patch_plan_review_path.display().to_string());
+                files.push(patch_constraint_review_path.display().to_string());
+                files.push(patch_intent_freeze_path.display().to_string());
+                files.push(primitive_execution_plan_path.display().to_string());
+                files
+            } else {
+                let mut files = receipt.modified_files.clone();
+                files.push(patch_diagnosis_path.display().to_string());
+                files.push(patch_diagnosis_postcheck_path.display().to_string());
+                files.push(patch_plan_review_path.display().to_string());
+                files.push(patch_constraint_review_path.display().to_string());
+                files.push(patch_intent_freeze_path.display().to_string());
                 files
             },
-            patch_lanes: spec.patch_lanes.clone(),
-            acceptance_recipes: spec.acceptance_recipes.clone(),
-            operator_bundles: spec.operator_bundles.clone(),
-            chattycog_hosting_mode: spec.chattycog_hosting_mode.clone(),
-            chattycog_ui_owner: spec.chattycog_ui_owner.clone(),
-            chattycog_bridge_capabilities: spec.chattycog_bridge_capabilities.clone(),
-            helper_services: spec.helper_services.clone(),
-            helper_runtime_receipts: Vec::new(),
+            patch_lanes: refreshed_spec.patch_lanes.clone(),
+            acceptance_recipes: refreshed_spec.acceptance_recipes.clone(),
+            operator_bundles: refreshed_spec.operator_bundles.clone(),
+            chattycog_hosting_mode: refreshed_spec.chattycog_hosting_mode.clone(),
+            chattycog_ui_owner: refreshed_spec.chattycog_ui_owner.clone(),
+            chattycog_bridge_capabilities: refreshed_spec.chattycog_bridge_capabilities.clone(),
+            helper_services: refreshed_spec.helper_services.clone(),
+            helper_runtime_receipts,
         })),
         next_attempt_result: None,
         followup_route: None,
@@ -16939,7 +16996,11 @@ fn run_patch_diagnosis_postcheck(
     if post_patch_spec.tool_kind == pre_patch_spec.tool_kind {
         verified_invariants.push("tool kind remained stable".into());
     } else {
-        warnings.push("tool kind changed after patch".into());
+        verified_invariants.push(format!(
+            "tool kind updated from `{}` to `{}` and contract files were re-emitted",
+            pre_patch_spec.tool_kind.as_deref().unwrap_or("unknown"),
+            post_patch_spec.tool_kind.as_deref().unwrap_or("unknown")
+        ));
     }
 
     let modified_targets = diagnosis
@@ -17569,7 +17630,7 @@ fn preserve_invariants_for_patch_diagnosis(spec: &ProjectSpec) -> Vec<String> {
         "ProjectSpec.json remains present".into(),
         "AcceptancePlan.json remains present".into(),
         "substrate remains stable".into(),
-        "tool kind remains stable".into(),
+        "contract files remain synchronized with the implementation".into(),
     ];
     if !spec.entrypoints.is_empty() {
         invariants.push(format!(
