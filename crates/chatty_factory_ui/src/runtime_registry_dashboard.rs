@@ -308,20 +308,20 @@ impl ChattyFactoryUiApp {
                     "Patch recipes with no baseline: {no_baseline_patches}"
                 ));
                 ui.separator();
-                ui.label(format!("Regressed helper lanes: {regressed_helpers}"));
+                ui.label(format!("Regressed helper entries: {regressed_helpers}"));
                 ui.separator();
-                ui.label(format!("Changed helper lanes: {changed_helpers}"));
+                ui.label(format!("Changed helper entries: {changed_helpers}"));
                 ui.separator();
                 ui.label(format!(
-                    "Helper lanes with no baseline: {no_baseline_helpers}"
+                    "Helper entries with no baseline: {no_baseline_helpers}"
                 ));
                 ui.separator();
-                ui.label(format!("Regressed bridge lanes: {regressed_bridges}"));
+                ui.label(format!("Regressed bridge entries: {regressed_bridges}"));
                 ui.separator();
-                ui.label(format!("Changed bridge lanes: {changed_bridges}"));
+                ui.label(format!("Changed bridge entries: {changed_bridges}"));
                 ui.separator();
                 ui.label(format!(
-                    "Bridge lanes with no baseline: {no_baseline_bridges}"
+                    "Bridge entries with no baseline: {no_baseline_bridges}"
                 ));
                 ui.separator();
                 if ui.small_button("Refresh proof governance now").clicked() {
@@ -628,7 +628,7 @@ impl ChattyFactoryUiApp {
                         ui.label("Filter");
                         ui.add(
                             egui::TextEdit::singleline(&mut self.extension_registry_query)
-                                .hint_text("family, tool, patch, status..."),
+                                .hint_text("surface, tool, patch, status..."),
                         );
                     });
                     ui.horizontal_wrapped(|ui| {
@@ -646,7 +646,7 @@ impl ChattyFactoryUiApp {
                         ui.selectable_value(
                             &mut self.extension_registry_sort,
                             ExtensionRegistrySort::FamilyToolPatch,
-                            "Family/Tool",
+                            "Surface/Tool",
                         );
                         ui.selectable_value(
                             &mut self.extension_registry_sort,
@@ -975,7 +975,7 @@ impl ChattyFactoryUiApp {
                 })
                 .collect::<Vec<_>>();
             if !showing_any {
-                ui.label("No lanes match the current filter.");
+                ui.label("No entries match the current filter.");
             }
             if !recent_lookup.is_empty() {
                 ui.label("Recent");
@@ -1104,7 +1104,7 @@ impl ChattyFactoryUiApp {
                 || self.extension_registry_scope == ExtensionRegistryScope::Shipped)
                 && !filtered_shipped.is_empty()
             {
-                ui.label("Shipped lanes");
+                ui.label("Shipped entries");
                 for entry in filtered_shipped.into_iter().take(8) {
                     let mut label = format!(
                         "{} | {} | {}",
@@ -1226,7 +1226,7 @@ impl ChattyFactoryUiApp {
                 && !filtered_archived.is_empty()
             {
                 ui.separator();
-                ui.label("Archived lanes");
+                ui.label("Archived entries");
                 for entry in filtered_archived.into_iter().take(8) {
                     let mut label = format!(
                         "{} | {}",
@@ -1323,7 +1323,7 @@ impl ChattyFactoryUiApp {
                 let (readiness_label, readiness_color) =
                     lane_readiness_tone(&entry.status, blockers.len(), mismatch_hint_count);
                 ui.separator();
-                ui.label("Lane Details");
+                ui.label("Entry Details");
                 ui.label(format!("Entry: {}", entry.entry_id));
                 ui.label(format!("Status: {}", entry.status));
                 ui.label(format!(
@@ -1383,27 +1383,27 @@ impl ChattyFactoryUiApp {
                             note,
                         );
                         ui.ctx().copy_text(summary);
-                        self.status_line = "Copied lane summary to clipboard".to_string();
+                        self.status_line = "Copied entry summary to clipboard".to_string();
                         self.push_extension_activity(
                             Some(entry.entry_id.clone()),
-                            "Copy Lane Summary",
+                            "Copy Entry Summary",
                             entry.entry_id.clone(),
                             true,
                         );
-                        self.push_toast("Copied lane summary to clipboard", ToastKind::Success);
+                        self.push_toast("Copied entry summary to clipboard", ToastKind::Success);
                     }
                     if ui.small_button("Open Latest Export").clicked() {
                         let export_path = self.latest_extension_export_path(&entry.entry_id);
                         match open_path_in_explorer(export_path.to_string_lossy().as_ref(), true) {
                             Ok(()) => {
-                                self.status_line = "Revealed latest lane export".to_string();
+                                self.status_line = "Revealed latest entry export".to_string();
                                 self.push_extension_activity(
                                     Some(entry.entry_id.clone()),
                                     "Open Latest Export",
                                     short_path(export_path.to_string_lossy().as_ref()),
                                     true,
                                 );
-                                self.push_toast("Revealed latest lane export", ToastKind::Success);
+                                self.push_toast("Revealed latest entry export", ToastKind::Success);
                             }
                             Err(error) => {
                                 self.status_line = format!("Open failed: {error}");
@@ -1429,14 +1429,14 @@ impl ChattyFactoryUiApp {
                                     true,
                                 ) {
                                     Ok(()) => {
-                                        self.status_line = "Revealed lane export".to_string();
+                                        self.status_line = "Revealed entry export".to_string();
                                         self.push_extension_activity(
                                             Some(entry.entry_id.clone()),
                                             "Open Export History",
                                             short_path(export_path.to_string_lossy().as_ref()),
                                             true,
                                         );
-                                        self.push_toast("Revealed lane export", ToastKind::Success);
+                                        self.push_toast("Revealed entry export", ToastKind::Success);
                                     }
                                     Err(error) => {
                                         self.status_line = format!("Open failed: {error}");
@@ -1504,8 +1504,8 @@ impl ChattyFactoryUiApp {
                 if !lane_timeline.is_empty() {
                     ui.separator();
                     ui.horizontal(|ui| {
-                        ui.label("Lane Timeline");
-                        if ui.small_button("Clear Lane").clicked() {
+                        ui.label("Activity Timeline");
+                        if ui.small_button("Clear Activity").clicked() {
                             self.clear_lane_activity(&entry.entry_id);
                         }
                     });
@@ -1521,7 +1521,7 @@ impl ChattyFactoryUiApp {
                     }
                 }
                 ui.separator();
-                ui.label("Lane Note");
+                ui.label("Entry Note");
                 ui.add(
                     egui::TextEdit::multiline(&mut note_value)
                         .desired_rows(3)
@@ -1532,27 +1532,27 @@ impl ChattyFactoryUiApp {
                 ui.horizontal(|ui| {
                     if ui.small_button("Save Note").clicked() {
                         self.save_extension_notes();
-                        self.status_line = "Saved lane note".to_string();
+                        self.status_line = "Saved entry note".to_string();
                         self.push_extension_activity(
                             Some(entry.entry_id.clone()),
                             "Save Note",
                             entry.entry_id.clone(),
                             true,
                         );
-                        self.push_toast("Saved lane note", ToastKind::Success);
+                        self.push_toast("Saved entry note", ToastKind::Success);
                     }
                     if ui.small_button("Clear Note").clicked() {
                         self.extension_notes
                             .insert(entry.entry_id.clone(), String::new());
                         self.save_extension_notes();
-                        self.status_line = "Cleared lane note".to_string();
+                        self.status_line = "Cleared entry note".to_string();
                         self.push_extension_activity(
                             Some(entry.entry_id.clone()),
                             "Clear Note",
                             entry.entry_id.clone(),
                             true,
                         );
-                        self.push_toast("Cleared lane note", ToastKind::Success);
+                        self.push_toast("Cleared entry note", ToastKind::Success);
                     }
                 });
                 ui.horizontal(|ui| match entry.status.as_str() {

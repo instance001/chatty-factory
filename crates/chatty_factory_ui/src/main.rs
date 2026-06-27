@@ -19,8 +19,7 @@ mod runtime_registry_dashboard;
 
 use chatty_factory_core::{
     built_in_proof_templates, capability_comparison_bundle_manifest_path,
-    capability_comparison_bundles_from_root, proof_template_manifest_path,
-    proof_templates_from_root, AcceptanceRecipeStatus, CapabilityComparisonBundle,
+    proof_template_manifest_path, AcceptanceRecipeStatus, CapabilityComparisonBundle,
     ChattyCogBridgeCapabilities, OperatorBundleStatus, PatchLaneStatus, PrimitiveProofTemplate,
     ProjectBrowserState, ProjectSpec, RuntimeConfig, RuntimeModelCatalogReceipt,
 };
@@ -1522,9 +1521,9 @@ impl ChattyFactoryUiApp {
         }
         self.save_extension_favorites();
         let message = if was_removed {
-            "Removed lane favorite"
+            "Removed entry favorite"
         } else {
-            "Pinned lane favorite"
+            "Pinned entry favorite"
         };
         self.status_line = message.to_string();
         self.push_extension_activity(
@@ -1576,9 +1575,9 @@ impl ChattyFactoryUiApp {
             &self.extension_recent_path(),
             &self.recent_extension_entry_ids,
         ) {
-            self.status_line = format!("Failed to save recent lanes: {error}");
+            self.status_line = format!("Failed to save recent entries: {error}");
             self.push_toast(
-                format!("Failed to save recent lanes: {error}"),
+                format!("Failed to save recent entries: {error}"),
                 ToastKind::Error,
             );
         }
@@ -1776,9 +1775,9 @@ impl ChattyFactoryUiApp {
         if let Err(error) =
             save_extension_notes(&self.extension_notes_path(), &self.extension_notes)
         {
-            self.status_line = format!("Failed to save lane notes: {error}");
+            self.status_line = format!("Failed to save entry notes: {error}");
             self.push_toast(
-                format!("Failed to save lane notes: {error}"),
+                format!("Failed to save entry notes: {error}"),
                 ToastKind::Error,
             );
         }
@@ -1788,9 +1787,9 @@ impl ChattyFactoryUiApp {
         if let Err(error) =
             save_extension_activity(&self.extension_activity_path(), &self.extension_activity)
         {
-            self.status_line = format!("Failed to save lane activity: {error}");
+            self.status_line = format!("Failed to save entry activity: {error}");
             self.push_toast(
-                format!("Failed to save lane activity: {error}"),
+                format!("Failed to save entry activity: {error}"),
                 ToastKind::Error,
             );
         }
@@ -1800,8 +1799,8 @@ impl ChattyFactoryUiApp {
         self.extension_activity
             .retain(|item| item.entry_id.as_deref() != Some(entry_id));
         self.save_extension_activity();
-        self.status_line = "Cleared lane timeline".to_string();
-        self.push_toast("Cleared lane timeline", ToastKind::Success);
+        self.status_line = "Cleared entry timeline".to_string();
+        self.push_toast("Cleared entry timeline", ToastKind::Success);
     }
 
     fn clear_proof_activity(&mut self, receipt_id: &str) {
@@ -1839,20 +1838,20 @@ impl ChattyFactoryUiApp {
             .and_then(|_| write_text_file(&history_export_path, &summary))
         {
             Ok(()) => {
-                self.status_line = "Exported lane summary".to_string();
+                self.status_line = "Exported entry summary".to_string();
                 self.push_extension_activity(
                     Some(entry.entry_id.clone()),
-                    "Export Lane Summary",
+                    "Export Entry Summary",
                     short_path(history_export_path.to_string_lossy().as_ref()),
                     true,
                 );
-                self.push_toast("Exported lane summary", ToastKind::Success);
+                self.push_toast("Exported entry summary", ToastKind::Success);
             }
             Err(error) => {
                 self.status_line = format!("Export failed: {error}");
                 self.push_extension_activity(
                     Some(entry.entry_id.clone()),
-                    "Export Lane Summary",
+                    "Export Entry Summary",
                     error.to_string(),
                     false,
                 );
@@ -3480,7 +3479,7 @@ impl App for ChattyFactoryUiApp {
                 let blocked_filter_changed = ui
                     .checkbox(
                         &mut self.project_browser_show_blocked_lanes_only,
-                        "Show projects with blocked lanes only",
+                        "Show projects with blocked follow-up paths only",
                     )
                     .changed();
                 let regressed_filter_changed = ui
@@ -3880,12 +3879,12 @@ impl App for ChattyFactoryUiApp {
                             && self.project_browser_show_decomposable_historical_only
                             && self.project_browser_show_blocked_lanes_only
                         {
-                            ui.label("No projects currently expose blocked lanes that are also classified as decomposable historical blockers.");
+                            ui.label("No projects currently expose blocked follow-up paths that are also classified as decomposable historical blockers.");
                         } else if projects.is_empty()
                             && self.project_browser_show_historical_blockers_only
                             && self.project_browser_show_blocked_lanes_only
                         {
-                            ui.label("No projects currently expose blocked lanes that are also classified as historical blockers.");
+                            ui.label("No projects currently expose blocked follow-up paths that are also classified as historical blockers.");
                         } else if projects.is_empty()
                             && self.project_browser_show_decomposable_historical_only
                             && self.project_browser_show_regressed_only
@@ -3910,12 +3909,12 @@ impl App for ChattyFactoryUiApp {
                             && self.project_browser_show_blocked_lanes_only
                             && self.project_browser_show_regressed_only
                         {
-                            ui.label("No regressed projects currently expose structurally blocked patch lanes.");
+                            ui.label("No regressed projects currently expose structurally blocked follow-up paths.");
                         } else if projects.is_empty()
                             && self.project_browser_show_blocked_lanes_only
                             && self.project_browser_show_improved_only
                         {
-                            ui.label("No improved projects currently expose blocked patch lanes.");
+                            ui.label("No improved projects currently expose blocked follow-up paths.");
                         } else if projects.is_empty()
                             && self.project_browser_show_regressed_only
                             && self.project_browser_show_improved_only
@@ -3934,7 +3933,7 @@ impl App for ChattyFactoryUiApp {
                         {
                             ui.label("No projects currently expose historical blockers with modern replacements.");
                         } else if projects.is_empty() && self.project_browser_show_blocked_lanes_only {
-                            ui.label("No projects currently expose structurally blocked patch lanes.");
+                            ui.label("No projects currently expose structurally blocked follow-up paths.");
                         }
                     });
                     ui.separator();
@@ -4022,7 +4021,7 @@ impl App for ChattyFactoryUiApp {
                                 );
                                 ui.label(format!("Governed surface: {patchability_surface_label}"));
                                 ui.label(format!(
-                                    "Blocked lanes: {} risky, {} historical, {} decomposable",
+                                    "Blocked paths: {} risky, {} historical, {} decomposable",
                                     receipt.risky_blocked_lane_count,
                                     receipt.historical_blocked_lane_count,
                                     receipt.decomposable_historical_blocker_count
@@ -4077,7 +4076,7 @@ impl App for ChattyFactoryUiApp {
                                     .default_open(false)
                                     .show(ui, |ui| {
                                         if !receipt.blocked_lane_reasons.is_empty() {
-                                            ui.label("Blocked lane reasons");
+                                            ui.label("Blocked path reasons");
                                             for (patch_kind, reason) in
                                                 receipt.blocked_lane_reasons.iter().take(6)
                                             {
@@ -4154,7 +4153,7 @@ impl App for ChattyFactoryUiApp {
                         ui.separator();
                         ui.label(format!("Feature count: {}", spec.features.len()));
                         ui.label(format!(
-                            "Patch lane count: {}",
+                            "Follow-up path count: {}",
                             if !spec.patch_lanes.is_empty() {
                                 spec.patch_lanes.len()
                             } else {
@@ -4187,7 +4186,7 @@ impl App for ChattyFactoryUiApp {
                                     ui.label(format!("- {feature}"));
                                 }
                                 ui.separator();
-                                ui.label("Patch Lanes");
+                                ui.label("Follow-up Paths");
                                 if !spec.patch_lanes.is_empty() {
                                     for lane in &spec.patch_lanes {
                                         ui.label(format!(
@@ -4333,7 +4332,7 @@ impl App for ChattyFactoryUiApp {
                         "Follow-up rationale count: {}",
                         result.followup_rationale.len()
                     ));
-                    ui.label(format!("Patch lane count: {}", result.patch_lanes.len()));
+                    ui.label(format!("Follow-up path count: {}", result.patch_lanes.len()));
                     ui.label(format!(
                         "Acceptance recipe count: {}",
                         result.acceptance_recipes.len()
@@ -4372,7 +4371,7 @@ impl App for ChattyFactoryUiApp {
                                 }
                             }
                             if !result.patch_lanes.is_empty() {
-                                ui.label("Patch lanes");
+                                ui.label("Follow-up paths");
                                 for lane in result.patch_lanes.iter().take(6) {
                                     ui.label(format!(
                                         "- {} [{} | {} | {}]",
@@ -4555,7 +4554,7 @@ impl App for ChattyFactoryUiApp {
                                 }
                             }
                             if !fallback.pending_attempt_ids.is_empty() {
-                                ui.label("Pending matching lanes");
+                                ui.label("Pending matching follow-up paths");
                                 for entry_id in fallback.pending_attempt_ids.iter().take(6) {
                                     ui.label(format!("- {entry_id}"));
                                 }
@@ -4742,56 +4741,6 @@ impl App for ChattyFactoryUiApp {
             }
 
                     self.render_request_action_panel(ui);
-
-                    ui.separator();
-                    egui::CollapsingHeader::new("Cross-Family Paired Proof")
-                        .default_open(false)
-                        .show(ui, |ui| {
-                    let proof_templates = proof_templates_from_root(&self.workspace_root);
-                    let comparison_bundles =
-                        capability_comparison_bundles_from_root(&self.workspace_root);
-                    let previous_selected_profile_name = self.selected_proof_profile_name.clone();
-                    let previous_selected_template_id = self.selected_proof_template_id.clone();
-                    let previous_follow_filter = self.pin_history_filter_to_selected_template;
-                    let selected_proof_template = proof_templates
-                        .iter()
-                        .find(|template| template.template_id == self.selected_proof_template_id)
-                        .cloned()
-                        .or_else(|| proof_templates.first().cloned());
-                    let selected_comparison_bundle = selected_proof_template
-                        .as_ref()
-                        .and_then(|template| {
-                            comparison_bundle_for_template(template, &comparison_bundles)
-                        });
-                    self.render_proof_run_controls_section(
-                        ui,
-                        &proof_templates,
-                        &selected_proof_template,
-                        &selected_comparison_bundle,
-                        &previous_selected_profile_name,
-                        &previous_selected_template_id,
-                        previous_follow_filter,
-                    );
-                    let paired_receipts =
-                        load_legacy_comparison_paired_proof_receipts(&self.workspace_root);
-                    let filtered_paired_receipts = paired_receipts
-                        .iter()
-                        .filter(|(receipt, _)| {
-                            proof_receipt_matches_filter(
-                                receipt,
-                                &self.proof_history_template_filter,
-                            )
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    self.render_paired_proof_results_section(
-                        ui,
-                        &paired_receipts,
-                        &filtered_paired_receipts,
-                        &proof_templates,
-                        &comparison_bundles,
-                    );
-                        });
 
                     ui.separator();
                     egui::CollapsingHeader::new("Negative Constraint Shelf")

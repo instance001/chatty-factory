@@ -32,9 +32,9 @@ impl ChattyFactoryUiApp {
             if ui.small_button("Reveal Spec").clicked() {
                 self.reveal_governed_artifact(
                     &entry.source_stub_path,
-                    "Revealed lane source spec",
+                    "Revealed source spec",
                     "Open failed",
-                    "Revealed lane source spec",
+                    "Revealed source spec",
                     "Open failed",
                     Some((Some(entry.entry_id.clone()), "Reveal Spec")),
                 );
@@ -64,14 +64,14 @@ impl ChattyFactoryUiApp {
                 }
             }
             if let Some(first_path) = entry.apply_patch_artifacts.first() {
-                if ui.small_button("Reveal Patch Template").clicked() {
+                if ui.small_button("Reveal Patch Artifact").clicked() {
                     self.reveal_governed_artifact(
                         first_path,
                         "Revealed apply-patch artifact",
                         "Open failed",
                         "Revealed apply-patch artifact",
                         "Open failed",
-                        Some((Some(entry.entry_id.clone()), "Reveal Patch Template")),
+                        Some((Some(entry.entry_id.clone()), "Reveal Patch Artifact")),
                     );
                 }
             }
@@ -95,7 +95,7 @@ impl ChattyFactoryUiApp {
             }
         }
         ui.separator();
-        ui.label("Lane Workbench");
+        ui.label("Attempt Workbench");
         if !blockers.is_empty() {
             ui.label("Current blockers");
             for blocker in blockers {

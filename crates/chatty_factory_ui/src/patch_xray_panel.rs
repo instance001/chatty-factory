@@ -853,21 +853,21 @@ fn patch_lane_maturity_badge(maturity: &str) -> egui::RichText {
 fn patch_lane_maturity_explanation(maturity: &str) -> &'static str {
     match maturity {
         "narrow_surface_contract" => {
-            "the lane declares a tight surgical surface with specific artifact groups and structural guard checks"
+            "the path declares a tight surgical surface with specific artifact groups and structural guard checks"
         }
         "broad_surface_contract" => {
-            "the lane declares multiple artifact groups and boundaries, but its allowed surgical surface is still fairly wide"
+            "the path declares multiple artifact groups and boundaries, but its allowed surgical surface is still fairly wide"
         }
         "legacy_shape_sensitive" => {
-            "the lane depends on an older structural shape and may be blocked when newer evolved surfaces are already present"
+            "the path depends on an older structural shape and may be blocked when newer evolved surfaces are already present"
         }
         "anchor_only_contract" => {
-            "the lane confirms insertion anchors, but does not yet declare a fuller surface-group contract"
+            "the path confirms insertion anchors, but does not yet declare a fuller surface-group contract"
         }
         "uncontracted" => {
-            "the lane does not yet declare a strong surgical contract, so diagnosis relies more heavily on general heuristics"
+            "the path does not yet declare a strong surgical contract, so diagnosis relies more heavily on general heuristics"
         }
-        _ => "the lane has a custom maturity classification",
+        _ => "the path has a custom maturity classification",
     }
 }
 

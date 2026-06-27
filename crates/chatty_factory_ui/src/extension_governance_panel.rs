@@ -16,7 +16,7 @@ impl ChattyFactoryUiApp {
                 ui.label(format!("Proof lineage: {lineage_status}"));
             }
             if let Some(seed) = entry.proof_seed_template_id.as_deref() {
-                ui.label(format!("Seed template: {seed}"));
+                ui.label(format!("Seed profile: {seed}"));
             }
             if let Some(seed) = entry.proof_seed_bundle_id.as_deref() {
                 ui.label(format!("Seed bundle: {seed}"));
@@ -49,7 +49,7 @@ impl ChattyFactoryUiApp {
                 ui.label(format!("Proof next step: {step}"));
             }
             ui.label(format!(
-                "Scaffolded from: {}",
+                "Seeded from: {}",
                 if entry.source_stub_path.trim().is_empty() {
                     "none".to_string()
                 } else {
