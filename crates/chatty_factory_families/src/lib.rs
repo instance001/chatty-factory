@@ -1414,8 +1414,8 @@ pub fn build_rust_cli_seed(output_root: &Path, inputs: &BuildSeedInputs) -> Resu
                 AcceptanceCheck {
                     check_id: "cargo-stats-run".into(),
                     kind: "cargo_run_output_contains".into(),
-                    target: "-- --input fixtures/input/sample.txt".into(),
-                    expected: Some("lines=2 words=4 chars=25".into()),
+                    target: "-- --file fixtures/input/sample.txt".into(),
+                    expected: Some("characters=25 words=4 lines=2".into()),
                 }
             } else {
                 AcceptanceCheck {
@@ -1527,8 +1527,8 @@ pub fn build_rust_cli_seed(output_root: &Path, inputs: &BuildSeedInputs) -> Resu
                 AcceptanceCheck {
                     check_id: "cargo-stats-run".into(),
                     kind: "cargo_run_output_contains".into(),
-                    target: "-- --input fixtures/input/sample.txt".into(),
-                    expected: Some("lines=2 words=4 chars=25".into()),
+                    target: "-- --file fixtures/input/sample.txt".into(),
+                    expected: Some("characters=25 words=4 lines=2".into()),
                 }
             } else {
                 AcceptanceCheck {
@@ -1564,7 +1564,7 @@ pub fn build_rust_cli_seed(output_root: &Path, inputs: &BuildSeedInputs) -> Resu
                     check_id: "cargo-stats-marker".into(),
                     kind: "contains".into(),
                     target: "src/main.rs".into(),
-                    expected: Some("--input".into()),
+                    expected: Some("--text".into()),
                 }
             } else {
                 AcceptanceCheck {
@@ -1641,7 +1641,13 @@ pub fn build_rust_cli_seed(output_root: &Path, inputs: &BuildSeedInputs) -> Resu
         } else if tool_kind == "log_summary" {
             vec!["errors=".into(), "warnings=".into(), "infos=".into()]
         } else if tool_kind == "text_stats" {
-            vec!["lines=".into(), "words=".into(), "chars=".into()]
+            vec![
+                "--text".into(),
+                "--file".into(),
+                "characters=".into(),
+                "words=".into(),
+                "lines=".into(),
+            ]
         } else {
             vec!["files=".into(), "ext:".into()]
         },

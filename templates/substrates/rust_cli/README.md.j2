@@ -25,11 +25,15 @@ Expected output shape:
 
 `errors=<n> warnings=<n> infos=<n>`
 {% elif tool_kind == "text_stats" %}
-`cargo run -- --input fixtures/input/sample.txt`
+`cargo run -- --text "alpha beta\ncharlie delta"`
+
+or
+
+`cargo run -- --file fixtures/input/sample.txt`
 
 Expected output shape:
 
-`lines=<n> words=<n> chars=<n>`
+`characters=<n> words=<n> lines=<n>`
 {% else %}
 `cargo run -- --input fixtures/input`
 

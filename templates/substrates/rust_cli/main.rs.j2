@@ -102,12 +102,17 @@ fn main() {
     println!("errors={} warnings={} infos={}", errors, warnings, infos);
 {% elif tool_kind == "text_stats" %}
     let args = env::args().skip(1).collect::<Vec<_>>();
-    let mut input: Option<PathBuf> = None;
+    let mut inline_text: Option<String> = None;
+    let mut input_file: Option<PathBuf> = None;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
-            "--input" if i + 1 < args.len() => {
-                input = Some(PathBuf::from(&args[i + 1]));
+            "--text" if i + 1 < args.len() => {
+                inline_text = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--file" if i + 1 < args.len() => {
+                input_file = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
             }
             _ => {
@@ -115,12 +120,16 @@ fn main() {
             }
         }
     }
-    let input_file = input.expect("--input is required");
-    let text = fs::read_to_string(&input_file).expect("read input file");
+    let text = if let Some(text) = inline_text {
+        text
+    } else {
+        let input_file = input_file.expect("--text or --file is required");
+        fs::read_to_string(&input_file).expect("read input file")
+    };
     let lines = text.lines().count();
     let words = text.split_whitespace().count();
     let chars = text.chars().count();
-    println!("lines={} words={} chars={}", lines, words, chars);
+    println!("characters={} words={} lines={}", chars, words, lines);
 {% else %}
     let args = env::args().skip(1).collect::<Vec<_>>();
     let mut input: Option<PathBuf> = None;

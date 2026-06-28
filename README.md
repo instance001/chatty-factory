@@ -123,6 +123,7 @@ cargo run -p chatty_factory_ui
 - [Current Architecture](./docs/CURRENT_ARCHITECTURE.md)
 - [User Manual](./USER_MANUAL.md)
 - [Factory Shape](./docs/FACTORY_SHAPE.md)
+- [Fresh Rebuild Negative-Lane Audit](./docs/FRESH_REBUILD_NEGATIVE_LANE_AUDIT.md)
 - [Negative Lane Runtime Pivot](./docs/NEGATIVE_LANE_RUNTIME_PIVOT.md)
 - [Negative Constraints Engine Parts List](./docs/NEGATIVE_CONSTRAINTS_ENGINE_PARTS_LIST.md)
 - [Negative Constraints Engine Gap Audit](./docs/NEGATIVE_CONSTRAINTS_ENGINE_GAP_AUDIT.md)

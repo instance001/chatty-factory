@@ -15,6 +15,7 @@ use chatty_factory_core::{
     capability_comparison_bundle_by_id_from_root, chattycog_valid_hosting_modes,
     default_runtime_config, derive_build_seed_inputs, derive_planner_handoff, derive_request_plan,
     discover_projects, discover_runtime, gate_patch_project_snapshot,
+    infer_cli_tool_kind_from_text,
     infer_chattycog_bridge_capabilities_from_text, infer_chattycog_hosting_mode_from_text,
     infer_chattycog_hosting_modes_from_text, load_project_session,
     normalize_patch_request, normalize_request, patch_primitive_classes_for_kinds,
@@ -12358,6 +12359,8 @@ fn enrich_project_for_proof_baseline(
         if plan.needs_llm_review {
             self.maybe_run_auto_planner(&request, &mut plan, Some(&spec), planner)?;
         }
+        let allow_bounded_mutation_gauntlet =
+            should_enter_bounded_patch_mutation_gauntlet(&request, &plan, &spec);
         let proceed_with_soft_review = should_continue_patch_with_soft_review(&plan, &spec);
         run_patch_snapshot_gate(&self.runtime_root, &request.request_id, &project_dir, &spec)?;
         persist_json_pretty(
@@ -12367,7 +12370,7 @@ fn enrich_project_for_proof_baseline(
                 .join(format!("{}.json", plan.plan_id)),
             &plan,
         )?;
-        if plan.inferred_substrate_candidates.is_empty() {
+        if plan.inferred_substrate_candidates.is_empty() && !allow_bounded_mutation_gauntlet {
             return emit_next_attempt_result(
                 &self.runtime_root,
                 &request,
@@ -12376,7 +12379,7 @@ fn enrich_project_for_proof_baseline(
                 "Patch request could not be grounded to a bounded deterministic substrate lane",
             );
         }
-        if plan.needs_llm_review && !proceed_with_soft_review {
+        if plan.needs_llm_review && !proceed_with_soft_review && !allow_bounded_mutation_gauntlet {
             return emit_next_attempt_result(
                 &self.runtime_root,
                 &request,
@@ -12385,7 +12388,7 @@ fn enrich_project_for_proof_baseline(
                 "Patch request needs clarification or planner guidance before a deterministic lane can run",
             );
         }
-        let soft_review_patch_notes = if proceed_with_soft_review {
+        let soft_review_patch_notes = if proceed_with_soft_review || allow_bounded_mutation_gauntlet {
             let mut notes = vec![
                 "patch proceeded under bounded soft-review tolerance: the project was grounded, but the follow-up intent did not cleanly match a named deterministic patch lane"
                     .to_string(),
@@ -12395,6 +12398,11 @@ fn enrich_project_for_proof_baseline(
                     "soft-review findings carried forward: {}",
                     plan.escalation_reasons.join(" | ")
                 ));
+            }
+            if allow_bounded_mutation_gauntlet {
+                notes.push(
+                    "concrete same-surface patch requirements were explicit enough to preserve frozen intent and continue into the bounded mutation gauntlet".into(),
+                );
             }
             notes
         } else {
@@ -12519,6 +12527,8 @@ fn enrich_project_for_proof_baseline(
         };
         if patch_out.is_some() {
             composition_patch_kinds.clear();
+        } else if allow_bounded_mutation_gauntlet {
+            composition_patch_kinds.clear();
         }
         let candidate_helper_primitive_ids = candidate_helper_primitive_ids_for_composition(
             Some(&spec),
@@ -12527,6 +12537,12 @@ fn enrich_project_for_proof_baseline(
         );
         let mut composition_review_notes = Vec::new();
         let mut composition_review_receipt_path = None;
+        if allow_bounded_mutation_gauntlet && patch_out.is_none() {
+            composition_review_notes.push(
+                "concrete same-surface patch requirements bypassed guessed composition lanes after deterministic patch execution did not materialize"
+                    .into(),
+            );
+        }
         if patch_plan_review
             .reviewed_replacement_bundle_status
             .as_deref()
@@ -12569,7 +12585,7 @@ fn enrich_project_for_proof_baseline(
                 ));
             }
             composition_review_receipt_path = review.review_receipt_path.clone();
-            if planner.auto_planner && !review.approved {
+            if planner.auto_planner && !review.approved && !allow_bounded_mutation_gauntlet {
                 return emit_next_attempt_result(
                     &self.runtime_root,
                     &request,
@@ -12734,7 +12750,9 @@ fn enrich_project_for_proof_baseline(
             helper_runtime_receipts,
         )) = patch_execution
         else {
-            if reviewed_patch_intent_freeze.intended_patch_kind.is_none() {
+            if allow_bounded_mutation_gauntlet
+                || reviewed_patch_intent_freeze.intended_patch_kind.is_none()
+            {
                 let (artifacts, receipt, mutation_bundle) =
                     execute_bounded_patch_mutation_gauntlet(
                         &self.runtime_root,
@@ -12783,6 +12801,15 @@ fn enrich_project_for_proof_baseline(
                     notes.push(format!(
                         "required verification commands: {}",
                         mutation_bundle.verification_commands.join(", ")
+                    ));
+                }
+                if reviewed_patch_intent_freeze.intended_patch_kind.is_some() {
+                    notes.push(format!(
+                        "ignored non-executable deterministic patch guess `{}` and continued with evidence-driven same-surface mutation",
+                        reviewed_patch_intent_freeze
+                            .intended_patch_kind
+                            .as_deref()
+                            .unwrap_or("unknown_patch_kind")
                     ));
                 }
                 notes.extend(soft_review_patch_notes.clone());
@@ -16552,13 +16579,23 @@ struct BoundedPatchMutationGauntletReceipt {
     pub receipt_id: String,
     pub request_id: String,
     pub project_name: String,
+    pub mutation_gauntlet_entered_from_ui_patch: bool,
     pub substrate: String,
     pub current_tool_kind: Option<String>,
     pub next_tool_kind: Option<String>,
+    pub required_tool_kind: Option<String>,
     pub interpreted_goal: String,
     pub requirement_gap: String,
     pub current_project_evidence: Vec<String>,
     pub affected_files: Vec<String>,
+    pub required_source_markers: Vec<String>,
+    pub forbidden_source_markers: Vec<String>,
+    pub required_acceptance_markers: Vec<String>,
+    pub forbidden_acceptance_markers: Vec<String>,
+    pub required_readme_markers: Vec<String>,
+    pub forbidden_readme_markers: Vec<String>,
+    pub required_project_markers: Vec<String>,
+    pub forbidden_project_markers: Vec<String>,
     pub verification_commands: Vec<String>,
     pub next_attempt_mechanics: Vec<String>,
     pub execution_strategy: String,
@@ -16569,6 +16606,121 @@ struct BoundedPatchMutationBundle {
     gauntlet_receipt_path: PathBuf,
     verification_commands: Vec<String>,
     notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct BoundedPatchRepairContract {
+    next_tool_kind: Option<String>,
+    required_source_markers: Vec<String>,
+    forbidden_source_markers: Vec<String>,
+    required_acceptance_markers: Vec<String>,
+    forbidden_acceptance_markers: Vec<String>,
+    required_readme_markers: Vec<String>,
+    forbidden_readme_markers: Vec<String>,
+    required_project_markers: Vec<String>,
+    forbidden_project_markers: Vec<String>,
+}
+
+fn request_has_concrete_patch_requirements(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+) -> bool {
+    let lower = request.raw_request.to_ascii_lowercase();
+    let literal_markers = [
+        "--",
+        "characters=",
+        "words=",
+        "lines=",
+        "cargo check",
+        "cargo test",
+        "readme",
+        "projectspec",
+        "acceptanceplan",
+        "src/main.rs",
+        "support ",
+        "print ",
+        "update ",
+        "verify ",
+        "stop ",
+        "replace",
+    ];
+    literal_markers.iter().any(|marker| lower.contains(marker))
+        || !plan.planner_expected_outputs.is_empty()
+        || !plan.planner_acceptance_commands.is_empty()
+        || !plan.planner_required_markers.is_empty()
+}
+
+fn should_enter_bounded_patch_mutation_gauntlet(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    spec: &ProjectSpec,
+) -> bool {
+    matches!(request.mode, Some(chatty_factory_core::RequestMode::Patch))
+        && request.active_project.as_deref() == Some(spec.project_name.as_str())
+        && request_has_concrete_patch_requirements(request, plan)
+}
+
+fn derive_bounded_patch_repair_contract(
+    request: &chatty_factory_core::RequestRecord,
+    plan: &chatty_factory_core::RequestPlan,
+    spec: &ProjectSpec,
+) -> BoundedPatchRepairContract {
+    let lower = request.raw_request.to_ascii_lowercase();
+    let inferred_from_request = if spec.substrate == "rust_cli"
+        || spec.substrate == "python_cli"
+        || spec.substrate == "cli"
+    {
+        infer_cli_tool_kind_from_text(&lower).map(str::to_string)
+    } else {
+        None
+    };
+    let next_tool_kind = inferred_from_request
+        .or_else(|| plan.inferred_tool_kind.clone())
+        .or_else(|| spec.tool_kind.clone());
+    match next_tool_kind.as_deref() {
+        Some("text_stats") => BoundedPatchRepairContract {
+            next_tool_kind,
+            required_source_markers: vec![
+                "--text".into(),
+                "--file".into(),
+                "characters=".into(),
+                "words=".into(),
+                "lines=".into(),
+            ],
+            forbidden_source_markers: vec!["--input".into(), "files=".into(), "ext:".into()],
+            required_acceptance_markers: vec![
+                "--text".into(),
+                "--file".into(),
+                "characters=".into(),
+                "words=".into(),
+                "lines=".into(),
+            ],
+            forbidden_acceptance_markers: vec![
+                "files=3".into(),
+                "ext:".into(),
+                "--input fixtures/input".into(),
+                "cargo_run_directory_audit".into(),
+            ],
+            required_readme_markers: vec![
+                "--text".into(),
+                "--file".into(),
+                "characters=".into(),
+                "words=".into(),
+                "lines=".into(),
+            ],
+            forbidden_readme_markers: vec!["files=<n>".into(), "ext:<extension>".into()],
+            required_project_markers: vec!["text_stats".into(), "cargo_run_text_stats".into()],
+            forbidden_project_markers: vec![
+                "directory_audit".into(),
+                "directory_audit_contract".into(),
+                "cargo_run_directory_audit".into(),
+            ],
+        },
+        _ => BoundedPatchRepairContract {
+            next_tool_kind,
+            ..BoundedPatchRepairContract::default()
+        },
+    }
 }
 
 fn generic_patch_verification_commands(spec: &ProjectSpec) -> Vec<String> {
@@ -16593,9 +16745,11 @@ fn execute_bounded_patch_mutation_gauntlet(
     spec: &ProjectSpec,
     diagnosis: &ProjectPatchDiagnosis,
 ) -> Result<(PatchArtifacts, PatchReceipt, BoundedPatchMutationBundle)> {
-    let next_tool_kind = plan
-        .inferred_tool_kind
+    let repair_contract = derive_bounded_patch_repair_contract(request, plan, spec);
+    let next_tool_kind = repair_contract
+        .next_tool_kind
         .clone()
+        .or_else(|| plan.inferred_tool_kind.clone())
         .or_else(|| spec.tool_kind.clone());
     let current_tool_kind = spec.tool_kind.clone();
     let verification_commands = generic_patch_verification_commands(spec);
@@ -16656,13 +16810,24 @@ fn execute_bounded_patch_mutation_gauntlet(
         receipt_id: chatty_factory_core::timestamp_id("patch-gauntlet"),
         request_id: request.request_id.clone(),
         project_name: spec.project_name.clone(),
+        mutation_gauntlet_entered_from_ui_patch: request.active_project.as_deref()
+            == Some(spec.project_name.as_str()),
         substrate: spec.substrate.clone(),
         current_tool_kind: current_tool_kind.clone(),
         next_tool_kind: next_tool_kind.clone(),
+        required_tool_kind: repair_contract.next_tool_kind.clone(),
         interpreted_goal: plan.interpreted_goal.clone(),
         requirement_gap,
         current_project_evidence,
         affected_files: diagnosis.candidate_target_files.clone(),
+        required_source_markers: repair_contract.required_source_markers.clone(),
+        forbidden_source_markers: repair_contract.forbidden_source_markers.clone(),
+        required_acceptance_markers: repair_contract.required_acceptance_markers.clone(),
+        forbidden_acceptance_markers: repair_contract.forbidden_acceptance_markers.clone(),
+        required_readme_markers: repair_contract.required_readme_markers.clone(),
+        forbidden_readme_markers: repair_contract.forbidden_readme_markers.clone(),
+        required_project_markers: repair_contract.required_project_markers.clone(),
+        forbidden_project_markers: repair_contract.forbidden_project_markers.clone(),
         verification_commands: verification_commands.clone(),
         next_attempt_mechanics: next_attempt_mechanics.clone(),
         execution_strategy: execution_strategy.clone(),
@@ -16727,6 +16892,14 @@ fn execute_bounded_patch_mutation_gauntlet(
         created_at: Some(chatty_factory_core::timestamp_id("created")),
     };
     let notes = vec![
+        format!(
+            "mutation_gauntlet_entered_from_ui_patch={}",
+            request.active_project.as_deref() == Some(spec.project_name.as_str())
+        ),
+        format!(
+            "repair_tool_kind_authority={}",
+            next_tool_kind.as_deref().unwrap_or("unknown")
+        ),
         format!(
             "bounded mutation gauntlet executed via {execution_strategy} against the existing project surface"
         ),
@@ -17107,6 +17280,14 @@ fn run_patch_diagnosis_postcheck(
             out_of_contract_modified_files.join(", ")
         ));
     }
+    if receipt.patch_kind == "bounded_request_repair" {
+        warnings.extend(bounded_request_repair_postcheck_warnings(
+            runtime_root,
+            &diagnosis.request_id,
+            project_dir,
+            post_patch_spec,
+        ));
+    }
     let contract_confidence_summary = patch_contract_confidence_summary_for_postcheck(
         diagnosis.patch_surgical_maturity.as_deref(),
         warnings.is_empty(),
@@ -17165,6 +17346,110 @@ fn run_patch_diagnosis_postcheck(
         );
     }
     Ok(receipt_out)
+}
+
+fn bounded_request_repair_postcheck_warnings(
+    runtime_root: &Path,
+    request_id: &str,
+    project_dir: &Path,
+    post_patch_spec: &ProjectSpec,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let gauntlet_path = runtime_root
+        .join("patch_gauntlets")
+        .join(format!("{request_id}-bounded-mutation.json"));
+    let Ok(contents) = fs::read_to_string(&gauntlet_path) else {
+        warnings.push("bounded request repair missing gauntlet receipt".into());
+        return warnings;
+    };
+    let Ok(gauntlet) = serde_json::from_str::<BoundedPatchMutationGauntletReceipt>(&contents) else {
+        warnings.push("bounded request repair gauntlet receipt could not be parsed".into());
+        return warnings;
+    };
+
+    if let Some(required_tool_kind) = gauntlet.required_tool_kind.as_deref() {
+        if post_patch_spec.tool_kind.as_deref() != Some(required_tool_kind) {
+            warnings.push(format!(
+                "bounded request repair left tool kind at `{}` instead of required `{}`",
+                post_patch_spec.tool_kind.as_deref().unwrap_or("unknown"),
+                required_tool_kind
+            ));
+        }
+    }
+
+    let source_contents =
+        fs::read_to_string(project_dir.join("src/main.rs")).unwrap_or_default();
+    let acceptance_contents =
+        fs::read_to_string(project_dir.join("AcceptancePlan.json")).unwrap_or_default();
+    let readme_contents = fs::read_to_string(project_dir.join("README.md")).unwrap_or_default();
+    let spec_contents =
+        fs::read_to_string(project_dir.join("ProjectSpec.json")).unwrap_or_default();
+
+    warnings.extend(missing_required_markers_for_postcheck(
+        "bounded request repair source contract",
+        &source_contents,
+        &gauntlet.required_source_markers,
+    ));
+    warnings.extend(present_forbidden_markers_for_postcheck(
+        "bounded request repair source contract",
+        &source_contents,
+        &gauntlet.forbidden_source_markers,
+    ));
+    warnings.extend(missing_required_markers_for_postcheck(
+        "bounded request repair acceptance contract",
+        &acceptance_contents,
+        &gauntlet.required_acceptance_markers,
+    ));
+    warnings.extend(present_forbidden_markers_for_postcheck(
+        "bounded request repair acceptance contract",
+        &acceptance_contents,
+        &gauntlet.forbidden_acceptance_markers,
+    ));
+    warnings.extend(missing_required_markers_for_postcheck(
+        "bounded request repair README contract",
+        &readme_contents,
+        &gauntlet.required_readme_markers,
+    ));
+    warnings.extend(present_forbidden_markers_for_postcheck(
+        "bounded request repair README contract",
+        &readme_contents,
+        &gauntlet.forbidden_readme_markers,
+    ));
+    warnings.extend(missing_required_markers_for_postcheck(
+        "bounded request repair project contract",
+        &spec_contents,
+        &gauntlet.required_project_markers,
+    ));
+    warnings.extend(present_forbidden_markers_for_postcheck(
+        "bounded request repair project contract",
+        &spec_contents,
+        &gauntlet.forbidden_project_markers,
+    ));
+    warnings
+}
+
+fn missing_required_markers_for_postcheck(
+    label: &str,
+    contents: &str,
+    required_markers: &[String],
+) -> Vec<String> {
+    required_markers
+        .iter()
+        .filter(|marker| !contents.contains(marker.as_str()))
+        .map(|marker| format!("{label} missing required marker `{marker}`"))
+        .collect()
+}
+
+fn present_forbidden_markers_for_postcheck(
+    label: &str,
+    contents: &str,
+    forbidden_markers: &[String],
+) -> Vec<String> {
+    forbidden_markers
+        .iter()
+        .filter(|marker| contents.contains(marker.as_str()))
+        .map(|marker| format!("{label} still contains forbidden marker `{marker}`"))
+        .collect()
 }
 
 fn patch_contract_confidence_summary_for_freeze(maturity: Option<&str>) -> Option<String> {

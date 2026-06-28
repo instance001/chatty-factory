@@ -438,7 +438,22 @@ pub fn infer_cli_tool_kind_from_text(lower: &str) -> Option<&'static str> {
         Some("csv_report")
     } else if contains_any(lower, &["log", "logs", "trace"]) {
         Some("log_summary")
-    } else if contains_any(lower, &["stats", "word count", "line count", "count text"]) {
+    } else if contains_any(
+        lower,
+        &[
+            "stats",
+            "word count",
+            "line count",
+            "character count",
+            "text counter",
+            "count text",
+            "--text",
+            "--file",
+            "characters=",
+            "words=",
+            "lines=",
+        ],
+    ) {
         Some("text_stats")
     } else if contains_any(
         lower,
