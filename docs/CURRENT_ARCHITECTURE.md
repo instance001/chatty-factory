@@ -157,6 +157,45 @@ Instead it is moving toward:
 This keeps the model responsible for method inside a bounded lane while the host
 remains responsible for truth.
 
+## Model Ladder / Gearbox
+
+The model ladder is a late-stage retry mechanism, not the first fallback move.
+It exists to separate method failure from model limitation without letting the
+model own truth about either one.
+
+```mermaid
+flowchart LR
+    failure["Bounded task failure<br/>receipt-backed, not vibes"] --> classify["Normalize failure class"]
+    classify --> action{"Mechanical next action"}
+    action -->|task too broad| decompose["Decompose task<br/>smaller child shape"]
+    action -->|format failure| posture["Retry posture gearbox<br/>strict contract, recovery posture, extraction mode"]
+    action -->|toolchain gap| toolchain["Repair or change toolchain<br/>host-mechanical branch"]
+    action -->|method space exhausted| ladder["Model ladder<br/>try next candidate only after posture set is spent"]
+
+    posture --> current["Current model candidate<br/>same bounded task, changed method"]
+    current --> pass{"Usable output?"}
+    pass -->|yes| verify["Verification gate<br/>receipts decide success"]
+    pass -->|no| spent{"Postures exhausted?"}
+    spent -->|no| posture
+    spent -->|yes| ladder
+
+    ladder --> fast["Fast candidate<br/>cheap / small / first-pass"]
+    fast --> balanced["Balanced candidate<br/>more capable if evidence justifies"]
+    balanced --> heavy["Heavy candidate<br/>last resort under budget"]
+    heavy --> exhausted["Full ladder exhausted<br/>record limitation honestly"]
+
+    verify --> result["Artifact or accepted bounded output"]
+    exhausted --> vault["Failure vault / triangulation<br/>current-model vs full-ladder evidence"]
+
+    classDef evidence fill:#f3f0ea,stroke:#777,color:#333;
+    classDef control fill:#fff8ec,stroke:#9b5b2e,color:#2a1b10;
+    classDef model fill:#eef7f2,stroke:#25624f,color:#14231d;
+
+    class failure,classify,exhausted,vault evidence;
+    class action,decompose,posture,toolchain,current,pass,spent,verify control;
+    class ladder,fast,balanced,heavy,result model;
+```
+
 ## Operator Surfaces
 
 The main operator surfaces are:

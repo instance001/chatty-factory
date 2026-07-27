@@ -13,6 +13,33 @@ The current doctrine is strict:
 - the host carries the funnel
 - the output carries the artifact
 
+## Governed Build/Patch Loop
+
+```mermaid
+flowchart LR
+    request["Plain-language request<br/>build or patch intent"] --> freeze["Intent freeze<br/>bounded, checkable attempt"]
+    freeze --> plan["Host funnel<br/>route, permission, work order"]
+    plan --> method["LLM method lane<br/>bounded model-authored work"]
+    plan --> hostStep["Host-mechanical lane<br/>files, receipts, verification hooks"]
+    method --> artifact["Generated or patched artifact<br/>output carries product shape"]
+    hostStep --> artifact
+    artifact --> verify["Verification gate<br/>postcheck + receipts"]
+    verify --> outcome{"Outcome"}
+    outcome -->|success| release["Usable artifact<br/>runtime receipts preserved"]
+    outcome -->|failure or stuck| classify["Classify failure<br/>normalized failure class"]
+    classify --> receipts["Receipt trail<br/>evidence, lock point, next posture"]
+    receipts --> next["Evidence-driven next attempt<br/>decompose, retry, triangulate, or escalate"]
+    next --> freeze
+
+    classDef input fill:#eef7f2,stroke:#25624f,color:#14231d;
+    classDef funnel fill:#fff8ec,stroke:#9b5b2e,color:#2a1b10;
+    classDef evidence fill:#f3f0ea,stroke:#777,color:#333;
+
+    class request,release input;
+    class freeze,plan,method,hostStep,artifact,verify,outcome,next funnel;
+    class classify,receipts evidence;
+```
+
 The host is not supposed to own a positive-lane catalog of "correct app
 families." Its job is to freeze bounded attempts, preserve receipts, classify
 failure honestly, choose the next attempt mechanically from evidence, and hold
