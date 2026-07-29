@@ -29,8 +29,11 @@ Optional but useful:
 - local GGUF models in `chatty-factory/models/`
 - a local `llama.cpp` runtime in `chatty-factory/runtime/`
 
-The workspace will create `output/` and `runtime/` on demand if they are not
-present yet.
+In a source checkout, ChattyFactory uses the repository root as its workspace.
+In a packaged binary release, it uses the folder beside the executable.
+Advanced users can set `CHATTY_FACTORY_BASE_PATH` to force an explicit
+portable or shared workspace. First run creates `output/`, `runtime/`,
+`models/`, `operator_registry/`, and `extensions/` when they are missing.
 
 ## 2. Where Things Live
 
@@ -137,7 +140,7 @@ Common commands:
 
 The CLI also contains proof, governance, helper, registry, and runtime-model
 commands for deeper operator workflows. For those, inspect
-[crates/chatty_factory_cli/src/main.rs](/C:/Users/User/Desktop/github_portal/chatty-factory/crates/chatty_factory_cli/src/main.rs:10)
+[crates/chatty_factory_cli/src/main.rs](crates/chatty_factory_cli/src/main.rs)
 until a cleaner dedicated CLI reference exists.
 
 ## 7. Reading Results

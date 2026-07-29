@@ -4,15 +4,17 @@ use std::path::PathBuf;
 use anyhow::Result;
 use chatty_factory_control::ControlPlane;
 use chatty_factory_core::default_request_text;
+use chatty_factory_core::resolve_and_prepare_workspace_root;
 use chatty_factory_host::{HostActionResult, HostBridge, HostPlannerOptions};
 use serde::Serialize;
 
 fn main() -> Result<()> {
     let control = ControlPlane::milestone_one();
 
-    let output_root = PathBuf::from("output");
-    let runtime_root = PathBuf::from("runtime");
-    let host_bridge = HostBridge::new(std::env::current_dir()?);
+    let workspace_root = resolve_and_prepare_workspace_root()?;
+    let output_root = workspace_root.join("output");
+    let runtime_root = workspace_root.join("runtime");
+    let host_bridge = HostBridge::new(workspace_root);
     fs::create_dir_all(&output_root)?;
     fs::create_dir_all(&runtime_root)?;
 

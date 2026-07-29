@@ -1,3 +1,4 @@
+pub mod app_paths;
 pub mod contracts;
 pub mod execution;
 pub mod foreman;
@@ -11,6 +12,9 @@ pub mod registries;
 pub mod runtime;
 pub mod snapshot;
 
+pub use app_paths::{
+    ensure_workspace_dirs, resolve_and_prepare_workspace_root, workspace_root,
+};
 pub use contracts::{
     AcceptanceCheck, AcceptancePlan, AcceptanceRecipeStatus, ApprovedConstraintShelf,
     AtomizationFloorDecision, BuildConstraintReviewReceipt, BuildExecutionWorkOrder,

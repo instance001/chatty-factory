@@ -23,6 +23,7 @@ use chatty_factory_core::{
     ChattyCogBridgeCapabilities, OperatorBundleStatus, PatchLaneStatus, PrimitiveProofTemplate,
     ProjectBrowserState, ProjectSpec, RuntimeConfig, RuntimeModelCatalogReceipt,
 };
+use chatty_factory_core::resolve_and_prepare_workspace_root;
 use chatty_factory_families::refresh_project_contract_views_for_project;
 use chatty_factory_host::{
     HostActionResult, HostBridge, HostExtensionRegistryView, HostPlannerOptions,
@@ -1083,7 +1084,8 @@ struct ChattyFactoryUiApp {
 
 impl ChattyFactoryUiApp {
     fn new() -> Self {
-        let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let workspace_root =
+            resolve_and_prepare_workspace_root().unwrap_or_else(|_| PathBuf::from("."));
         let (task_sender, task_receiver) = mpsc::channel();
         let paired_proof_ui_preferences = load_paired_proof_ui_preferences(&workspace_root);
         let mut app = Self {

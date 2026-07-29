@@ -123,6 +123,12 @@ When you run the factory, it creates:
 Those runtime artifacts are part of the product. They are how the host proves
 what happened, what failed, and why the next attempt changed.
 
+In a source checkout, ChattyFactory uses the repository root as its workspace.
+In a packaged binary release, it uses the folder beside the executable. Set
+`CHATTY_FACTORY_BASE_PATH` to force an explicit portable or shared workspace.
+First run creates `output/`, `runtime/`, `models/`, `operator_registry/`, and
+`extensions/` when they are missing.
+
 ## Quick Start
 
 From `chatty-factory/`:
