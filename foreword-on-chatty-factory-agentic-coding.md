@@ -6,7 +6,7 @@ This factory is designed to achieve positive outcomes of working outputs from a 
 
 
 
-It is our hope that over time the negative constraints library will help the factory achieve a better success rate over time the more it is used, especially if community curation occurs. Multiple people sharing their own libraries, even potentially creating model specific libraries over time. This should result in acting like bumper lanes funnelling the ai away from bad choices and towards good choices for how to achieve a build or patch.
+It is our hope that over time the negative constraints library will help the factory achieve a better success rate the more it is used, especially if community curation occurs. Multiple people sharing their own libraries, even potentially creating model-specific libraries over time. This should result in acting like bumper lanes funnelling the AI away from known-bad choices and towards better-supported choices for how to achieve a build or patch.
 
 
 
@@ -18,7 +18,7 @@ As a secondary bonus, this could create a situation where aggregate data for spe
 
 
 
-As stated before, chatty-factory is not a one and done, send it and ye shall receive magic box of coding wonder and delights. It is a negative constraints led factory able to achieve small, bounded projects that consist of outputting a foundational, working project and then patching to complexity one moving part at a time. It is not able to do any task, it is restricted to the llm pilot's reasoning and native dataset boundaries. It is not expected to succeed straight out of the box the moment you install and fire it up and ask for a project, it should be viewed as any learning student would be - it will make mistakes at first, potentially many mistakes, but over time it will learn to make less mistakes as you request work and it's library begins filling in, reducing the possible "won't work" options for it to take.
+As stated before, chatty-factory is not a one and done, send it and ye shall receive magic box of coding wonder and delights. It is a negative constraints led factory able to achieve small, bounded projects that consist of outputting a foundational, working project and then patching to complexity one moving part at a time. It is not able to do any task; it is restricted by the selected LLM's reasoning limits, dataset boundaries, and the host's available tooling. It is not expected to succeed straight out of the box the moment you install and fire it up and ask for a project. It should be treated like an iterative build tool: it may make mistakes at first, potentially many mistakes, but over time its constraint library can accumulate failure guidance that reduces the possible "won't work" options it will take.
 
 
 
