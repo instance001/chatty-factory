@@ -41,6 +41,10 @@ The historical build archive now lives in grouped subfolders:
 - `build-docs/reviews/`
 - `build-docs/plans/`
 
+Current hard-reset rebuild plan:
+
+- [Negative Void Engine Rebuild Plan](./plans/NEGATIVE_VOID_ENGINE_REBUILD_PLAN.md)
+
 The top-level `README.md` keeps direct pointers into this archive so the build
 history stays discoverable without crowding the repo root with the documents
 themselves.
