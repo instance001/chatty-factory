@@ -32,3 +32,9 @@ GitHub API licence field at inventory time: `AGPL-3.0`. This is a metadata obser
 ## Evidence and limitations
 
 Evidence: authenticated GitHub API metadata captured by the FMI provenance audit. Contribution, prior art, ownership, contributors, document licensing, relationships, releases, and publication status require human verification.
+
+## Evidence-led lineage position
+
+The README and `docs/CURRENT_ARCHITECTURE.md` support an `IMPLEMENTED` governed build-and-patch system. Its documented combination is a user-held intent boundary, host-held request funnel and permissions, bounded model-authored and host-mechanical lanes, verification gates, and durable receipts that classify failure and route the next attempt. The design explicitly rejects treating a positive catalog of application families as a substitute for evidence-driven retry.
+
+This record preserves an implementation-specific orchestration/receipt pattern. It does not claim to own agents, task planning, CI, patching, retries, verification, permissions, workflow receipts, or failure analysis generally. ChattyFactory’s documentation mentions ChattyCog module integration, but this record does not assert a runtime dependency or that either project implements the other’s complete architecture.
